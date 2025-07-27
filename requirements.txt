@@ -6,3 +6,7 @@ uvicorn
 packaging
 importlib-metadata
 chromadb
+pytest
+pytest-asyncio
+httpx
+pytest-cov
