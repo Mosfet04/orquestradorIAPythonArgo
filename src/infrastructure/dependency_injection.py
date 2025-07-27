@@ -1,8 +1,10 @@
 from src.domain.repositories.agent_config_repository import IAgentConfigRepository
+from src.domain.repositories.tool_repository import IToolRepository
 from src.application.services.agent_factory_service import AgentFactoryService
 from src.application.use_cases.get_active_agents_use_case import GetActiveAgentsUseCase
 from src.presentation.controllers.orquestrador_controller import OrquestradorController
 from src.infrastructure.repositories.mongo_agent_config_repository import MongoAgentConfigRepository
+from src.infrastructure.repositories.mongo_tool_repository import MongoToolRepository
 from src.infrastructure.config.app_config import AppConfig
 
 
@@ -25,12 +27,22 @@ class DependencyContainer:
             )
         return self._repositories['agent_config']
     
+    def get_tool_repository(self) -> IToolRepository:
+        """Obtém o repositório de tools."""
+        if 'tool' not in self._repositories:
+            self._repositories['tool'] = MongoToolRepository(
+                connection_string=self._config.database.connection_string,
+                database_name=self._config.database.database_name
+            )
+        return self._repositories['tool']
+    
     def get_agent_factory_service(self) -> AgentFactoryService:
         """Obtém o serviço de criação de agentes."""
         if 'agent_factory' not in self._services:
             self._services['agent_factory'] = AgentFactoryService(
                 db_url=self._config.database.connection_string,
-                db_name=self._config.database.database_name
+                db_name=self._config.database.database_name,
+                tool_repository=self.get_tool_repository()
             )
         return self._services['agent_factory']
     

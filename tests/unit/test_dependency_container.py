@@ -64,10 +64,12 @@ class TestDependencyContainer:
         
         # Assert
         assert service1 is service2  # mesmo objeto (singleton)
-        mock_service_class.assert_called_once_with(
-            db_url="mongodb://test:27017",
-            db_name="test_db"
-        )
+        # Verificar se foi chamado com os parâmetros corretos (incluindo tool_repository)
+        call_args = mock_service_class.call_args
+        assert call_args.kwargs['db_url'] == "mongodb://test:27017"
+        assert call_args.kwargs['db_name'] == "test_db"
+        assert 'tool_repository' in call_args.kwargs
+        mock_service_class.assert_called_once()
     
     @patch('src.infrastructure.dependency_injection.GetActiveAgentsUseCase')
     def test_get_active_agents_use_case_creates_singleton(self, mock_use_case_class):

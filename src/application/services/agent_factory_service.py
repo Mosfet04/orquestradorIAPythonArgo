@@ -1,10 +1,14 @@
+from typing import Optional, List
 from agno.agent import Agent
 from agno.models.ollama import Ollama
 from agno.storage.mongodb import MongoDbStorage
 from agno.memory.v2.memory import Memory
 from agno.memory.v2.summarizer import SessionSummarizer
 from agno.memory.v2.db.mongodb import MongoMemoryDb
+from agno.tools import Toolkit
 from src.domain.entities.agent_config import AgentConfig
+from src.domain.repositories.tool_repository import IToolRepository
+from src.application.services.http_tool_factory_service import HttpToolFactory
 
 
 class AgentFactoryService:
@@ -12,15 +16,19 @@ class AgentFactoryService:
     
     def __init__(self, 
                  db_url: str = "mongodb://localhost:27017", 
-                 db_name: str = "agno"):
+                 db_name: str = "agno",
+                 tool_repository: Optional[IToolRepository] = None):
         self._db_url = db_url
         self._db_name = db_name
+        self._tool_repository = tool_repository
+        self._http_tool_factory = HttpToolFactory()
     
     def create_agent(self, config: AgentConfig) -> Agent:
         """Cria um agente baseado na configuração fornecida."""
         memory_db = self._create_memory_db()
         memory = self._create_memory(memory_db)
         storage = self._create_storage()
+        tools = self._create_tools(config.tools_ids) if config.tools_ids else []
         
         agent = Agent(
             name=config.nome,
@@ -41,9 +49,28 @@ class AgentFactoryService:
             knowledge=None,
             search_knowledge=False,
             num_history_responses=5,
+            tools=tools,
         )
         
         return agent
+    
+    def _create_tools(self, tool_ids: List[str]) -> List[Toolkit]:
+        """Cria as ferramentas para o agente."""
+        if not self._tool_repository or not tool_ids:
+            return []
+        
+        try:
+            # Buscar configurações das tools no repositório
+            tool_configs = self._tool_repository.get_tools_by_ids(tool_ids)
+            
+            # Criar tools do agno usando o factory
+            agno_tools = self._http_tool_factory.create_tools_from_configs(tool_configs)
+            
+            return agno_tools
+        except Exception as e:
+            # Log do erro (em ambiente real, usar logging adequado)
+            print(f"Erro ao criar tools: {e}")
+            return []
     
     def _create_memory_db(self) -> MongoMemoryDb:
         """Cria a instância do banco de dados de memória."""
