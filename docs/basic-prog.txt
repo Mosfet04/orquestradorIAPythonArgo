@@ -1,0 +1,1764 @@
+# Guia Avançado: Backend Python - Design Patterns e Clean Code
+
+## Índice
+1. [Princípios de Clean Code](#princípios-de-clean-code)
+2. [Arquitetura e Design Patterns](#arquitetura-e-design-patterns)
+3. [Estrutura de Projetos](#estrutura-de-projetos)
+4. [Dependency Injection e Inversão de Controle](#dependency-injection-e-inversão-de-controle)
+5. [Repository Pattern e Data Access](#repository-pattern-e-data-access)
+6. [Service Layer e Domain Logic](#service-layer-e-domain-logic)
+7. [Error Handling e Logging](#error-handling-e-logging)
+8. [Testing Strategies](#testing-strategies)
+9. [Performance e Otimizações](#performance-e-otimizações)
+10. [Security Best Practices](#security-best-practices)
+
+---
+
+## Princípios de Clean Code
+
+### SOLID Principles Applied
+
+**Single Responsibility Principle (SRP)**
+```python
+# ❌ Violação do SRP
+class UserManager:
+    def create_user(self, data):
+        # Validação
+        if not data.get('email'):
+            raise ValueError("Email required")
+        
+        # Persistência
+        user = User(**data)
+        db.session.add(user)
+        db.session.commit()
+        
+        # Notificação
+        send_welcome_email(user.email)
+        
+        return user
+
+# ✅ Seguindo SRP
+class UserValidator:
+    def validate(self, data):
+        if not data.get('email'):
+            raise ValueError("Email required")
+
+class UserRepository:
+    def create(self, user):
+        db.session.add(user)
+        db.session.commit()
+        return user
+
+class NotificationService:
+    def send_welcome_email(self, email):
+        # Implementation here
+        pass
+
+class UserService:
+    def __init__(self, validator, repository, notification_service):
+        self._validator = validator
+        self._repository = repository
+        self._notification_service = notification_service
+    
+    def create_user(self, data):
+        self._validator.validate(data)
+        user = User(**data)
+        created_user = self._repository.create(user)
+        self._notification_service.send_welcome_email(user.email)
+        return created_user
+```
+
+**Open/Closed Principle (OCP)**
+```python
+from abc import ABC, abstractmethod
+
+class PaymentProcessor(ABC):
+    @abstractmethod
+    def process_payment(self, amount: float) -> bool:
+        pass
+
+class CreditCardProcessor(PaymentProcessor):
+    def process_payment(self, amount: float) -> bool:
+        # Implementação específica para cartão de crédito
+        return True
+
+class PayPalProcessor(PaymentProcessor):
+    def process_payment(self, amount: float) -> bool:
+        # Implementação específica para PayPal
+        return True
+
+class PaymentService:
+    def __init__(self, processor: PaymentProcessor):
+        self._processor = processor
+    
+    def charge(self, amount: float) -> bool:
+        return self._processor.process_payment(amount)
+```
+
+### Naming Conventions e Code Organization
+
+```python
+# ✅ Boas práticas de nomenclatura
+class UserAccountService:
+    def __init__(self, user_repository: UserRepository, email_service: EmailService):
+        self._user_repository = user_repository
+        self._email_service = email_service
+    
+    def activate_user_account(self, user_id: int) -> UserAccount:
+        """Ativa a conta do usuário e envia email de confirmação."""
+        user = self._user_repository.get_by_id(user_id)
+        if not user:
+            raise UserNotFoundError(f"User with ID {user_id} not found")
+        
+        user.activate()
+        updated_user = self._user_repository.update(user)
+        self._email_service.send_activation_confirmation(user.email)
+        
+        return updated_user
+    
+    def deactivate_user_account(self, user_id: int) -> UserAccount:
+        """Desativa a conta do usuário."""
+        # Implementation here
+        pass
+```
+
+---
+
+## Arquitetura e Design Patterns
+
+### Hexagonal Architecture (Ports and Adapters)
+
+```python
+# Domain Layer
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from datetime import datetime
+
+@dataclass
+class User:
+    id: int
+    email: str
+    name: str
+    created_at: datetime
+    is_active: bool = True
+
+# Port (Interface)
+class UserRepositoryPort(ABC):
+    @abstractmethod
+    def save(self, user: User) -> User:
+        pass
+    
+    @abstractmethod
+    def get_by_id(self, user_id: int) -> User:
+        pass
+    
+    @abstractmethod
+    def get_by_email(self, email: str) -> User:
+        pass
+
+# Application Service
+class UserApplicationService:
+    def __init__(self, user_repository: UserRepositoryPort):
+        self._user_repository = user_repository
+    
+    def create_user(self, email: str, name: str) -> User:
+        # Business logic
+        if self._user_repository.get_by_email(email):
+            raise ValueError("User already exists")
+        
+        user = User(
+            id=None,
+            email=email,
+            name=name,
+            created_at=datetime.utcnow()
+        )
+        
+        return self._user_repository.save(user)
+
+# Adapter (Infrastructure)
+class SQLUserRepository(UserRepositoryPort):
+    def __init__(self, session):
+        self._session = session
+    
+    def save(self, user: User) -> User:
+        # SQLAlchemy implementation
+        pass
+    
+    def get_by_id(self, user_id: int) -> User:
+        # SQLAlchemy implementation
+        pass
+    
+    def get_by_email(self, email: str) -> User:
+        # SQLAlchemy implementation
+        pass
+```
+
+### Factory Pattern
+
+```python
+from enum import Enum
+
+class DatabaseType(Enum):
+    POSTGRESQL = "postgresql"
+    MYSQL = "mysql"
+    SQLITE = "sqlite"
+
+class DatabaseConnectionFactory:
+    _connections = {}
+    
+    @classmethod
+    def create_connection(cls, db_type: DatabaseType, **kwargs):
+        if db_type not in cls._connections:
+            if db_type == DatabaseType.POSTGRESQL:
+                cls._connections[db_type] = PostgreSQLConnection(**kwargs)
+            elif db_type == DatabaseType.MYSQL:
+                cls._connections[db_type] = MySQLConnection(**kwargs)
+            elif db_type == DatabaseType.SQLITE:
+                cls._connections[db_type] = SQLiteConnection(**kwargs)
+            else:
+                raise ValueError(f"Unsupported database type: {db_type}")
+        
+        return cls._connections[db_type]
+```
+
+### Observer Pattern
+
+```python
+from typing import List, Protocol
+
+class EventSubscriber(Protocol):
+    def handle(self, event) -> None:
+        ...
+
+class DomainEvent:
+    def __init__(self, event_type: str, data: dict):
+        self.event_type = event_type
+        self.data = data
+        self.timestamp = datetime.utcnow()
+
+class EventPublisher:
+    def __init__(self):
+        self._subscribers: List[EventSubscriber] = []
+    
+    def subscribe(self, subscriber: EventSubscriber):
+        self._subscribers.append(subscriber)
+    
+    def publish(self, event: DomainEvent):
+        for subscriber in self._subscribers:
+            subscriber.handle(event)
+
+class UserCreatedEventHandler:
+    def __init__(self, email_service: EmailService):
+        self._email_service = email_service
+    
+    def handle(self, event: DomainEvent) -> None:
+        if event.event_type == "user_created":
+            user_data = event.data
+            self._email_service.send_welcome_email(user_data['email'])
+```
+
+---
+
+## Estrutura de Projetos
+
+### Estrutura Recomendada
+
+```
+project/
+├── src/
+│   ├── domain/
+│   │   ├── __init__.py
+│   │   ├── entities/
+│   │   │   ├── __init__.py
+│   │   │   ├── user.py
+│   │   │   └── order.py
+│   │   ├── repositories/
+│   │   │   ├── __init__.py
+│   │   │   ├── user_repository.py
+│   │   │   └── order_repository.py
+│   │   └── services/
+│   │       ├── __init__.py
+│   │       ├── user_service.py
+│   │       └── order_service.py
+│   ├── infrastructure/
+│   │   ├── __init__.py
+│   │   ├── database/
+│   │   │   ├── __init__.py
+│   │   │   ├── models/
+│   │   │   ├── repositories/
+│   │   │   └── migrations/
+│   │   ├── external_services/
+│   │   │   ├── __init__.py
+│   │   │   ├── email_service.py
+│   │   │   └── payment_service.py
+│   │   └── config/
+│   │       ├── __init__.py
+│   │       ├── settings.py
+│   │       └── logging.py
+│   ├── application/
+│   │   ├── __init__.py
+│   │   ├── use_cases/
+│   │   │   ├── __init__.py
+│   │   │   ├── user_use_cases.py
+│   │   │   └── order_use_cases.py
+│   │   └── dto/
+│   │       ├── __init__.py
+│   │       ├── user_dto.py
+│   │       └── order_dto.py
+│   └── presentation/
+│       ├── __init__.py
+│       ├── api/
+│       │   ├── __init__.py
+│       │   ├── v1/
+│       │   │   ├── __init__.py
+│       │   │   ├── users.py
+│       │   │   └── orders.py
+│       │   └── middleware/
+│       └── cli/
+├── tests/
+│   ├── unit/
+│   ├── integration/
+│   └── e2e/
+├── requirements/
+│   ├── base.txt
+│   ├── development.txt
+│   └── production.txt
+├── docker/
+├── scripts/
+└── docs/
+```
+
+---
+
+## Dependency Injection e Inversão de Controle
+
+### Container de Dependências
+
+```python
+from typing import Dict, Any, Callable
+from functools import wraps
+
+class DIContainer:
+    def __init__(self):
+        self._services: Dict[str, Any] = {}
+        self._singletons: Dict[str, Any] = {}
+    
+    def register(self, name: str, factory: Callable, singleton: bool = False):
+        self._services[name] = (factory, singleton)
+    
+    def get(self, name: str):
+        if name not in self._services:
+            raise ValueError(f"Service '{name}' not registered")
+        
+        factory, is_singleton = self._services[name]
+        
+        if is_singleton:
+            if name not in self._singletons:
+                self._singletons[name] = factory()
+            return self._singletons[name]
+        
+        return factory()
+    
+    def inject(self, *service_names):
+        def decorator(func):
+            @wraps(func)
+            def wrapper(*args, **kwargs):
+                services = [self.get(name) for name in service_names]
+                return func(*services, *args, **kwargs)
+            return wrapper
+        return decorator
+
+# Usage
+container = DIContainer()
+
+# Registration
+container.register('user_repository', lambda: SQLUserRepository(db_session), singleton=True)
+container.register('email_service', lambda: SMTPEmailService(config), singleton=True)
+container.register('user_service', lambda: UserService(
+    container.get('user_repository'),
+    container.get('email_service')
+))
+
+# Injection
+@container.inject('user_service')
+def create_user_endpoint(user_service, user_data):
+    return user_service.create_user(user_data)
+```
+
+---
+
+## Repository Pattern e Data Access
+
+### Generic Repository
+
+```python
+from typing import TypeVar, Generic, List, Optional
+from abc import ABC, abstractmethod
+
+T = TypeVar('T')
+
+class Repository(Generic[T], ABC):
+    @abstractmethod
+    def save(self, entity: T) -> T:
+        pass
+    
+    @abstractmethod
+    def get_by_id(self, entity_id: int) -> Optional[T]:
+        pass
+    
+    @abstractmethod
+    def get_all(self) -> List[T]:
+        pass
+    
+    @abstractmethod
+    def delete(self, entity_id: int) -> bool:
+        pass
+    
+    @abstractmethod
+    def exists(self, entity_id: int) -> bool:
+        pass
+
+class SQLAlchemyRepository(Repository[T]):
+    def __init__(self, session, model_class):
+        self._session = session
+        self._model_class = model_class
+    
+    def save(self, entity: T) -> T:
+        if hasattr(entity, 'id') and entity.id:
+            return self._update(entity)
+        return self._create(entity)
+    
+    def _create(self, entity: T) -> T:
+        db_entity = self._model_class(**entity.__dict__)
+        self._session.add(db_entity)
+        self._session.commit()
+        self._session.refresh(db_entity)
+        return self._to_domain_entity(db_entity)
+    
+    def _update(self, entity: T) -> T:
+        db_entity = self._session.query(self._model_class).get(entity.id)
+        if not db_entity:
+            raise EntityNotFoundError(f"Entity with ID {entity.id} not found")
+        
+        for key, value in entity.__dict__.items():
+            if hasattr(db_entity, key):
+                setattr(db_entity, key, value)
+        
+        self._session.commit()
+        return self._to_domain_entity(db_entity)
+    
+    def get_by_id(self, entity_id: int) -> Optional[T]:
+        db_entity = self._session.query(self._model_class).get(entity_id)
+        return self._to_domain_entity(db_entity) if db_entity else None
+    
+    def get_all(self) -> List[T]:
+        db_entities = self._session.query(self._model_class).all()
+        return [self._to_domain_entity(db_entity) for db_entity in db_entities]
+    
+    def delete(self, entity_id: int) -> bool:
+        db_entity = self._session.query(self._model_class).get(entity_id)
+        if db_entity:
+            self._session.delete(db_entity)
+            self._session.commit()
+            return True
+        return False
+    
+    def exists(self, entity_id: int) -> bool:
+        return self._session.query(self._model_class).filter_by(id=entity_id).first() is not None
+    
+    def _to_domain_entity(self, db_entity) -> T:
+        # Convert SQLAlchemy model to domain entity
+        pass
+```
+
+### Unit of Work Pattern
+
+```python
+class UnitOfWork:
+    def __init__(self, session_factory):
+        self._session_factory = session_factory
+        self._session = None
+    
+    def __enter__(self):
+        self._session = self._session_factory()
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type:
+            self.rollback()
+        else:
+            self.commit()
+        self._session.close()
+    
+    def commit(self):
+        self._session.commit()
+    
+    def rollback(self):
+        self._session.rollback()
+    
+    @property
+    def users(self):
+        return SQLAlchemyRepository(self._session, UserModel)
+    
+    @property
+    def orders(self):
+        return SQLAlchemyRepository(self._session, OrderModel)
+
+# Usage
+def transfer_user_data(user_id: int, target_user_id: int):
+    with UnitOfWork(session_factory) as uow:
+        user = uow.users.get_by_id(user_id)
+        target_user = uow.users.get_by_id(target_user_id)
+        
+        # Business logic here
+        user.transfer_data_to(target_user)
+        
+        uow.users.save(user)
+        uow.users.save(target_user)
+        # Automatic commit on successful exit
+```
+
+---
+
+## Service Layer e Domain Logic
+
+### Domain Services
+
+```python
+class UserDomainService:
+    def __init__(self, user_repository: UserRepositoryPort):
+        self._user_repository = user_repository
+    
+    def can_user_perform_action(self, user_id: int, action: str) -> bool:
+        user = self._user_repository.get_by_id(user_id)
+        if not user:
+            return False
+        
+        # Complex business logic
+        if action == "create_order" and not user.is_verified:
+            return False
+        
+        if action == "admin_action" and not user.has_admin_role():
+            return False
+        
+        return True
+    
+    def calculate_user_discount(self, user_id: int) -> float:
+        user = self._user_repository.get_by_id(user_id)
+        if not user:
+            return 0.0
+        
+        # Complex discount calculation logic
+        base_discount = 0.05 if user.is_premium else 0.0
+        loyalty_discount = min(user.years_active * 0.01, 0.15)
+        
+        return base_discount + loyalty_discount
+```
+
+### Application Services (Use Cases)
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class CreateUserCommand:
+    email: str
+    name: str
+    password: str
+
+@dataclass
+class UserResponseDTO:
+    id: int
+    email: str
+    name: str
+    created_at: str
+    is_active: bool
+
+class CreateUserUseCase:
+    def __init__(
+        self,
+        user_repository: UserRepositoryPort,
+        password_hasher: PasswordHasherPort,
+        event_publisher: EventPublisher,
+        email_validator: EmailValidatorPort
+    ):
+        self._user_repository = user_repository
+        self._password_hasher = password_hasher
+        self._event_publisher = event_publisher
+        self._email_validator = email_validator
+    
+    def execute(self, command: CreateUserCommand) -> UserResponseDTO:
+        # Validation
+        if not self._email_validator.is_valid(command.email):
+            raise InvalidEmailError("Invalid email format")
+        
+        if self._user_repository.get_by_email(command.email):
+            raise UserAlreadyExistsError("User with this email already exists")
+        
+        # Business logic
+        hashed_password = self._password_hasher.hash(command.password)
+        
+        user = User(
+            id=None,
+            email=command.email,
+            name=command.name,
+            password_hash=hashed_password,
+            created_at=datetime.utcnow(),
+            is_active=True
+        )
+        
+        # Persistence
+        created_user = self._user_repository.save(user)
+        
+        # Domain events
+        event = DomainEvent(
+            event_type="user_created",
+            data={
+                "user_id": created_user.id,
+                "email": created_user.email,
+                "name": created_user.name
+            }
+        )
+        self._event_publisher.publish(event)
+        
+        # Response
+        return UserResponseDTO(
+            id=created_user.id,
+            email=created_user.email,
+            name=created_user.name,
+            created_at=created_user.created_at.isoformat(),
+            is_active=created_user.is_active
+        )
+```
+
+---
+
+## Error Handling e Logging
+
+### Custom Exceptions
+
+```python
+class DomainException(Exception):
+    """Base exception for domain-related errors."""
+    def __init__(self, message: str, error_code: str = None):
+        super().__init__(message)
+        self.message = message
+        self.error_code = error_code
+
+class ValidationError(DomainException):
+    """Raised when input validation fails."""
+    pass
+
+class BusinessRuleViolationError(DomainException):
+    """Raised when a business rule is violated."""
+    pass
+
+class EntityNotFoundError(DomainException):
+    """Raised when a requested entity is not found."""
+    pass
+
+class ConcurrencyError(DomainException):
+    """Raised when a concurrency conflict occurs."""
+    pass
+```
+
+### Structured Logging
+
+```python
+import logging
+import json
+from datetime import datetime
+from typing import Dict, Any
+
+class StructuredLogger:
+    def __init__(self, name: str):
+        self.logger = logging.getLogger(name)
+        
+    def _log(self, level: int, message: str, **kwargs):
+        log_data = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "level": logging.getLevelName(level),
+            "message": message,
+            **kwargs
+        }
+        self.logger.log(level, json.dumps(log_data))
+    
+    def info(self, message: str, **kwargs):
+        self._log(logging.INFO, message, **kwargs)
+    
+    def error(self, message: str, **kwargs):
+        self._log(logging.ERROR, message, **kwargs)
+    
+    def warning(self, message: str, **kwargs):
+        self._log(logging.WARNING, message, **kwargs)
+
+# Usage
+logger = StructuredLogger(__name__)
+
+def create_user(user_data):
+    logger.info(
+        "Creating user",
+        user_email=user_data.get("email"),
+        action="user_creation_started"
+    )
+    
+    try:
+        # User creation logic
+        user = user_service.create_user(user_data)
+        
+        logger.info(
+            "User created successfully",
+            user_id=user.id,
+            user_email=user.email,
+            action="user_creation_completed"
+        )
+        
+        return user
+        
+    except ValidationError as e:
+        logger.error(
+            "User creation failed - validation error",
+            error=str(e),
+            error_code=e.error_code,
+            user_email=user_data.get("email"),
+            action="user_creation_failed"
+        )
+        raise
+    
+    except Exception as e:
+        logger.error(
+            "User creation failed - unexpected error",
+            error=str(e),
+            error_type=type(e).__name__,
+            user_email=user_data.get("email"),
+            action="user_creation_failed"
+        )
+        raise
+```
+
+### Error Handler Decorator
+
+```python
+from functools import wraps
+from typing import Callable, Type, Dict
+
+def handle_errors(
+    error_mappings: Dict[Type[Exception], Callable] = None,
+    default_handler: Callable = None,
+    reraise: bool = True
+):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                if error_mappings and type(e) in error_mappings:
+                    error_mappings[type(e)](e)
+                elif default_handler:
+                    default_handler(e)
+                
+                if reraise:
+                    raise
+                
+        return wrapper
+    return decorator
+
+# Usage
+def log_validation_error(error: ValidationError):
+    logger.error(f"Validation failed: {error.message}", error_code=error.error_code)
+
+def log_not_found_error(error: EntityNotFoundError):
+    logger.warning(f"Entity not found: {error.message}")
+
+@handle_errors(
+    error_mappings={
+        ValidationError: log_validation_error,
+        EntityNotFoundError: log_not_found_error
+    }
+)
+def create_user_endpoint(user_data):
+    return user_service.create_user(user_data)
+```
+
+---
+
+## Testing Strategies
+
+### Test Doubles e Mocking
+
+```python
+import pytest
+from unittest.mock import Mock, patch
+from typing import List
+
+class FakeUserRepository(UserRepositoryPort):
+    def __init__(self):
+        self._users: Dict[int, User] = {}
+        self._next_id = 1
+    
+    def save(self, user: User) -> User:
+        if not user.id:
+            user.id = self._next_id
+            self._next_id += 1
+        self._users[user.id] = user
+        return user
+    
+    def get_by_id(self, user_id: int) -> User:
+        return self._users.get(user_id)
+    
+    def get_by_email(self, email: str) -> User:
+        for user in self._users.values():
+            if user.email == email:
+                return user
+        return None
+
+class TestCreateUserUseCase:
+    def setup_method(self):
+        self.user_repository = FakeUserRepository()
+        self.password_hasher = Mock()
+        self.email_validator = Mock()
+        self.event_publisher = Mock()
+        
+        self.use_case = CreateUserUseCase(
+            self.user_repository,
+            self.password_hasher,
+            self.event_publisher,
+            self.email_validator
+        )
+    
+    def test_create_user_success(self):
+        # Arrange
+        command = CreateUserCommand(
+            email="test@example.com",
+            name="Test User",
+            password="password123"
+        )
+        
+        self.email_validator.is_valid.return_value = True
+        self.password_hasher.hash.return_value = "hashed_password"
+        
+        # Act
+        result = self.use_case.execute(command)
+        
+        # Assert
+        assert result.email == "test@example.com"
+        assert result.name == "Test User"
+        assert result.is_active is True
+        
+        self.password_hasher.hash.assert_called_once_with("password123")
+        self.event_publisher.publish.assert_called_once()
+    
+    def test_create_user_invalid_email(self):
+        # Arrange
+        command = CreateUserCommand(
+            email="invalid-email",
+            name="Test User",
+            password="password123"
+        )
+        
+        self.email_validator.is_valid.return_value = False
+        
+        # Act & Assert
+        with pytest.raises(InvalidEmailError):
+            self.use_case.execute(command)
+    
+    def test_create_user_already_exists(self):
+        # Arrange
+        existing_user = User(
+            id=1,
+            email="test@example.com",
+            name="Existing User",
+            password_hash="hash",
+            created_at=datetime.utcnow()
+        )
+        self.user_repository.save(existing_user)
+        
+        command = CreateUserCommand(
+            email="test@example.com",
+            name="Test User",
+            password="password123"
+        )
+        
+        self.email_validator.is_valid.return_value = True
+        
+        # Act & Assert
+        with pytest.raises(UserAlreadyExistsError):
+            self.use_case.execute(command)
+```
+
+### Integration Tests
+
+```python
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from testcontainers.postgres import PostgresContainer
+
+class TestUserRepositoryIntegration:
+    @pytest.fixture(scope="class")
+    def postgres_container(self):
+        with PostgresContainer("postgres:13") as postgres:
+            yield postgres
+    
+    @pytest.fixture(scope="class")
+    def db_session(self, postgres_container):
+        engine = create_engine(postgres_container.get_connection_url())
+        Base.metadata.create_all(engine)
+        
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        
+        yield session
+        
+        session.close()
+    
+    def test_user_repository_crud_operations(self, db_session):
+        # Arrange
+        repository = SQLUserRepository(db_session)
+        
+        user = User(
+            id=None,
+            email="test@example.com",
+            name="Test User",
+            password_hash="hashed_password",
+            created_at=datetime.utcnow()
+        )
+        
+        # Act - Create
+        saved_user = repository.save(user)
+        
+        # Assert - Create
+        assert saved_user.id is not None
+        assert saved_user.email == "test@example.com"
+        
+        # Act - Read
+        retrieved_user = repository.get_by_id(saved_user.id)
+        
+        # Assert - Read
+        assert retrieved_user is not None
+        assert retrieved_user.email == "test@example.com"
+        
+        # Act - Update
+        retrieved_user.name = "Updated Name"
+        updated_user = repository.save(retrieved_user)
+        
+        # Assert - Update
+        assert updated_user.name == "Updated Name"
+        
+        # Act - Delete
+        deleted = repository.delete(saved_user.id)
+        
+        # Assert - Delete
+        assert deleted is True
+        assert repository.get_by_id(saved_user.id) is None
+```
+
+---
+
+## Performance e Otimizações
+
+### Database Query Optimization
+
+```python
+from sqlalchemy.orm import selectinload, joinedload
+from sqlalchemy import and_, or_
+
+class OptimizedUserRepository(SQLAlchemyRepository):
+    def get_users_with_orders(self, limit: int = 100) -> List[User]:
+        """Carrega usuários com suas ordens usando eager loading."""
+        query = (
+            self._session.query(UserModel)
+            .options(selectinload(UserModel.orders))
+            .limit(limit)
+        )
+        
+        db_users = query.all()
+        return [self._to_domain_entity(user) for user in db_users]
+    
+    def get_active_users_with_recent_activity(
+        self, 
+        days: int = 30,
+        limit: int = 100
+    ) -> List[User]:
+        """Query otimizada para usuários ativos com atividade recente."""
+        cutoff_date = datetime.utcnow() - timedelta(days=days)
+        
+        query = (
+            self._session.query(UserModel)
+            .filter(
+                and_(
+                    UserModel.is_active == True,
+                    UserModel.last_activity >= cutoff_date
+                )
+            )
+            .order_by(UserModel.last_activity.desc())
+            .limit(limit)
+        )
+        
+        return [self._to_domain_entity(user) for user in query.all()]
+
+# Pagination otimizada
+class PaginatedResult:
+    def __init__(self, items: List, total: int, page: int, per_page: int):
+        self.items = items
+        self.total = total
+        self.page = page
+        self.per_page = per_page
+        self.has_next = (page * per_page) < total
+        self.has_prev = page > 1
+
+def paginate_query(query, page: int, per_page: int) -> PaginatedResult:
+    """Paginação eficiente com contagem otimizada."""
+    total = query.count()
+    
+    if total == 0:
+        return PaginatedResult([], 0, page, per_page)
+    
+    offset = (page - 1) * per_page
+    items = query.offset(offset).limit(per_page).all()
+    
+    return PaginatedResult(items, total, page, per_page)
+```
+
+### Caching Strategies
+
+```python
+import redis
+import pickle
+from functools import wraps
+from typing import Any, Optional
+
+class CacheService:
+    def __init__(self, redis_client: redis.Redis):
+        self._redis = redis_client
+    
+    def get(self, key: str) -> Optional[Any]:
+        """Recupera valor do cache."""
+        try:
+            cached_value = self._redis.get(key)
+            if cached_value:
+                return pickle.loads(cached_value)
+        except Exception as e:
+            logger.warning(f"Cache get failed for key {key}: {e}")
+        return None
+    
+    def set(self, key: str, value: Any, ttl: int = 3600) -> bool:
+        """Armazena valor no cache com TTL."""
+        try:
+            serialized_value = pickle.dumps(value)
+            return self._redis.setex(key, ttl, serialized_value)
+        except Exception as e:
+            logger.warning(f"Cache set failed for key {key}: {e}")
+            return False
+    
+    def delete(self, key: str) -> bool:
+        """Remove valor do cache."""
+        try:
+            return bool(self._redis.delete(key))
+        except Exception as e:
+            logger.warning(f"Cache delete failed for key {key}: {e}")
+            return False
+    
+    def invalidate_pattern(self, pattern: str) -> int:
+        """Invalida todas as chaves que correspondem ao padrão."""
+        try:
+            keys = self._redis.keys(pattern)
+            if keys:
+                return self._redis.delete(*keys)
+            return 0
+        except Exception as e:
+            logger.warning(f"Cache pattern invalidation failed for {pattern}: {e}")
+            return 0
+
+def cached(
+    key_template: str,
+    ttl: int = 3600,
+    cache_service: CacheService = None
+):
+    """Decorator para cache automático de métodos."""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            if not cache_service:
+                return func(*args, **kwargs)
+            
+            # Gera chave do cache baseada nos argumentos
+            cache_key = key_template.format(*args, **kwargs)
+            
+            # Tenta recuperar do cache
+            cached_result = cache_service.get(cache_key)
+            if cached_result is not None:
+                logger.info(f"Cache hit for key: {cache_key}")
+                return cached_result
+            
+            # Executa função e armazena no cache
+            result = func(*args, **kwargs)
+            cache_service.set(cache_key, result, ttl)
+            logger.info(f"Cache miss - stored result for key: {cache_key}")
+            
+            return result
+        
+        return wrapper
+    return decorator
+
+# Usage
+class UserService:
+    def __init__(self, user_repository: UserRepositoryPort, cache_service: CacheService):
+        self._user_repository = user_repository
+        self._cache_service = cache_service
+    
+    @cached(key_template="user:{0}", ttl=1800, cache_service=None)  # Injected via property
+    def get_user_by_id(self, user_id: int) -> Optional[User]:
+        return self._user_repository.get_by_id(user_id)
+    
+    @property
+    def get_user_by_id(self):
+        return cached(
+            key_template="user:{0}",
+            ttl=1800,
+            cache_service=self._cache_service
+        )(self._get_user_by_id)
+    
+    def _get_user_by_id(self, user_id: int) -> Optional[User]:
+        return self._user_repository.get_by_id(user_id)
+    
+    def update_user(self, user: User) -> User:
+        updated_user = self._user_repository.save(user)
+        
+        # Invalida cache relacionado
+        self._cache_service.delete(f"user:{user.id}")
+        self._cache_service.invalidate_pattern(f"user_list:*")
+        
+        return updated_user
+```
+
+### Async/Await Patterns
+
+```python
+import asyncio
+import aiohttp
+from typing import List
+from asyncio import gather
+
+class AsyncUserService:
+    def __init__(self, user_repository: AsyncUserRepositoryPort):
+        self._user_repository = user_repository
+    
+    async def get_user_with_external_data(self, user_id: int) -> dict:
+        """Carrega dados do usuário e informações externas concorrentemente."""
+        
+        async def get_user():
+            return await self._user_repository.get_by_id(user_id)
+        
+        async def get_user_profile_from_api(user_id: int):
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"/api/profiles/{user_id}") as response:
+                    return await response.json()
+        
+        async def get_user_preferences(user_id: int):
+            # Simulação de chamada assíncrona
+            await asyncio.sleep(0.1)
+            return {"theme": "dark", "notifications": True}
+        
+        # Executa todas as operações concorrentemente
+        user, profile, preferences = await gather(
+            get_user(),
+            get_user_profile_from_api(user_id),
+            get_user_preferences(user_id),
+            return_exceptions=True
+        )
+        
+        # Trata erros individuais
+        if isinstance(user, Exception):
+            raise user
+        
+        result = {"user": user}
+        
+        if not isinstance(profile, Exception):
+            result["profile"] = profile
+        
+        if not isinstance(preferences, Exception):
+            result["preferences"] = preferences
+        
+        return result
+
+# Background Tasks
+import asyncio
+from typing import Callable, Any
+from datetime import datetime
+
+class BackgroundTaskManager:
+    def __init__(self):
+        self._tasks: List[asyncio.Task] = []
+    
+    def add_task(self, coro) -> asyncio.Task:
+        """Adiciona uma tarefa em background."""
+        task = asyncio.create_task(coro)
+        self._tasks.append(task)
+        
+        # Remove task da lista quando completa
+        task.add_done_callback(self._tasks.remove)
+        
+        return task
+    
+    async def wait_all(self):
+        """Aguarda todas as tarefas completarem."""
+        if self._tasks:
+            await asyncio.gather(*self._tasks, return_exceptions=True)
+
+# Usage
+background_tasks = BackgroundTaskManager()
+
+async def send_welcome_email_async(user_email: str):
+    """Simula envio de email assíncrono."""
+    await asyncio.sleep(2)  # Simula latência
+    logger.info(f"Welcome email sent to {user_email}")
+
+async def create_user_endpoint(user_data: dict):
+    user = await user_service.create_user(user_data)
+    
+    # Adiciona tarefa em background
+    background_tasks.add_task(
+        send_welcome_email_async(user.email)
+    )
+    
+    return {"user_id": user.id, "status": "created"}
+```
+
+---
+
+## Security Best Practices
+
+### Authentication e Authorization
+
+```python
+import jwt
+import bcrypt
+from datetime import datetime, timedelta
+from typing import Optional, Dict, Any
+
+class PasswordService:
+    @staticmethod
+    def hash_password(password: str) -> str:
+        """Gera hash seguro da senha."""
+        salt = bcrypt.gensalt()
+        return bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
+    
+    @staticmethod
+    def verify_password(password: str, hashed: str) -> bool:
+        """Verifica se a senha corresponde ao hash."""
+        return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
+
+class JWTService:
+    def __init__(self, secret_key: str, algorithm: str = "HS256"):
+        self._secret_key = secret_key
+        self._algorithm = algorithm
+    
+    def generate_token(
+        self, 
+        user_id: int, 
+        permissions: List[str],
+        expires_in: int = 3600
+    ) -> str:
+        """Gera JWT token."""
+        payload = {
+            "user_id": user_id,
+            "permissions": permissions,
+            "exp": datetime.utcnow() + timedelta(seconds=expires_in),
+            "iat": datetime.utcnow(),
+            "type": "access"
+        }
+        
+        return jwt.encode(payload, self._secret_key, algorithm=self._algorithm)
+    
+    def verify_token(self, token: str) -> Optional[Dict[str, Any]]:
+        """Verifica e decodifica JWT token."""
+        try:
+            payload = jwt.decode(
+                token, 
+                self._secret_key, 
+                algorithms=[self._algorithm]
+            )
+            return payload
+        except jwt.ExpiredSignatureError:
+            raise TokenExpiredError("Token has expired")
+        except jwt.InvalidTokenError:
+            raise InvalidTokenError("Invalid token")
+
+class AuthorizationService:
+    def __init__(self):
+        self._permissions = {
+            "admin": ["*"],
+            "user": ["read_own_data", "update_own_data"],
+            "moderator": ["read_all_data", "moderate_content"]
+        }
+    
+    def user_has_permission(self, user_permissions: List[str], required_permission: str) -> bool:
+        """Verifica se usuário tem a permissão necessária."""
+        if "*" in user_permissions:
+            return True
+        
+        return required_permission in user_permissions
+    
+    def require_permission(self, permission: str):
+        """Decorator para exigir permissão específica."""
+        def decorator(func):
+            @wraps(func)
+            def wrapper(*args, **kwargs):
+                # Assume que o contexto atual tem informações do usuário
+                current_user = get_current_user()  # Implementation needed
+                
+                if not current_user:
+                    raise UnauthorizedError("Authentication required")
+                
+                if not self.user_has_permission(current_user.permissions, permission):
+                    raise ForbiddenError(f"Permission '{permission}' required")
+                
+                return func(*args, **kwargs)
+            
+            return wrapper
+        return decorator
+
+# Rate Limiting
+class RateLimiter:
+    def __init__(self, redis_client: redis.Redis):
+        self._redis = redis_client
+    
+    def is_allowed(
+        self, 
+        key: str, 
+        limit: int, 
+        window_seconds: int
+    ) -> bool:
+        """Verifica se requisição está dentro do limite."""
+        current_time = int(datetime.utcnow().timestamp())
+        window_start = current_time - window_seconds
+        
+        # Remove registros antigos
+        self._redis.zremrangebyscore(key, 0, window_start)
+        
+        # Conta requisições no período
+        current_count = self._redis.zcard(key)
+        
+        if current_count >= limit:
+            return False
+        
+        # Adiciona requisição atual
+        self._redis.zadd(key, {str(current_time): current_time})
+        self._redis.expire(key, window_seconds)
+        
+        return True
+    
+    def rate_limit(self, key_template: str, limit: int, window: int):
+        """Decorator para rate limiting."""
+        def decorator(func):
+            @wraps(func)
+            def wrapper(*args, **kwargs):
+                # Gera chave baseada nos argumentos
+                key = key_template.format(*args, **kwargs)
+                
+                if not self.is_allowed(key, limit, window):
+                    raise RateLimitExceededError(
+                        f"Rate limit exceeded: {limit} requests per {window} seconds"
+                    )
+                
+                return func(*args, **kwargs)
+            
+            return wrapper
+        return decorator
+
+# Input Validation e Sanitization
+from marshmallow import Schema, fields, validate, ValidationError
+
+class CreateUserSchema(Schema):
+    email = fields.Email(required=True)
+    name = fields.Str(
+        required=True, 
+        validate=validate.Length(min=2, max=100)
+    )
+    password = fields.Str(
+        required=True,
+        validate=validate.Length(min=8, max=128)
+    )
+    age = fields.Int(
+        validate=validate.Range(min=13, max=120),
+        allow_none=True
+    )
+
+class InputValidator:
+    @staticmethod
+    def validate_and_sanitize(data: dict, schema: Schema) -> dict:
+        """Valida e sanitiza dados de entrada."""
+        try:
+            # Validação
+            validated_data = schema.load(data)
+            
+            # Sanitização adicional
+            if 'name' in validated_data:
+                validated_data['name'] = validated_data['name'].strip()
+            
+            return validated_data
+            
+        except ValidationError as e:
+            raise ValidationError(f"Input validation failed: {e.messages}")
+
+# Usage
+@authorization_service.require_permission("create_user")
+@rate_limiter.rate_limit("create_user:{0}", limit=5, window=300)  # 5 por 5min
+def create_user_endpoint(request_data: dict, user_id: int):
+    # Validação de entrada
+    validated_data = InputValidator.validate_and_sanitize(
+        request_data, 
+        CreateUserSchema()
+    )
+    
+    return user_service.create_user(validated_data)
+```
+
+### SQL Injection Prevention
+
+```python
+from sqlalchemy import text
+from typing import List, Dict, Any
+
+class SecureUserRepository(SQLAlchemyRepository):
+    def search_users(self, search_params: Dict[str, Any]) -> List[User]:
+        """Busca segura de usuários com parâmetros parametrizados."""
+        
+        # ✅ Uso seguro de parâmetros
+        query = text("""
+            SELECT * FROM users 
+            WHERE (:email IS NULL OR email ILIKE :email)
+            AND (:name IS NULL OR name ILIKE :name)
+            AND (:is_active IS NULL OR is_active = :is_active)
+            ORDER BY created_at DESC
+            LIMIT :limit
+        """)
+        
+        params = {
+            'email': f"%{search_params.get('email')}%" if search_params.get('email') else None,
+            'name': f"%{search_params.get('name')}%" if search_params.get('name') else None,
+            'is_active': search_params.get('is_active'),
+            'limit': min(search_params.get('limit', 100), 1000)  # Limita resultados
+        }
+        
+        result = self._session.execute(query, params)
+        return [self._to_domain_entity(row) for row in result]
+    
+    def get_users_by_ids(self, user_ids: List[int]) -> List[User]:
+        """Busca múltiplos usuários por IDs de forma segura."""
+        if not user_ids:
+            return []
+        
+        # Validação dos IDs
+        validated_ids = []
+        for user_id in user_ids:
+            if isinstance(user_id, int) and user_id > 0:
+                validated_ids.append(user_id)
+        
+        if not validated_ids:
+            return []
+        
+        # Query segura usando IN com parâmetros
+        placeholders = ','.join([f':id_{i}' for i in range(len(validated_ids))])
+        query = text(f"SELECT * FROM users WHERE id IN ({placeholders})")
+        
+        params = {f'id_{i}': user_id for i, user_id in enumerate(validated_ids)}
+        
+        result = self._session.execute(query, params)
+        return [self._to_domain_entity(row) for row in result]
+
+# Content Security
+import html
+import re
+from urllib.parse import quote
+
+class SecurityUtils:
+    @staticmethod
+    def sanitize_html(content: str) -> str:
+        """Remove/escapa conteúdo HTML perigoso."""
+        if not content:
+            return ""
+        
+        # Escape HTML básico
+        sanitized = html.escape(content)
+        
+        # Remove scripts e outros elementos perigosos
+        dangerous_patterns = [
+            r'<script[^>]*>.*?</script>',
+            r'<iframe[^>]*>.*?</iframe>',
+            r'javascript:',
+            r'vbscript:',
+            r'data:',
+        ]
+        
+        for pattern in dangerous_patterns:
+            sanitized = re.sub(pattern, '', sanitized, flags=re.IGNORECASE | re.DOTALL)
+        
+        return sanitized
+    
+    @staticmethod
+    def validate_url(url: str) -> bool:
+        """Valida se URL é segura."""
+        if not url:
+            return False
+        
+        # Lista de esquemas permitidos
+        allowed_schemes = ['http', 'https']
+        
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            
+            if parsed.scheme not in allowed_schemes:
+                return False
+            
+            # Verifica domínios suspeitos
+            suspicious_domains = ['localhost', '127.0.0.1', '0.0.0.0']
+            if parsed.hostname in suspicious_domains:
+                return False
+            
+            return True
+            
+        except Exception:
+            return False
+    
+    @staticmethod
+    def generate_secure_filename(filename: str) -> str:
+        """Gera nome de arquivo seguro."""
+        if not filename:
+            return "unnamed_file"
+        
+        # Remove caracteres perigosos
+        safe_chars = re.sub(r'[^\w\-_\.]', '_', filename)
+        
+        # Limita tamanho
+        if len(safe_chars) > 255:
+            name, ext = safe_chars.rsplit('.', 1) if '.' in safe_chars else (safe_chars, '')
+            safe_chars = name[:250] + ('.' + ext if ext else '')
+        
+        return safe_chars
+```
+
+---
+
+## Monitoramento e Observabilidade
+
+### Metrics e Health Checks
+
+```python
+import time
+from typing import Dict, Any, Callable
+from datetime import datetime
+from dataclasses import dataclass
+
+@dataclass
+class MetricPoint:
+    name: str
+    value: float
+    timestamp: datetime
+    tags: Dict[str, str] = None
+
+class MetricsCollector:
+    def __init__(self):
+        self._metrics: List[MetricPoint] = []
+        self._counters: Dict[str, int] = {}
+        self._timers: Dict[str, List[float]] = {}
+    
+    def increment_counter(self, name: str, value: int = 1, tags: Dict[str, str] = None):
+        """Incrementa contador."""
+        key = f"{name}:{str(sorted(tags.items()) if tags else [])}"
+        self._counters[key] = self._counters.get(key, 0) + value
+        
+        self._metrics.append(MetricPoint(
+            name=f"{name}.count",
+            value=self._counters[key],
+            timestamp=datetime.utcnow(),
+            tags=tags
+        ))
+    
+    def record_timer(self, name: str, duration: float, tags: Dict[str, str] = None):
+        """Registra tempo de execução."""
+        key = f"{name}:{str(sorted(tags.items()) if tags else [])}"
+        if key not in self._timers:
+            self._timers[key] = []
+        
+        self._timers[key].append(duration)
+        
+        self._metrics.append(MetricPoint(
+            name=f"{name}.duration",
+            value=duration,
+            timestamp=datetime.utcnow(),
+            tags=tags
+        ))
+    
+    def gauge(self, name: str, value: float, tags: Dict[str, str] = None):
+        """Registra valor gauge."""
+        self._metrics.append(MetricPoint(
+            name=name,
+            value=value,
+            timestamp=datetime.utcnow(),
+            tags=tags
+        ))
+    
+    def timer(self, name: str, tags: Dict[str, str] = None):
+        """Context manager para medir tempo."""
+        class Timer:
+            def __init__(self, collector, metric_name, metric_tags):
+                self.collector = collector
+                self.name = metric_name
+                self.tags = metric_tags
+                self.start_time = None
+            
+            def __enter__(self):
+                self.start_time = time.time()
+                return self
+            
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                duration = time.time() - self.start_time
+                self.collector.record_timer(self.name, duration, self.tags)
+        
+        return Timer(self, name, tags)
+
+# Usage
+metrics = MetricsCollector()
+
+def timed_operation(operation_name: str):
+    """Decorator para medir tempo de operações."""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            with metrics.timer(f"{operation_name}.execution_time"):
+                try:
+                    result = func(*args, **kwargs)
+                    metrics.increment_counter(
+                        f"{operation_name}.success",
+                        tags={"function": func.__name__}
+                    )
+                    return result
+                except Exception as e:
+                    metrics.increment_counter(
+                        f"{operation_name}.error",
+                        tags={
+                            "function": func.__name__,
+                            "error_type": type(e).__name__
+                        }
+                    )
+                    raise
+        return wrapper
+    return decorator
+
+@timed_operation("user_service")
+def create_user(user_data):
+    return user_service.create_user(user_data)
+
+# Health Checks
+class HealthChecker:
+    def __init__(self):
+        self._checks: Dict[str, Callable] = {}
+    
+    def register_check(self, name: str, check_func: Callable):
+        """Registra verificação de saúde."""
+        self._checks[name] = check_func
+    
+    async def run_checks(self) -> Dict[str, Any]:
+        """Executa todas as verificações."""
+        results = {
+            "status": "healthy",
+            "timestamp": datetime.utcnow().isoformat(),
+            "checks": {}
+        }
+        
+        overall_healthy = True
+        
+        for name, check_func in self._checks.items():
+            try:
+                start_time = time.time()
+                check_result = await check_func() if asyncio.iscoroutinefunction(check_func) else check_func()
+                duration = time.time() - start_time
+                
+                results["checks"][name] = {
+                    "status": "healthy" if check_result else "unhealthy",
+                    "duration_ms": round(duration * 1000, 2),
+                    "details": check_result if isinstance(check_result, dict) else None
+                }
+                
+                if not check_result:
+                    overall_healthy = False
+                    
+            except Exception as e:
+                results["checks"][name] = {
+                    "status": "error",
+                    "error": str(e),
+                    "duration_ms": 0
+                }
+                overall_healthy = False
+        
+        results["status"] = "healthy" if overall_healthy else "unhealthy"
+        return results
+
+# Health check implementations
+def database_health_check():
+    """Verifica conectividade com banco de dados."""
+    try:
+        # Simple query to check database
+        session.execute(text("SELECT 1"))
+        return True
+    except Exception:
+        return False
+
+def redis_health_check():
+    """Verifica conectividade com Redis."""
+    try:
+        redis_client.ping()
+        return True
+    except Exception:
+        return False
+
+async def external_api_health_check():
+    """Verifica API externa."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get("/health", timeout=5) as response:
+                return response.status == 200
+    except Exception:
+        return False
+
+# Setup
+health_checker = HealthChecker()
+health_checker.register_check("database", database_health_check)
+health_checker.register_check("redis", redis_health_check)
+health_checker.register_check("external_api", external_api_health_check)
+```
+
+---
+
+## Conclusão
+
+Este documento apresenta práticas avançadas para desenvolvimento backend em Python, focando em:
+
+### Pontos-chave para implementação:
+
+1. **Arquitetura Limpa**: Separação clara de responsabilidades entre domínio, aplicação e infraestrutura
+2. **Design Patterns**: Uso apropriado de patterns que resolvem problemas específicos
+3. **Testabilidade**: Código desacoplado que facilita testes unitários e de integração
+4. **Performance**: Otimizações de consultas, cache e operações assíncronas
+5. **Segurança**: Implementação de autenticação, autorização e prevenção de vulnerabilidades
+6. **Observabilidade**: Logging estruturado, métricas e health checks
+
+### Próximos passos recomendados:
+
+- Implementar CI/CD com testes automatizados
+- Configurar monitoramento em produção (Prometheus, Grafana)
+- Documentar APIs com OpenAPI/Swagger
+- Implementar circuit breakers para resiliência
+- Considerar Event Sourcing para domínios complexos
+
+### Ferramentas complementares:
+
+- **Linting**: black, flake8, mypy
+- **Testing**: pytest, pytest-cov, factory-boy
+- **Monitoring**: structlog, sentry, datadog
+- **Documentation**: sphinx, mkdocs
+- **Containerization**: Docker, docker-compose, Kubernetes

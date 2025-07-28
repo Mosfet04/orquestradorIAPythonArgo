@@ -80,7 +80,6 @@ class AgentFactoryService:
             return []
     def _create_rag(self, config: AgentConfig) -> TextKnowledgeBase:
         """Cria a base de conhecimento Rag para o agente."""
-        print(f"🔍 Debug RAG Config: {config.rag_config}")
         
         # Define o modelo do embedder, usando um padrão se não especificado
         embedder_model = "nomic-embed-text:latest"
