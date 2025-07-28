@@ -1,7 +1,8 @@
+from pydoc import doc
 from typing import List
 from pymongo import MongoClient
-# from asyncio import tools
 from src.domain.entities.agent_config import AgentConfig
+from src.domain.entities.rag_config import RagConfig
 from src.domain.repositories.agent_config_repository import IAgentConfigRepository
 
 
@@ -59,5 +60,10 @@ class MongoAgentConfigRepository(IAgentConfigRepository):
             descricao=agent_data.get("descricao"),
             prompt=agent_data.get("prompt"),
             active=agent_data.get("active", True),
-            tools_ids=agent_data.get("tools_ids", [])
+            tools_ids=agent_data.get("tools_ids", []),
+            rag_config=RagConfig(
+                active=agent_data.get("rag_config", {}).get("active", False),
+                doc_name=agent_data.get("rag_config", {}).get("doc_name"),
+                model=agent_data.get("rag_config", {}).get("model", "nomic-embed-text:latest")
+            ) if agent_data.get("rag_config") else None
         )

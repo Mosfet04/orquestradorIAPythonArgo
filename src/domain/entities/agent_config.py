@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Optional
+from src.domain.entities.rag_config import RagConfig
 
 
 @dataclass
@@ -12,6 +13,7 @@ class AgentConfig:
     descricao: str
     prompt: str
     tools_ids: Optional[list[str]] = None
+    rag_config: Optional[RagConfig]= None
     active: bool = True
     
     def __post_init__(self):
