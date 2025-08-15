@@ -1,147 +1,107 @@
-# Orquestrador de Agentes IA
+# 🤖 AI Agents Orchestrator / Orquestrador de Agentes IA
 
-Uma aplicação Python que implementa um orquestrador de agentes de IA utilizando arquitetura Onion (Clean Architecture) e princípios de Clean Code.
+<div align="center">
 
-## Arquitetura
+![Python](https://img.shields.io/badge/python-v3.9+-blue.svg)
+![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)
+![MongoDB](https://img.shields.io/badge/MongoDB-%234ea94b.svg?style=for-the-badge&logo=mongodb&logoColor=white)
+![License](https://img.shields.io/badge/license-MIT-green.svg)
 
-A aplicação segue os princípios da arquitetura Onion, organizando o código em camadas bem definidas:
+*A robust Python application implementing an AI agents orchestrator using Onion Architecture (Clean Architecture) and Clean Code principles*
 
-```
-src/
-├── domain/                     # Camada de Domínio (núcleo)
-│   ├── entities/              # Entidades de negócio
-│   │   └── agent_config.py    # Configuração de agente
-│   └── repositories/          # Interfaces de repositórios
-│       └── agent_config_repository.py
-├── application/               # Camada de Aplicação
-│   ├── services/             # Serviços de aplicação
-│   │   └── agent_factory_service.py
-│   └── use_cases/            # Casos de uso
-│       └── get_active_agents_use_case.py
-├── infrastructure/           # Camada de Infraestrutura
-│   ├── config/              # Configurações
-│   │   └── app_config.py
-│   ├── repositories/        # Implementações concretas
-│   │   └── mongo_agent_config_repository.py
-│   └── dependency_injection.py
-└── presentation/            # Camada de Apresentação
-    └── controllers/         # Controllers
-        └── orquestrador_controller.py
-```
+**📖 Full Documentation**
 
-## Princípios Aplicados
+🇧🇷 **[Documentação em Português](README.pt-br.md)** | 🇺🇸 **[English Documentation](README.en.md)**
 
-### Clean Code
-- **Nomes expressivos**: Classes, métodos e variáveis com nomes que expressam claramente sua intenção
-- **Funções pequenas**: Cada função tem uma única responsabilidade
-- **Comentários mínimos**: O código é autoexplicativo
-- **Tratamento de erros**: Validações claras e exceções específicas
+</div>
 
-### Arquitetura Onion
-- **Inversão de dependências**: As camadas externas dependem das internas
-- **Separação de responsabilidades**: Cada camada tem uma responsabilidade específica
-- **Testabilidade**: Facilita a criação de testes unitários e de integração
-- **Flexibilidade**: Permite mudanças de infraestrutura sem afetar a lógica de negócio
+## 🚀 Quick Start
 
-## Camadas da Arquitetura
-
-### 1. Domain (Domínio)
-- **Entidades**: Objetos de negócio puros, sem dependências externas
-- **Repositórios**: Interfaces que definem contratos para acesso a dados
-- **Regras de negócio**: Validações e lógicas centrais da aplicação
-
-### 2. Application (Aplicação)
-- **Use Cases**: Orquestram o fluxo de dados e coordenam entidades
-- **Services**: Serviços de aplicação que implementam lógicas específicas
-- **Não conhece detalhes de infraestrutura**
-
-### 3. Infrastructure (Infraestrutura)
-- **Implementações concretas**: Repositórios, conexões com banco de dados
-- **Configurações**: Gerenciamento de configurações da aplicação
-- **Injeção de dependências**: Container para gerenciar dependências
-
-### 4. Presentation (Apresentação)
-- **Controllers**: Pontos de entrada da aplicação
-- **APIs**: Interfaces REST ou outras formas de comunicação
-- **Formatação de dados**: Conversão entre formatos internos e externos
-
-## Funcionalidades
-
-A aplicação mantém todas as funcionalidades originais:
-
-- ✅ Busca agentes configurados no MongoDB
-- ✅ Cria instâncias de agentes com configurações específicas
-- ✅ Playground para interação com múltiplos agentes
-- ✅ API FastAPI para consumo dos agentes
-- ✅ Montagem de sub-aplicações nas rotas `/playground` e `/api`
-
-## Como executar
-
-1. Instalar dependências:
 ```bash
+# Clone and run
+git clone https://github.com/your-username/orquestradorIAPythonArgo.git
+cd orquestradorIAPythonArgo
 pip install -r requirements.txt
-```
-
-2. Configurar variáveis de ambiente (opcional):
-```bash
-export MONGO_CONNECTION_STRING="mongodb://localhost:27017"
-export MONGO_DATABASE_NAME="agno"
-export APP_TITLE="Orquestrador agno"
-```
-
-3. Executar a aplicação:
-```bash
 python app.py
 ```
 
-## Testes
+**Access:**
+- 🌐 API Documentation: http://localhost:7777/docs
+- 🎮 Interactive Playground: http://localhost:7777/playground
+- ❤️ Health Check: http://localhost:7777/health
 
-Execute os testes unitários:
-```bash
-pytest tests/unit/ -v
+## 🏗️ Architecture Overview
+
+```mermaid
+graph TB
+    subgraph "🎯 Domain"
+        E[Entities]
+        R[Repositories]
+    end
+    
+    subgraph "📋 Application"
+        UC[Use Cases]
+        S[Services]
+    end
+    
+    subgraph "🔧 Infrastructure"
+        DB[(MongoDB)]
+        HTTP[HTTP Tools]
+    end
+    
+    subgraph "🌐 Presentation"
+        API[FastAPI]
+        PG[Playground]
+    end
+    
+    API --> UC
+    PG --> UC
+    UC --> S
+    S --> E
+    S --> R
+    DB --> R
+    HTTP --> R
 ```
 
-Execute os testes de integração:
-```bash
-pytest tests/integration/ -v
-```
+## ✨ Key Features
 
-Execute todos os testes:
-```bash
-pytest tests/ -v
-```
+- 🤖 **Multi-Agent Management** with RAG support
+- 🛠️ **Custom Tools Integration** via HTTP APIs
+- 🧠 **Multiple AI Model Providers** (Ollama, OpenAI, etc.)
+- 🎮 **Interactive Web Playground**
+- 🌐 **RESTful API** with FastAPI
+- 📊 **Structured Logging** and observability
+- 🧪 **Comprehensive Testing** suite
+- 🏗️ **Clean Architecture** implementation
 
-## Benefícios da Nova Arquitetura
+## 📚 Documentation
 
-1. **Manutenibilidade**: Código organizado e fácil de entender
-2. **Testabilidade**: Cada camada pode ser testada independentemente
-3. **Flexibilidade**: Fácil troca de componentes de infraestrutura
-4. **Escalabilidade**: Estrutura que suporta crescimento da aplicação
-5. **Reusabilidade**: Componentes podem ser reutilizados em diferentes contextos
+For complete documentation, choose your language:
 
-## Estrutura de Dados
+### 🇧🇷 Português
+- **[README Completo em Português](README.pt-br.md)** - Documentação detalhada em português
+- Inclui guias para desenvolvedores iniciantes e experientes
+- Diagramas de arquitetura e fluxo de dados
+- Exemplos práticos e configurações
 
-### AgentConfig
-```python
-@dataclass
-class AgentConfig:
-    id: str
-    nome: str
-    model: str
-    descricao: str
-    prompt: str
-    active: bool = True
-```
+### 🇺🇸 English
+- **[Complete English README](README.en.md)** - Detailed documentation in English
+- Includes guides for junior and senior developers
+- Architecture and data flow diagrams
+- Practical examples and configurations
 
-### Configuração do MongoDB
-Os agentes devem estar armazenados na coleção `agents_config` com a seguinte estrutura:
-```json
-{
-    "id": "agent-1",
-    "nome": "Assistente Geral",
-    "model": "llama3.2:latest",
-    "descricao": "Um assistente para tarefas gerais",
-    "prompt": "Você é um assistente útil...",
-    "active": true
-}
-```
+## 🤝 Contributing
+
+Contributions are welcome! Please read our documentation for guidelines on how to contribute to this project.
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+<div align="center">
+
+**Made with ❤️ using Clean Architecture principles**
+
+</div>

@@ -3,41 +3,75 @@ __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
-*.env
-*.venv
+*.so
+*.egg-info/
+*.egg
+build/
+dist/
+.Python
 
-# Logs - Proteger informações de runtime
-logs/
-*.log
-*.log.*
-
-# Arquivos de ambiente com credenciais sensíveis
-.env
-.env.local
-.env.production
-.env.development
-
-# Flask
-instance/
-.env
-*.db
-*.sqlite3
-
-# Virtualenv
+# Virtual Environment
 venv/
 ENV/
 env/
+.venv/
+.env
+.env.local
+.env.production
+*.env
+
+# Logs - Proteger informações de runtime
+logs/*.log
+*.log
+*.log.*
+
+# Flask/FastAPI
+instance/
+*.db
+*.sqlite3
 
 # Editor
 .vscode/
 .idea/
 *.swp
+*.swo
+*~
 
 # OS
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
 
 # Tests
 .coverage
 htmlcov/
-*.pytest_cache/
+.pytest_cache/
+.tox/
+.nox/
+
+# Docker
+.dockerignore
+
+# MongoDB
+*.bson
+
+# Temporary files
+*.tmp
+*.bak
+*.backup
+
+# IDE
+.vscode/settings.json
+.idea/
+
+# Distribution / packaging
+*.egg-info/
+dist/
+build/
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
