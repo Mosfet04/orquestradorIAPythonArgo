@@ -1,4 +1,3 @@
-from pydoc import doc
 from typing import List
 from pymongo import MongoClient
 from src.domain.entities.agent_config import AgentConfig
@@ -65,6 +64,7 @@ class MongoAgentConfigRepository(IAgentConfigRepository):
             rag_config=RagConfig(
                 active=agent_data.get("rag_config", {}).get("active", False),
                 doc_name=agent_data.get("rag_config", {}).get("doc_name"),
-                model=agent_data.get("rag_config", {}).get("model", "nomic-embed-text:latest")
+                model=agent_data.get("rag_config", {}).get("model", "nomic-embed-text:latest"),
+                factoryIaModel=agent_data.get("rag_config", {}).get("factoryIaModel","ollama"),
             ) if agent_data.get("rag_config") else None
         )

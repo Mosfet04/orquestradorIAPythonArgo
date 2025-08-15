@@ -1,18 +1,18 @@
-from typing import Optional, List, Text
+from typing import Optional, List, Union, Callable, Dict, Any, cast
 from agno.agent import Agent
-from agno.models.ollama import Ollama
 from agno.storage.mongodb import MongoDbStorage
 from agno.memory.v2.memory import Memory
 from agno.memory.v2.summarizer import SessionSummarizer
 from agno.memory.v2.db.mongodb import MongoMemoryDb
 from agno.tools import Toolkit
+from agno.tools.function import Function
 from agno.knowledge.text import TextKnowledgeBase
 from agno.vectordb.mongodb import MongoDb
-from agno.embedder.ollama import OllamaEmbedder
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.repositories.tool_repository import IToolRepository
 from src.application.services.http_tool_factory_service import HttpToolFactory
 from src.application.services.model_factory_service import ModelFactory
+from src.application.services.embedder_model_factory_service import EmbedderModelFactory
 
 
 class AgentFactoryService:
@@ -27,6 +27,7 @@ class AgentFactoryService:
         self._tool_repository = tool_repository
         self._http_tool_factory = HttpToolFactory()
         self._model_factory = ModelFactory()
+        self._embedder_model_factory = EmbedderModelFactory()
     
     def create_agent(self, config: AgentConfig) -> Agent:
         """Cria um agente baseado na configuração fornecida."""
@@ -49,6 +50,17 @@ class AgentFactoryService:
         tools = self._create_tools(config.tools_ids) if config.tools_ids else []
         knowledge_base = None
         if config.rag_config and config.rag_config.active:
+            if not config.rag_config.factoryIaModel or not config.rag_config.model:
+                raise ValueError("Configuração de RAG deve ter factoryIaModel e model definidos")
+            
+            validate_rag = self._embedder_model_factory.validate_model_config(
+                config.rag_config.factoryIaModel,
+                config.rag_config.model
+            )
+            if not validate_rag["valid"]:
+                errors = "; ".join(validate_rag["errors"])
+                raise ValueError(f"Configuração de RAG inválida: {errors}")
+            
             knowledge_base = self._create_rag(config)
 
         agent = Agent(
@@ -76,7 +88,7 @@ class AgentFactoryService:
         
         return agent
     
-    def _create_tools(self, tool_ids: List[str]) -> List[Toolkit]:
+    def _create_tools(self, tool_ids: List[str]) -> List[Union[Toolkit, Callable, Function, Dict[str, Any]]]:
         """Cria as ferramentas para o agente."""
         if not self._tool_repository or not tool_ids:
             return []
@@ -88,7 +100,7 @@ class AgentFactoryService:
             # Criar tools do agno usando o factory
             agno_tools = self._http_tool_factory.create_tools_from_configs(tool_configs)
             
-            return agno_tools
+            return cast(List[Union[Toolkit, Callable, Function, Dict[str, Any]]], agno_tools)
         except Exception as e:
             # Log do erro (em ambiente real, usar logging adequado)
             print(f"Erro ao criar tools: {e}")
@@ -96,10 +108,17 @@ class AgentFactoryService:
     def _create_rag(self, config: AgentConfig) -> TextKnowledgeBase:
         """Cria a base de conhecimento Rag para o agente."""
         
-        # Define o modelo do embedder, usando um padrão se não especificado
-        embedder_model = "nomic-embed-text:latest"
-        if config.rag_config and hasattr(config.rag_config, 'model') and config.rag_config.model:
-            embedder_model = config.rag_config.model
+        # Verificar se rag_config existe e tem os campos necessários
+        if not config.rag_config:
+            raise ValueError("Configuração de RAG não encontrada")
+        
+        if not config.rag_config.factoryIaModel or not config.rag_config.model:
+            raise ValueError("Configuração de RAG deve ter factoryIaModel e model definidos")
+
+        embedder_model = self._embedder_model_factory.create_model(
+            config.rag_config.factoryIaModel, 
+            config.rag_config.model
+        )
             
         try:
             knowledge_base = TextKnowledgeBase(
@@ -107,7 +126,7 @@ class AgentFactoryService:
                     collection_name="rag",
                     db_url=self._db_url,
                     database=self._db_name,
-                    embedder=OllamaEmbedder(id=embedder_model),
+                    embedder=embedder_model,
                 )
             )
         except Exception as e:

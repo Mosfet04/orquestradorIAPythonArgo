@@ -1,10 +1,9 @@
 from typing import Union, Dict, Any, Type
-from agno.models.ollama import Ollama
 import os
 
 
-class ModelFactory:
-    """Factory responsável por criar instâncias de modelos de IA baseado no tipo especificado."""
+class EmbedderModelFactory:
+    """Factory responsável por criar instâncias de modelos de IA para embedder rag baseado no tipo especificado."""
     
     @classmethod
     def _get_model_class(cls, factory_type: str) -> Type:
@@ -22,24 +21,16 @@ class ModelFactory:
         """
         try:
             if factory_type == "ollama":
-                return Ollama
+                from agno.embedder.ollama import OllamaEmbedder
+                return OllamaEmbedder
             elif factory_type in ["openai"]:
                 try:
-                    from agno.models.openai.chat import OpenAIChat
-                    return OpenAIChat
+                    from agno.embedder.openai import OpenAIEmbedder
+                    return OpenAIEmbedder
                 except ImportError:
                     raise ValueError(
                         f"Modelo OpenAI não está disponível. "
                         f"Instale as dependências com: pip install openai"
-                    )
-            elif factory_type in ["anthropic"]:
-                try:
-                    from agno.models.anthropic.claude import Claude
-                    return Claude
-                except ImportError:
-                    raise ValueError(
-                        f"Modelo Anthropic não está disponível. "
-                        f"Instale as dependências com: pip install anthropic"
                     )
             elif factory_type in ["gemini", "google"]:
                 try:
@@ -48,26 +39,17 @@ class ModelFactory:
                     if not api_key_env:
                         raise ValueError("GEMINI_API_KEY não está configurado no ambiente")
                     
-                    from agno.models.google.gemini import Gemini
-                    return Gemini
+                    from agno.embedder.google import GeminiEmbedder
+                    return GeminiEmbedder
                 except ImportError:
                     raise ValueError(
                         f"Modelo Gemini não está disponível. "
                         f"Instale as dependências com: pip install google-genai"
                     )
-            elif factory_type in ["groq"]:
-                try:
-                    from agno.models.groq.chat import GroqChat
-                    return GroqChat
-                except ImportError:
-                    raise ValueError(
-                        f"Modelo Groq não está disponível. "
-                        f"Instale as dependências com: pip install groq"
-                    )
             elif factory_type in ["azure", "azureopenai"]:
                 try:
-                    from agno.models.azure.openai_chat import AzureOpenAIChat
-                    return AzureOpenAIChat
+                    from agno.embedder.azure_openai import AzureOpenAIEmbedder
+                    return AzureOpenAIEmbedder
                 except ImportError:
                     raise ValueError(
                         f"Modelo Azure OpenAI não está disponível. "
@@ -140,10 +122,8 @@ class ModelFactory:
         return [
             "ollama",
             "openai", 
-            "anthropic",
             "gemini",
             "google",  # alias para gemini
-            "groq",
             "azure",
             "azureopenai"  # alias para azure
         ]
