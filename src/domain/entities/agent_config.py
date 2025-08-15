@@ -9,6 +9,7 @@ class AgentConfig:
     
     id: str
     nome: str
+    factoryIaModel: str
     model: str
     descricao: str
     prompt: str
@@ -23,3 +24,5 @@ class AgentConfig:
             raise ValueError("Nome do agente não pode estar vazio")
         if not self.model:
             raise ValueError("Modelo do agente não pode estar vazio")
+        if not self.factoryIaModel:
+            raise ValueError("Factory do modelo do agente não pode estar vazio")

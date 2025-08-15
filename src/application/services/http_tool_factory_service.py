@@ -87,10 +87,10 @@ class HttpToolFactory:
         function_description = self._create_function_description(tool)
         
         # Criar toolkit do agno
-        toolkit = Toolkit(name=tool.name, instructions=function_description)
+        toolkit = Toolkit(name=tool.id, instructions=function_description)
         toolkit.register(
             function=http_function,
-            name=tool.name,
+            name=tool.id,
         )
         return toolkit
     

@@ -12,6 +12,7 @@ from agno.embedder.ollama import OllamaEmbedder
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.repositories.tool_repository import IToolRepository
 from src.application.services.http_tool_factory_service import HttpToolFactory
+from src.application.services.model_factory_service import ModelFactory
 
 
 class AgentFactoryService:
@@ -25,11 +26,25 @@ class AgentFactoryService:
         self._db_name = db_name
         self._tool_repository = tool_repository
         self._http_tool_factory = HttpToolFactory()
+        self._model_factory = ModelFactory()
     
     def create_agent(self, config: AgentConfig) -> Agent:
         """Cria um agente baseado na configuração fornecida."""
+        # Validar configuração do modelo
+        validation_result = self._model_factory.validate_model_config(
+            config.factoryIaModel, 
+            config.model
+        )
+        
+        if not validation_result["valid"]:
+            errors = "; ".join(validation_result["errors"])
+            raise ValueError(f"Configuração de modelo inválida: {errors}")
+        
+        # Criar modelo usando o factory
+        model = self._model_factory.create_model(config.factoryIaModel, config.model)
+        
         memory_db = self._create_memory_db()
-        memory = self._create_memory(memory_db, config.model)
+        memory = self._create_memory(memory_db, model)
         storage = self._create_storage()
         tools = self._create_tools(config.tools_ids) if config.tools_ids else []
         knowledge_base = None
@@ -39,7 +54,7 @@ class AgentFactoryService:
         agent = Agent(
             name=config.nome,
             agent_id=config.id,
-            model=Ollama(id=config.model),
+            model=model,  # Usar o modelo criado pelo factory
             reasoning=False,
             markdown=True,
             add_history_to_messages=True,
@@ -130,7 +145,7 @@ class AgentFactoryService:
         """Cria a instância de memória do agente."""
         return Memory(
             db=memory_db,
-            summarizer=SessionSummarizer(model=Ollama(id=model)),
+            summarizer=SessionSummarizer(model=model),
         )
     
     def _create_storage(self) -> MongoDbStorage:

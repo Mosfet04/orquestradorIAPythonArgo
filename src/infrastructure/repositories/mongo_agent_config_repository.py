@@ -57,6 +57,7 @@ class MongoAgentConfigRepository(IAgentConfigRepository):
             id=agent_data.get("id"),
             nome=agent_data.get("nome"),
             model=agent_data.get("model"),
+            factoryIaModel=agent_data.get("factoryIaModel"),
             descricao=agent_data.get("descricao"),
             prompt=agent_data.get("prompt"),
             active=agent_data.get("active", True),

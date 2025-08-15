@@ -11,3 +11,4 @@ pytest-asyncio
 httpx
 pytest-cov
 pypdf
+google-genai

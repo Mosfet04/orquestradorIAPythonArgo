@@ -11,6 +11,7 @@ class TestAgentConfig:
         config = AgentConfig(
             id="test-agent",
             nome="Agente Teste",
+            factoryIaModel="ollama",
             model="llama3.2:latest",
             descricao="Um agente para testes",
             prompt="Você é um assistente útil."
@@ -30,6 +31,7 @@ class TestAgentConfig:
         config = AgentConfig(
             id="inactive-agent",
             nome="Agente Inativo",
+            factoryIaModel="ollama",
             model="llama3.2:latest",
             descricao="Um agente inativo",
             prompt="Prompt do agente inativo",
@@ -46,6 +48,7 @@ class TestAgentConfig:
             AgentConfig(
                 id="",
                 nome="Agente Teste",
+                factoryIaModel="ollama",
                 model="llama3.2:latest",
                 descricao="Descrição",
                 prompt="Prompt"
@@ -58,6 +61,7 @@ class TestAgentConfig:
             AgentConfig(
                 id="test-agent",
                 nome="",
+                factoryIaModel="ollama",
                 model="llama3.2:latest",
                 descricao="Descrição",
                 prompt="Prompt"
@@ -70,7 +74,20 @@ class TestAgentConfig:
             AgentConfig(
                 id="test-agent",
                 nome="Agente Teste",
+                factoryIaModel="ollama",
                 model="",
+                descricao="Descrição",
+                prompt="Prompt"
+            )
+    def test_agent_config_with_empty_factory_model_raises_error(self):
+        """Testa se factoryIaModel vazio levanta ValueError."""
+        # Arrange & Act & Assert
+        with pytest.raises(ValueError, match="Factory do modelo do agente não pode estar vazio"):
+            AgentConfig(
+                id="test-agent",
+                nome="Agente Teste",
+                factoryIaModel="",
+                model="llama3.2:latest",
                 descricao="Descrição",
                 prompt="Prompt"
             )

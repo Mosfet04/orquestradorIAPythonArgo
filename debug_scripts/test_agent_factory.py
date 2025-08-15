@@ -33,6 +33,7 @@ def main():
     agent_config_simple = AgentConfig(
         id="debug-agent-simple",
         nome="Agente Debug Simples",
+        factoryIaModel="ollama",
         model="llama3.2:latest",
         descricao="Agente para debug sem tools",
         prompt="Você é um assistente de debug simples."
