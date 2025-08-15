@@ -5,7 +5,17 @@ __pycache__/
 *.pyd
 *.env
 *.venv
+
+# Logs - Proteger informações de runtime
+logs/
 *.log
+*.log.*
+
+# Arquivos de ambiente com credenciais sensíveis
+.env
+.env.local
+.env.production
+.env.development
 
 # Flask
 instance/

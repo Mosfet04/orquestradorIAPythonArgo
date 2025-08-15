@@ -16,6 +16,7 @@ class TestGetActiveAgentsUseCase:
         config1 = AgentConfig(
             id="agent1",
             nome="Agente 1",
+            factoryIaModel="ollama",
             model="llama3.2:latest",
             descricao="Primeiro agente",
             prompt="Você é o agente 1"
@@ -24,6 +25,7 @@ class TestGetActiveAgentsUseCase:
         config2 = AgentConfig(
             id="agent2",
             nome="Agente 2",
+            factoryIaModel="ollama",
             model="llama3.2:latest",
             descricao="Segundo agente",
             prompt="Você é o agente 2"

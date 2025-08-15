@@ -1,12 +1,16 @@
 from typing import Union, Dict, Any, Type
 from agno.models.ollama import Ollama
 import os
+from src.infrastructure.logging import LoggerFactory, log_execution, log_ai_interaction
 
 
 class ModelFactory:
     """Factory responsável por criar instâncias de modelos de IA baseado no tipo especificado."""
     
+    logger = LoggerFactory.get_logger("model_factory")
+    
     @classmethod
+    @log_ai_interaction(logger_name="model_factory")
     def _get_model_class(cls, factory_type: str) -> Type:
         """
         Retorna a classe do modelo baseado no tipo, com import dinâmico.
@@ -46,6 +50,7 @@ class ModelFactory:
                     # Verificar se as variáveis de ambiente estão configuradas
                     api_key_env = os.getenv("GEMINI_API_KEY")
                     if not api_key_env:
+                        cls.logger.error(f"GEMINI_API_KEY não configurada para modelo: {factory_type}")
                         raise ValueError("GEMINI_API_KEY não está configurado no ambiente")
                     
                     from agno.models.google.gemini import Gemini
@@ -87,6 +92,8 @@ class ModelFactory:
             )
     
     @classmethod
+    @log_ai_interaction(logger_name="model_factory")
+    @log_execution(logger_name="model_factory", include_args=True)
     def create_model(cls, factory_ia_model: str, model_id: str, **kwargs) -> Any:
         """
         Cria uma instância do modelo baseado no tipo especificado.
@@ -107,12 +114,12 @@ class ModelFactory:
         
         # Validar entrada
         if not factory_type:
+            cls.logger.error("Tipo de modelo vazio fornecido")
             raise ValueError("Tipo de modelo não pode estar vazio")
-        
+
         if not model_id or not model_id.strip():
-            raise ValueError("ID do modelo não pode estar vazio")
-        
-        # Obter a classe do modelo
+            cls.logger.error("ID do modelo vazio fornecido", factory_type=factory_type)
+            raise ValueError("ID do modelo não pode estar vazio")        # Obter a classe do modelo
         model_class = cls._get_model_class(factory_type)
         
         try:

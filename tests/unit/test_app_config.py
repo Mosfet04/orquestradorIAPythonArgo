@@ -7,6 +7,7 @@ from src.infrastructure.config.app_config import AppConfig, DatabaseConfig
 class TestDatabaseConfig:
     """Testes unitários para DatabaseConfig."""
     
+    @patch.dict(os.environ, {}, clear=True)
     def test_from_environment_with_default_values(self):
         """Testa criação com valores padrão."""
         # Arrange & Act
@@ -45,6 +46,7 @@ class TestDatabaseConfig:
 class TestAppConfig:
     """Testes unitários para AppConfig."""
     
+    @patch.dict(os.environ, {}, clear=True)
     def test_load_with_default_values(self):
         """Testa carregamento com valores padrão."""
         # Arrange & Act

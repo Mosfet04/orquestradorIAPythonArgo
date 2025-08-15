@@ -16,6 +16,7 @@ class TestMongoAgentConfigRepository:
             {
                 "id": "agent1",
                 "nome": "Agente 1",
+                "factoryIaModel": "ollama",
                 "model": "llama3.2:latest",
                 "descricao": "Primeiro agente",
                 "prompt": "Você é o agente 1",
@@ -24,6 +25,7 @@ class TestMongoAgentConfigRepository:
             {
                 "id": "agent2",
                 "nome": "Agente 2",
+                "factoryIaModel": "ollama",
                 "model": "llama3.2:latest",
                 "descricao": "Segundo agente",
                 "prompt": "Você é o agente 2",
@@ -82,6 +84,7 @@ class TestMongoAgentConfigRepository:
         agent_data = {
             "id": "test-agent",
             "nome": "Agente Teste",
+            "factoryIaModel": "ollama",
             "model": "llama3.2:latest",
             "descricao": "Um agente para testes",
             "prompt": "Você é um assistente útil",
@@ -138,6 +141,7 @@ class TestMongoAgentConfigRepository:
         agent_data = {
             "id": "test-agent",
             "nome": "Agente Teste",
+            "factoryIaModel": "ollama",
             "model": "llama3.2:latest",
             "descricao": "Um agente para testes",
             "prompt": "Você é um assistente útil",
@@ -163,6 +167,7 @@ class TestMongoAgentConfigRepository:
         agent_data = {
             "id": "test-agent",
             "nome": "Agente Teste",
+            "factoryIaModel": "ollama",
             "model": "llama3.2:latest",
             "descricao": "Um agente para testes",
             "prompt": "Você é um assistente útil"
