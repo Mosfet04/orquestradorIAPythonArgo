@@ -27,15 +27,16 @@
 
 ## 🎯 Visão Geral
 
-O **Orquestrador de Agentes IA** é uma aplicação enterprise-ready que permite o gerenciamento e orquestração de múltiplos agentes de inteligência artificial. Construído com foco em escalabilidade, manutenibilidade e testabilidade, utiliza as melhores práticas de desenvolvimento Python.
+O **Orquestrador de Agentes IA** é uma aplicação enterprise-ready que permite o gerenciamento e orquestração de múltiplos agentes de inteligência artificial. Construído com foco em escalabilidade, manutenibilidade e testabilidade, utiliza as melhores práticas de desenvolvimento Python e o poderoso framework **[agno](https://github.com/agno-agi/agno/tree/main)** para orquestração de agentes.
 
 ### ✨ Destaques
 
 - 🏗️ **Arquitetura Onion** (Clean Architecture)
 - 🧪 **Clean Code** e princípios SOLID
+- 🤖 **Framework agno** para orquestração avançada de agentes
 - 🔄 **Multi-Agent Support** com RAG (Retrieval-Augmented Generation)
 - 🛠️ **Custom Tools Integration** via HTTP APIs
-- 📊 **Multiple Model Providers** (Ollama, OpenAI, etc.)
+- 📊 **Multiple Model Providers** (Ollama, OpenAI, Azure, etc.)
 - 🌐 **RESTful API** com FastAPI
 - 🎮 **Interactive Playground** para testes
 - 📝 **Comprehensive Logging** estruturado
@@ -116,6 +117,45 @@ src/
         └── orquestrador_controller.py
 ```
 
+## 🤖 Framework agno
+
+Este projeto utiliza o **[agno](https://github.com/agno-agi/agno/tree/main)**, um framework Python moderno e poderoso para construção de aplicações de IA. O agno fornece:
+
+### 🚀 Capacidades do agno
+
+- **🧠 Agent Orchestration**: Gerenciamento inteligente de múltiplos agentes
+- **🔗 Tool Integration**: Sistema flexível para integração de ferramentas HTTP e Python
+- **💾 Memory Management**: Sistema de memória persistente com suporte a MongoDB
+- **📚 Knowledge Bases**: RAG (Retrieval-Augmented Generation) com embeddings
+- **🌐 Model Flexibility**: Suporte nativo a múltiplos provedores (OpenAI, Ollama, Azure, etc.)
+- **🔄 Async Support**: Operações assíncronas para alta performance
+- **📊 Storage Systems**: Integração com MongoDB, PostgreSQL e outros
+
+### 🛠️ Como Usamos o agno
+
+```python
+from agno.agent import Agent
+from agno.storage.mongodb import MongoDbStorage
+from agno.memory.v2.memory import Memory
+from agno.tools import Toolkit
+
+# Exemplo de criação de agente com agno
+agent = Agent(
+    model=model_instance,
+    storage=MongoDbStorage(connection_string=db_url),
+    memory=Memory(db=memory_db),
+    tools=custom_tools,
+    knowledge_base=rag_knowledge_base
+)
+```
+
+### 🎯 Vantagens da Integração
+
+- **⚡ Desenvolvimento Rápido**: APIs intuitivas e bem documentadas
+- **🔧 Extensibilidade**: Fácil adição de novos modelos e ferramentas  
+- **📈 Escalabilidade**: Suporte nativo a operações distribuídas
+- **🛡️ Confiabilidade**: Framework battle-tested em produção
+
 ## 🔄 Fluxo de Dados
 
 ```mermaid
@@ -161,14 +201,47 @@ sequenceDiagram
 
 - ✅ **Multi-Agent Management**: Gerenciamento de múltiplos agentes IA
 - ✅ **RAG Integration**: Retrieval-Augmented Generation com MongoDB
-- ✅ **Custom Tools**: Integração de ferramentas personalizadas via HTTP
-- ✅ **Model Flexibility**: Suporte a múltiplos provedores (Ollama, OpenAI)
-- ✅ **Interactive Playground**: Interface web para testes
-- ✅ **REST API**: Endpoints para integração externa
-- ✅ **Memory Management**: Sistema de memória persistente
-- ✅ **Configuration Management**: Configuração flexível via ambiente
+- ✅ **Dynamic Configuration**: Configuração 100% dinâmica via MongoDB - sem alteração de código
+- ✅ **Custom Tools Integration**: Ferramentas personalizadas via HTTP APIs (configuráveis no MongoDB)
+- ✅ **Conversation Memory**: Sistema inteligente de memória e sumários de conversas
+- ✅ **User Context Tracking**: Rastreamento automático de dados e preferências do usuário
+- ✅ **Model Flexibility**: Suporte a múltiplos provedores (Ollama, OpenAI, Azure)
+- ✅ **Interactive Playground**: Interface web para testes e interação
+- ✅ **REST API**: Endpoints completos para integração externa
+- ✅ **Zero-Code Configuration**: Adicione agentes, tools e configurações apenas no banco
 
-## 🚀 Início Rápido
+## � Capacidades Dinâmicas
+
+### 🎛️ Configuração Zero-Code
+O sistema permite configuração **100% dinâmica** através do MongoDB, sem necessidade de alteração de código:
+
+- **➕ Novos Agentes**: Crie agentes inserindo documentos na collection `agents_config`
+- **🛠️ Ferramentas Personalizadas**: Adicione tools HTTP na collection `tools_config`
+- **🔗 Vinculação Automática**: Tools são automaticamente disponibilizadas aos agentes via `tools_ids`
+- **🧠 Modelos Flexíveis**: Suporte a qualquer provider através de `factoryIaModel`
+
+### 💾 Sistema de Memória Inteligente
+- **📝 Sumários Automáticos**: Conversas são automaticamente sumarizadas e armazenadas
+- **👤 Perfil do Usuário**: Dados pessoais mencionados são extraídos e armazenados
+- **🔄 Contexto Persistente**: Memória de longo prazo entre sessões
+- **📊 Análise de Comportamento**: Tracking de preferências e padrões de uso
+
+### 🔄 Fluxo de Configuração Dinâmica
+
+```mermaid
+graph TD
+    A[📝 Inserir Config no MongoDB] --> B[🔄 Sistema Detecta Mudanças]
+    B --> C[⚡ Reload Automático]
+    C --> D[🤖 Agente Disponível]
+    D --> E[🛠️ Tools Carregadas]
+    E --> F[💬 Pronto para Uso]
+    
+    style A fill:#e1f5fe
+    style D fill:#f3e5f5
+    style F fill:#e8f5e8
+```
+
+## �🚀 Início Rápido
 
 ### 📋 Pré-requisitos
 
@@ -230,7 +303,9 @@ OPENAI_API_KEY=sua-chave-aqui
 
 ### 🗄️ Estrutura do MongoDB
 
-#### Collection: `agents_config`
+O sistema utiliza múltiplas collections para configuração dinâmica e persistência de dados:
+
+#### Collection: `agents_config` - Configuração de Agentes
 
 ```json
 {
@@ -252,7 +327,7 @@ OPENAI_API_KEY=sua-chave-aqui
 }
 ```
 
-#### Collection: `tools_config`
+#### Collection: `tools_config` - Ferramentas HTTP
 
 ```json
 {
@@ -277,6 +352,91 @@ OPENAI_API_KEY=sua-chave-aqui
     ]
   }
 }
+```
+
+### 🔄 Configuração Dinâmica
+
+Para adicionar um novo agente, simplesmente insira um documento na collection `agents_config`:
+
+```javascript
+// Exemplo: Adicionar agente especialista em Python
+db.agents_config.insertOne({
+  "id": "python-expert",
+  "nome": "Python Expert",
+  "model": "gpt-4",
+  "factoryIaModel": "openai",
+  "descricao": "Especialista em desenvolvimento Python",
+  "prompt": "Você é um expert em Python com 10+ anos de experiência...",
+  "active": true,
+  "tools_ids": ["github-tool", "stack-overflow-tool"]
+});
+```
+
+O agente estará **imediatamente disponível** sem restart da aplicação!
+
+## 🧠 Sistema de Memória e Sumários
+
+### 💭 Como Funciona
+
+O sistema implementa uma **memória inteligente** que:
+
+1. **📝 Captura Contexto**: Extrai automaticamente informações relevantes das conversas
+2. **👤 Perfila Usuários**: Identifica preferências, estilo de comunicação e dados pessoais
+3. **📊 Gera Sumários**: Cria resumos automáticos de sessões e conversas
+4. **🔄 Mantém Contexto**: Preserva informações entre sessões para continuidade
+
+### 🎯 Dados Coletados Automaticamente
+
+**Informações do Usuário:**
+- Nome, profissão, localização (quando mencionados)
+- Nível de experiência em tópicos específicos
+- Preferências de comunicação (formal/informal)
+- Tópicos de interesse recorrentes
+
+**Contexto da Conversa:**
+- Resumo do que foi discutido
+- Problemas resolvidos
+- Ações pendentes
+- Sentimento geral da interação
+
+### 🔧 Configuração da Memória
+
+```javascript
+// Habilitar memória para um agente
+db.agents_config.updateOne(
+  { "id": "agent-1" },
+  { 
+    $set: { 
+      "memory_config": {
+        "enabled": true,
+        "max_context_length": 4000,
+        "summary_frequency": "session",
+        "user_profiling": true,
+        "retention_days": 90
+      }
+    }
+  }
+);
+```
+
+### 📈 Fluxo de Memória
+
+```mermaid
+sequenceDiagram
+    participant U as Usuário
+    participant A as Agente
+    participant M as Memory System
+    participant DB as MongoDB
+    
+    U->>A: Mensagem
+    A->>M: Processar contexto
+    M->>DB: Buscar histórico
+    DB-->>M: Dados anteriores
+    M->>A: Contexto completo
+    A->>U: Resposta contextualizada
+    A->>M: Salvar nova interação
+    M->>DB: Atualizar memória
+    M->>DB: Gerar sumário (se necessário)
 ```
 
 ## 🔗 API Reference
@@ -575,10 +735,10 @@ Este projeto está licenciado sob a MIT License - veja o arquivo [LICENSE](LICEN
 
 ## 🙏 Agradecimentos
 
-- [FastAPI](https://fastapi.tiangolo.com/) pela excelente framework
-- [agno](https://github.com/phidatahq/agno) pelo framework de agentes
-- [MongoDB](https://www.mongodb.com/) pelo banco de dados
-- Comunidade Python pelas bibliotecas incríveis
+- **[agno](https://github.com/agno-agi/agno/tree/main)** - Framework fundamental para orquestração de agentes IA
+- [FastAPI](https://fastapi.tiangolo.com/) pela excelente framework web
+- [MongoDB](https://www.mongodb.com/) pelo banco de dados NoSQL robusto
+- Comunidade Python pelas bibliotecas incríveis e código aberto
 
 ---
 
