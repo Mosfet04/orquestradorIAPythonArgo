@@ -6,8 +6,9 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)
 ![MongoDB](https://img.shields.io/badge/MongoDB-%234ea94b.svg?style=for-the-badge&logo=mongodb&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
+![agno](https://img.shields.io/badge/agno-AI%20Framework-purple?style=for-the-badge)
 
-*Uma aplicação Python robusta que implementa um orquestrador de agentes de IA utilizando arquitetura Onion (Clean Architecture) e princípios de Clean Code*
+*Uma aplicação Python robusta que implementa um orquestrador de agentes de IA utilizando arquitetura Onion (Clean Architecture), princípios de Clean Code e o framework **[agno](https://github.com/phidatahq/agno)***
 
 [🇺🇸 English](#english-version) | [📚 Documentação](#documentação) | [🚀 Início Rápido](#início-rápido)
 
@@ -253,7 +254,7 @@ graph TD
 
 ```bash
 # 1. Clone o repositório
-git clone https://github.com/seu-usuario/orquestradorIAPythonArgo.git
+git clone https://github.com/Mosfet04/orquestradorIAPythonArgo.git
 cd orquestradorIAPythonArgo
 
 # 2. Instale as dependências
@@ -267,7 +268,7 @@ python app.py
 
 ```bash
 # Clone e execute com Docker Compose
-git clone https://github.com/seu-usuario/orquestradorIAPythonArgo.git
+git clone https://github.com/Mosfet04/orquestradorIAPythonArgo.git
 cd orquestradorIAPythonArgo
 docker-compose up -d
 ```
@@ -327,7 +328,7 @@ O sistema utiliza múltiplas collections para configuração dinâmica e persist
 }
 ```
 
-#### Collection: `tools_config` - Ferramentas HTTP
+#### Collection: `tools` - Ferramentas HTTP
 
 ```json
 {
@@ -352,6 +353,226 @@ O sistema utiliza múltiplas collections para configuração dinâmica e persist
     ]
   }
 }
+```
+
+#### Collection: `rag` - Base de conhecimento RAG
+```json
+{
+  "_id": "ef02d4c0-8170-451f-bedf-8d9056b712ad",
+  "name": "basic-prog",
+  "content": "contet-text is here",
+  "meta_data": {
+    "chunk": 1,
+    "chunk_size": 4988
+  },
+  "embedding": [
+    0.0068855467,
+    0.010898234
+  ]
+}
+```
+
+#### Collection: `user_memories` - Base de conhecimento RAG
+```json
+{
+  "_id": ObjectId("..."),
+  "id": "ef02d4c0-8170-451f-bedf-8d9056b712ad",
+  "_version": 1,
+  "created_at": 1755293707,
+  "memory": {
+    "memory_id": "ef02d4c0-8170-451f-bedf-8d9056b712ad",
+    "memory": "O nome do usuário é Mateus ",
+    "topics": [
+      "name"
+    ],
+    "last_updated": "2025-08-15T18:35:07.646696",
+    "input": "O nome do usuário é Mateus, ele tem 28 anos e é desenvolvedor de IA. Ele está construindo um orquestrador de agentes de IA."
+  },
+  "updated_at": 1755293707,
+  "user_id": "mateusmr4_e3d5"
+}
+```
+#### Collection: `storage` - Base de conhecimento RAG
+```json
+{
+    "_id": {
+      "$oid": "66c14b2d1d2d935413a4c3f2"
+    },
+    "session_id": "f8a7e3b6-5c2f-48d1-9b10-234567891234",
+    "_version": 1,
+    "agent_data": {
+      "name": "Assistente Mock",
+      "agent_id": "mock_assistant",
+      "model": {
+        "name": "Mock Model",
+        "id": "mock-model-1.0",
+        "provider": "Provider"
+      }
+    },
+    "agent_id": "mock_assistant",
+    "created_at": 1755365800,
+    "extra_data": null,
+    "memory": {
+      "summaries": {
+        "user_id_mock": {
+          "f8a7e3b6-5c2f-48d1-9b10-234567891234": {
+            "summary": "O usuário é um desenvolvedor de IA iniciante. O assistente é um agente de programação especializado em Agno e Python. A sessão é uma introdução e o assistente aguarda as perguntas do usuário.",
+            "topics": [
+              "AI Agent Development",
+              "Python",
+              "Agno Framework"
+            ],
+            "last_updated": "2025-08-16T14:45:00.000000"
+          }
+        }
+      },
+      "memories": {
+        "user_id_mock": {
+          "a1b2c3d4-e5f6-7890-a1b2-c3d4e5f67890": {
+            "memory_id": "b1a2c3d4-e5f6-7890-a1b2-c3d4e5f67890",
+            "memory": "O usuário tem interesse em aprender sobre o Agno.",
+            "topics": [
+              "interesse"
+            ],
+            "last_updated": "2025-08-16T14:45:05.000000",
+            "input": "Gostaria de saber mais sobre o Agno."
+          }
+        }
+      },
+      "runs": [
+        {
+          "content": "Olá! Bem-vindo. Sou o Assistente Mock e estou aqui para te ajudar com dúvidas sobre desenvolvimento de agentes de IA com o Agno. Como posso ajudar?",
+          "content_type": "str",
+          "metrics": {
+            "input_tokens": [
+              100
+            ],
+            "output_tokens": [
+              50
+            ],
+            "total_tokens": [
+              150
+            ],
+            "audio_tokens": [
+              0
+            ],
+            "input_audio_tokens": [
+              0
+            ],
+            "output_audio_tokens": [
+              0
+            ],
+            "cached_tokens": [
+              0
+            ],
+            "cache_write_tokens": [
+              0
+            ],
+            "reasoning_tokens": [
+              0
+            ],
+            "prompt_tokens": [
+              0
+            ],
+            "completion_tokens": [
+              0
+            ],
+            "time": [
+              1.2345
+            ],
+            "time_to_first_token": [
+              0.5678
+            ]
+          },
+          "model": "mock-model-1.0",
+          "model_provider": "Provider",
+          "run_id": "c7d8e9f0-1a2b-3c4d-5e6f-789012345678",
+          "agent_id": "mock_assistant",
+          "agent_name": "Assistente Mock",
+          "session_id": "f8a7e3b6-5c2f-48d1-9b10-234567891234",
+          "created_at": 1755365805,
+          "status": "COMPLETED",
+          "events": [
+            {
+              "created_at": 1755365805,
+              "event": "RunStarted",
+              "agent_id": "mock_assistant",
+              "agent_name": "Assistente Mock",
+              "run_id": "c7d8e9f0-1a2b-3c4d-5e6f-789012345678",
+              "session_id": "f8a7e3b6-5c2f-48d1-9b10-234567891234",
+              "model": "mock-model-1.0",
+              "model_provider": "Provider"
+            },
+            {
+              "created_at": 1755365806,
+              "event": "RunCompleted",
+              "agent_id": "mock_assistant",
+              "agent_name": "Assistente Mock",
+              "run_id": "c7d8e9f0-1a2b-3c4d-5e6f-789012345678",
+              "session_id": "f8a7e3b6-5c2f-48d1-9b10-234567891234",
+              "content": "Olá! Bem-vindo. Sou o Assistente Mock e estou aqui para te ajudar com dúvidas sobre desenvolvimento de agentes de IA com o Agno. Como posso ajudar?",
+              "content_type": "str"
+            }
+          ],
+          "messages": [
+            {
+              "content": "Instrução inicial do sistema para o assistente.",
+              "from_history": false,
+              "stop_after_tool_call": false,
+              "role": "system",
+              "created_at": 1755365800
+            },
+            {
+              "content": "Olá, tudo bem?",
+              "from_history": false,
+              "stop_after_tool_call": false,
+              "role": "user",
+              "created_at": 1755365802
+            },
+            {
+              "content": "Olá! Bem-vindo. Sou o Assistente Mock e estou aqui para te ajudar com dúvidas sobre desenvolvimento de agentes de IA com o Agno. Como posso ajudar?",
+              "from_history": false,
+              "stop_after_tool_call": false,
+              "role": "assistant",
+              "metrics": {
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "total_tokens": 150,
+                "time": 1.2345,
+                "time_to_first_token": 0.5678
+              },
+              "created_at": 1755365805
+            }
+          ]
+        }
+      ]
+    },
+    "session_data": {
+      "session_metrics": {
+        "input_tokens": 100,
+        "output_tokens": 50,
+        "total_tokens": 150,
+        "audio_tokens": 0,
+        "input_audio_tokens": 0,
+        "output_audio_tokens": 0,
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "prompt_tokens_details": null,
+        "completion_tokens_details": null,
+        "additional_metrics": null,
+        "time": 1.2345,
+        "time_to_first_token": 0.5678,
+        "timer": null
+      }
+    },
+    "team_session_id": null,
+    "updated_at": 1755365806,
+    "user_id": "user_id_mock",
+    "workflow_session_id": null
+  }
 ```
 
 ### 🔄 Configuração Dinâmica
@@ -588,38 +809,17 @@ class MongoAgentRepository(IAgentRepository):
 
 **Adicionando Novo Provider de Modelo:**
 
-```python
-# 1. Implemente a interface
-class GroqModelFactory(IModelFactory):
-    def create_model(self, model_name: str) -> Any:
-        # Implementação Groq
-        pass
+Novos providers podem ser implementados visto evolucão do framework agno. Os providers atualmente aceitos são ollama, openai, anthropic, gemini, groq e azure. Atente-se a inserir as variaveis de ambiente do orquestrador seu token para consumo desses providers, obedecendo a nomeclatura de providerName_API_KEY.
 
-# 2. Registre no container
-container.register("groq_factory", GroqModelFactory)
+Para inserir novos providers modifique o codigo model_factory_service.py.
 
-# 3. Use na configuração
-{
-    "factoryIaModel": "groq",
-    "model": "llama-70b"
-}
-```
+Quanto aos embedders os providers atualmente implementados são ollama, openai, gemini e azure. O consumo de api-key se dá da mesma forma.
+
+Para inserir novos embedders modifique o codigo embedder_model_factory_service.py.
 
 **Adicionando Nova Ferramenta:**
 
-```python
-# 1. Defina a configuração
-@dataclass
-class DatabaseToolConfig:
-    connection_string: str
-    query_template: str
-
-# 2. Implemente o factory
-class DatabaseToolFactory:
-    def create_tool(self, config: DatabaseToolConfig):
-        # Implementação
-        pass
-```
+Para adicionar ferramentas ao agente não temos segredos ou necessidade de alteracão de codigo. Adicione um registro a collection de tools e em agent-config, ao encontrar o agente enderecado a nova tool criada, adicione o id ao array de tools_ids.
 
 #### 📊 Métricas e Observabilidade
 
