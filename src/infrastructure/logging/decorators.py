@@ -41,8 +41,6 @@ def log_execution(logger_name: str = "execution",
                 log_data["args"] = list(args[1:]) if args and hasattr(args[0], '__dict__') else list(args)
                 log_data["kwargs"] = dict(kwargs)
             
-            logger.debug(f"Iniciando execução: {func_name}", **log_data)
-            
             try:
                 result = func(*args, **kwargs)
                 execution_time = time.time() - start_time

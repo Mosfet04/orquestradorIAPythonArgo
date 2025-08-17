@@ -21,7 +21,6 @@ class AppConfig:
     @classmethod
     async def load_async(cls) -> "AppConfig":
         """Carrega configurações assincronamente com validação."""
-        app_logger.debug("📋 Carregando configurações da aplicação")
         
         # Simular operação assíncrona se necessário (ex: buscar de API externa)
         await asyncio.sleep(0.001)  # Placeholder para futuras operações async
@@ -57,6 +56,3 @@ class AppConfig:
         
         if not self.mongo_database_name:
             raise ValueError("MONGO_DATABASE_NAME é obrigatório")
-        
-        # Validações adicionais podem ser assíncronas no futuro
-        app_logger.debug("✅ Configurações validadas")

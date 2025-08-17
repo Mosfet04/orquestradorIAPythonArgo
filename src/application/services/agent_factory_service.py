@@ -44,7 +44,6 @@ class AgentFactoryService:
         start_time = datetime.utcnow()
         
         try:
-            app_logger.debug("🤖 Criando agente", agent_id=config.id)
             
             # Validar configuração do modelo
             validation_result = self._model_factory.validate_model_config(
@@ -85,13 +84,9 @@ class AgentFactoryService:
                 show_tool_calls=True,
                 debug_mode=False,
             )
-            
             # TODO: Adicionar knowledge base quando suportado pela biblioteca agno
             
             creation_time = (datetime.utcnow() - start_time).total_seconds()
-            app_logger.debug("✅ Agente criado com sucesso", 
-                           agent_id=config.id, 
-                           creation_time_seconds=round(creation_time, 3))
             
             return agent
             

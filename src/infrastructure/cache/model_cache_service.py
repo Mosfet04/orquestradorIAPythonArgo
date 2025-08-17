@@ -36,10 +36,16 @@ class ModelCacheService:
     
     def __init__(self, ttl_minutes: int = 30):
         self._cache: Dict[str, ModelCacheEntry] = {}
-        self._cache_lock = asyncio.Lock()
+        self._cache_lock: Optional[asyncio.Lock] = None
         self._ttl_minutes = ttl_minutes
         self._total_hits = 0
         self._total_misses = 0
+    
+    def _get_cache_lock(self) -> asyncio.Lock:
+        """Obtém o lock de cache, criando-o se necessário."""
+        if self._cache_lock is None:
+            self._cache_lock = asyncio.Lock()
+        return self._cache_lock
     
     async def get_or_create(
         self, 
@@ -56,24 +62,19 @@ class ModelCacheService:
             factory_func: Função para criar o modelo em caso de cache miss
             *args, **kwargs: Argumentos para a factory function
         """
-        async with self._cache_lock:
+        async with self._get_cache_lock():
             # Verificar cache hit
             if cache_key in self._cache:
                 entry = self._cache[cache_key]
                 if not entry.is_expired():
                     self._total_hits += 1
-                    app_logger.debug("🎯 Cache hit para modelo", 
-                                   cache_key=cache_key, 
-                                   hit_count=entry.hit_count)
                     return entry.access()
                 else:
                     # Cache expirado - remover
                     del self._cache[cache_key]
-                    app_logger.debug("🗑️ Cache expirado removido", cache_key=cache_key)
             
             # Cache miss - criar novo modelo
             self._total_misses += 1
-            app_logger.debug("🔄 Cache miss - criando modelo", cache_key=cache_key)
             
             try:
                 # Executar factory function em thread separada se assíncrona
@@ -85,10 +86,6 @@ class ModelCacheService:
                 
                 # Adicionar ao cache
                 self._cache[cache_key] = ModelCacheEntry(model, self._ttl_minutes)
-                
-                app_logger.debug("✅ Modelo criado e cacheado", 
-                               cache_key=cache_key,
-                               cache_size=len(self._cache))
                 
                 return model
                 
@@ -104,7 +101,7 @@ class ModelCacheService:
         Args:
             cache_key: Chave específica para invalidar ou None para invalidar tudo
         """
-        async with self._cache_lock:
+        async with self._get_cache_lock():
             if cache_key:
                 if cache_key in self._cache:
                     del self._cache[cache_key]
@@ -113,7 +110,7 @@ class ModelCacheService:
     
     async def cleanup_expired(self) -> int:
         """Remove entradas expiradas do cache."""
-        async with self._cache_lock:
+        async with self._get_cache_lock():
             expired_keys = [
                 key for key, entry in self._cache.items() 
                 if entry.is_expired()

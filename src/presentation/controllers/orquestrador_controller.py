@@ -1,4 +1,5 @@
 import asyncio
+import threading
 from typing import List, Optional
 from datetime import datetime, timedelta
 from agno.agent import Agent
@@ -35,39 +36,34 @@ class OrquestradorController:
     def __init__(self, get_active_agents_use_case: GetActiveAgentsUseCase):
         self._get_active_agents_use_case = get_active_agents_use_case
         self._agents_cache: Optional[AgentCacheEntry] = None
-        self._cache_lock = asyncio.Lock()
+        self._cache_lock = threading.Lock()
         self._cache_warming = False
     
+    async def _load_agents_internal(self) -> List[Agent]:
+        """Carrega agentes sem lock - uso interno."""
+        try:
+            agents = await self._get_active_agents_use_case.execute_async()
+            # Atualizar cache
+            self._agents_cache = AgentCacheEntry(agents)
+            return agents
+        except Exception as e:
+            app_logger.error("❌ Erro ao carregar agentes", 
+                           error=str(e), error_type=e.__class__.__name__)
+            # Retornar cache antigo se disponível em caso de erro
+            if self._agents_cache:
+                app_logger.warning("⚠️ Usando cache expirado devido a erro")
+                return self._agents_cache.access()
+            raise
+
     async def get_agents_async(self) -> List[Agent]:
         """Obtém a lista de agentes com cache inteligente assíncrono."""
-        async with self._cache_lock:
+        with self._cache_lock:
             # Verificar se cache existe e não expirou
             if self._agents_cache and not self._agents_cache.is_expired():
-                app_logger.debug("🎯 Cache hit para agentes", 
-                               hit_count=self._agents_cache.hit_count)
                 return self._agents_cache.access()
             
             # Cache miss ou expirado - recarregar
-            start_time = datetime.utcnow()
-            
-            try:
-                agents = await self._get_active_agents_use_case.execute_async()
-                
-                # Atualizar cache
-                self._agents_cache = AgentCacheEntry(agents)
-                
-                return agents
-                
-            except Exception as e:
-                app_logger.error("❌ Erro ao carregar agentes", 
-                               error=str(e), error_type=e.__class__.__name__)
-                
-                # Retornar cache antigo se disponível em caso de erro
-                if self._agents_cache:
-                    app_logger.warning("⚠️ Usando cache expirado devido a erro")
-                    return self._agents_cache.access()
-                
-                raise
+        return await self._load_agents_internal()
     
     def get_agents(self) -> List[Agent]:
         """Versão síncrona mantida para compatibilidade."""
@@ -88,8 +84,6 @@ class OrquestradorController:
         """Cria playground assincronamente com agentes em cache."""
         agents = await self.get_agents_async()
         
-        app_logger.debug("🎮 Criando playground", agent_count=len(agents))
-        
         return Playground(
             agents=agents,
             name="Playground Otimizado",
@@ -105,8 +99,6 @@ class OrquestradorController:
         """Cria FastAPI app assincronamente com agentes em cache."""
         agents = await self.get_agents_async()
         
-        app_logger.debug("⚡ Criando FastAPI app", agent_count=len(agents))
-        
         return FastAPIApp(
             agents=agents,
             name="API Fast Otimizada",
@@ -120,12 +112,12 @@ class OrquestradorController:
     
     async def refresh_agents_async(self) -> None:
         """Força atualização do cache de agentes assincronamente."""
-        async with self._cache_lock:
+        with self._cache_lock:
             app_logger.info("🔄 Invalidando cache de agentes manualmente")
             self._agents_cache = None
             
-            # Recarregar imediatamente
-            await self.get_agents_async()
+        # Recarregar imediatamente (fora do lock para evitar deadlock)
+        await self._load_agents_internal()
     
     def refresh_agents(self) -> None:
         """Versão síncrona mantida para compatibilidade."""

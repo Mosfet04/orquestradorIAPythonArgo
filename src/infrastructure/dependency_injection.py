@@ -30,8 +30,13 @@ class HealthService:
         
         total_time = asyncio.get_event_loop().time() - start_time
         
+        def is_healthy_check(check):
+            if isinstance(check, Exception):
+                return False
+            return check.get("status") not in ["error", "unhealthy"]
+        
         return {
-            "status": "healthy" if all(not isinstance(c, Exception) for c in checks) else "unhealthy",
+            "status": "healthy" if all(is_healthy_check(c) for c in checks) else "unhealthy",
             "checks": {
                 "mongodb": checks[0] if not isinstance(checks[0], Exception) else {"status": "error", "error": str(checks[0])},
                 "memory": checks[1] if not isinstance(checks[1], Exception) else {"status": "error", "error": str(checks[1])},

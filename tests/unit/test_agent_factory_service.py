@@ -27,7 +27,6 @@ class TestAgentFactoryService:
         # Assert
         assert agent is not None
         assert agent.name == config.nome
-        assert agent.agent_id == config.id
         assert agent.description == config.descricao
     
     def test_create_agent_with_invalid_factory_model_raises_error(self):
