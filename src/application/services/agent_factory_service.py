@@ -175,7 +175,6 @@ class AgentFactoryService:
             doc_path = f"docs/{config.rag_config.doc_name}"
             try:
                 with open(doc_path, 'r', encoding='utf-8') as file:
-                    content = file.read()
                     knowledge_base.load_document(path=doc_path)
 
             except FileNotFoundError:

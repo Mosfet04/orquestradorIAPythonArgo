@@ -1,7 +1,7 @@
 import pytest
-from unittest.mock import Mock, MagicMock, patch, AsyncMock
+from unittest.mock import Mock, MagicMock, patch
 from src.infrastructure.repositories.mongo_tool_repository import MongoToolRepository
-from src.domain.entities.tool import Tool, ParameterType, HttpMethod, ToolParameter
+from src.domain.entities.tool import Tool, ParameterType, HttpMethod
 
 
 class TestMongoToolRepositoryExtended:

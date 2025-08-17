@@ -2,7 +2,11 @@
 // This script creates sample data for the AI Agents Orchestrator
 
 // Switch to agno database
-db = db.getSiblingDB('agno');
+if (typeof db === 'undefined') {
+  var db = connect('localhost:27017/agno');
+} else {
+  db = db.getSiblingDB('agno');
+}
 
 // Create agents_config collection with sample agents
 db.agents_config.insertMany([

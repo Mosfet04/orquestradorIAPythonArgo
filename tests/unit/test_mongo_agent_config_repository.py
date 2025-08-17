@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 from src.infrastructure.repositories.mongo_agent_config_repository import MongoAgentConfigRepository
 from src.domain.entities.agent_config import AgentConfig
 

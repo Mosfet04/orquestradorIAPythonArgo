@@ -9,7 +9,6 @@ from src.infrastructure.logging import (
     log_http_request,
     log_performance
 )
-import os
 
 
 class HttpToolFactory:
@@ -65,11 +64,6 @@ class HttpToolFactory:
                 # Preparar headers
                 headers = tool.headers or {}
                 headers.setdefault("Content-Type", "application/json")
-                
-                # Log headers (sem dados sensíveis)
-                safe_headers = {k: "***MASKED***" if any(sensitive in k.lower() 
-                              for sensitive in ['authorization', 'api', 'key', 'token']) 
-                              else v for k, v in headers.items()}              
                 
                 # Processar URL para substituir placeholders
                 url = tool.route
@@ -131,7 +125,7 @@ class HttpToolFactory:
                 try:
                     json_response = response.json()
                     return str(json_response)
-                except:
+                except (ValueError, httpx.DecodingError):
                     return response.text
                     
             except httpx.RequestError as e:
