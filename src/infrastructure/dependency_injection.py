@@ -86,7 +86,6 @@ class DependencyContainer:
     
     async def _initialize_async(self) -> None:
         """Inicializa todas as dependências assincronamente."""
-        app_logger.info("🔧 Inicializando container de dependências")
         
         # Inicializar cliente MongoDB com pool otimizado
         self._mongo_client = AsyncIOMotorClient(
@@ -101,7 +100,6 @@ class DependencyContainer:
         try:
             if self._mongo_client:
                 await self._mongo_client.admin.command('ping')
-                app_logger.info("✅ Conexão MongoDB estabelecida")
         except Exception as e:
             app_logger.warning("⚠️ MongoDB não disponível - modo desenvolvimento", error=str(e))
             # Em desenvolvimento, continuar sem MongoDB
@@ -110,8 +108,6 @@ class DependencyContainer:
         # Inicializar health service
         if self._mongo_client:
             self._health_service = HealthService(self._mongo_client)
-        
-        app_logger.info("✅ Container inicializado com sucesso")
     
     async def get_orquestrador_controller_async(self) -> OrquestradorController:
         """Obtém controller assincronamente com lazy loading."""
@@ -187,10 +183,6 @@ class DependencyContainer:
         return self._health_service
     
     async def cleanup(self) -> None:
-        """Cleanup assíncrono de recursos."""
-        app_logger.info("🧹 Limpando recursos do container")
-        
+        """Cleanup assíncrono de recursos."""        
         if self._mongo_client:
             self._mongo_client.close()
-        
-        app_logger.info("✅ Cleanup concluído")

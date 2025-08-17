@@ -39,8 +39,6 @@ class MongoToolRepository(IToolRepository):
         """Obtém a coleção do MongoDB de forma lazy."""
         if self._collection is None:
             try:
-                self.logger.info(f"Conectando ao MongoDB: {self._connection_string[:50]}... (TLS: {self._use_tls})")
-                
                 # Configurações de conexão para MongoDB Atlas
                 if self._use_tls:
                     self._client = MongoClient(
@@ -70,7 +68,6 @@ class MongoToolRepository(IToolRepository):
                 
                 # Testar conexão
                 self._client.admin.command('ping')
-                self.logger.info("Conexão com MongoDB estabelecida com sucesso")
                 
                 self._db = self._client[self._database_name]
                 self._collection = self._db[self._collection_name]

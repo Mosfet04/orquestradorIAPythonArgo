@@ -43,7 +43,6 @@ class AppConfig:
         # Validação assíncrona
         await config._validate_async()
         
-        app_logger.info("✅ Configurações carregadas com sucesso")
         return config
     
     @classmethod

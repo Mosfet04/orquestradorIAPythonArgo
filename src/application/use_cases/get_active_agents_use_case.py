@@ -22,7 +22,6 @@ class GetActiveAgentsUseCase:
         start_time = asyncio.get_event_loop().time()
         
         try:
-            app_logger.info("🔍 Buscando agentes ativos")
             
             # Buscar configurações de agentes assincronamente
             agent_configs = await self._get_agent_configs_async()
@@ -31,19 +30,10 @@ class GetActiveAgentsUseCase:
                 app_logger.warning("⚠️ Nenhum agente ativo encontrado")
                 return []
             
-            app_logger.info("📋 Configurações carregadas", count=len(agent_configs))
-            
             # Criar agentes em paralelo para melhor performance
             agents = await self._create_agents_parallel(agent_configs)
             
             load_time = asyncio.get_event_loop().time() - start_time
-            
-            app_logger.info(
-                "✅ Agentes carregados com sucesso", 
-                total_configs=len(agent_configs),
-                successful_agents=len(agents),
-                load_time_seconds=round(load_time, 3)
-            )
             
             return agents
             

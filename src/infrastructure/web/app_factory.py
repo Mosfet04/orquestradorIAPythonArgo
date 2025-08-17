@@ -22,9 +22,7 @@ class AppFactory:
         self._container_cache: Optional[DependencyContainer] = None
     
     async def create_app_async(self) -> FastAPI:
-        """Cria a aplicação FastAPI de forma assíncrona."""
-        app_logger.info("🚀 Iniciando criação da aplicação FastAPI")
-        
+        """Cria a aplicação FastAPI de forma assíncrona."""      
         try:
             # Criar aplicação com lifespan
             app = FastAPI(
@@ -51,7 +49,6 @@ class AppFactory:
             # Adicionar endpoints de administração
             self._add_admin_endpoints(app)
             
-            app_logger.info("✅ Aplicação FastAPI criada com sucesso")
             return app
             
         except Exception as e:
@@ -92,9 +89,7 @@ class AppFactory:
             return response
     
     async def _mount_sub_applications(self, app: FastAPI, controller) -> None:
-        """Monta sub-aplicações na aplicação principal."""
-        app_logger.info("🔧 Montando sub-aplicações")
-        
+        """Monta sub-aplicações na aplicação principal."""    
         # Criar sub-aplicações em paralelo
         playground_task = asyncio.create_task(controller.create_playground_async())
         fastapi_task = asyncio.create_task(controller.create_fastapi_app_async())
@@ -122,8 +117,6 @@ class AppFactory:
         # Montar sub-aplicações
         app.mount("/playground", playground_app)
         app.mount("/api", fast_app)
-        
-        app_logger.info("✅ Sub-aplicações montadas com sucesso")
     
     async def _extract_app_async(self, get_app_func) -> FastAPI:
         """Extrai aplicação FastAPI de forma assíncrona."""
@@ -159,7 +152,6 @@ class AppFactory:
     @asynccontextmanager
     async def _lifespan(self, app: FastAPI):
         """Gerencia o ciclo de vida da aplicação."""
-        app_logger.info("🔄 Iniciando aplicação")
         
         # Startup
         try:
@@ -170,16 +162,13 @@ class AppFactory:
             # Aquecer cache de agentes
             controller = await self._container_cache.get_orquestrador_controller_async()
             await controller.warm_up_cache()
-            
-            app_logger.info("✅ Aplicação iniciada com sucesso")
+
             yield
             
         finally:
             # Shutdown
-            app_logger.info("🔄 Finalizando aplicação")
             if self._container_cache:
                 await self._container_cache.cleanup()
-            app_logger.info("✅ Aplicação finalizada com sucesso")
 
 
 # Instância global do factory

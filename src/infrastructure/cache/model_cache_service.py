@@ -108,11 +108,8 @@ class ModelCacheService:
             if cache_key:
                 if cache_key in self._cache:
                     del self._cache[cache_key]
-                    app_logger.info("🗑️ Cache invalidado", cache_key=cache_key)
             else:
-                cleared_count = len(self._cache)
                 self._cache.clear()
-                app_logger.info("🗑️ Todo cache invalidado", cleared_entries=cleared_count)
     
     async def cleanup_expired(self) -> int:
         """Remove entradas expiradas do cache."""
@@ -124,10 +121,6 @@ class ModelCacheService:
             
             for key in expired_keys:
                 del self._cache[key]
-            
-            if expired_keys:
-                app_logger.info("🧹 Cache cleanup concluído", 
-                              removed_entries=len(expired_keys))
             
             return len(expired_keys)
     
@@ -160,8 +153,6 @@ class ModelCacheService:
         Args:
             cache_entries: Dict com cache_key -> (factory_func, args, kwargs)
         """
-        app_logger.info("🔥 Iniciando warmup do cache", entries_count=len(cache_entries))
-        
         tasks = []
         for cache_key, (factory_func, args, kwargs) in cache_entries.items():
             task = asyncio.create_task(
@@ -171,6 +162,5 @@ class ModelCacheService:
         
         try:
             await asyncio.gather(*tasks, return_exceptions=True)
-            app_logger.info("✅ Warmup do cache concluído")
         except Exception as e:
             app_logger.warning("⚠️ Erro durante warmup do cache", error=str(e))

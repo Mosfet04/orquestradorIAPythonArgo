@@ -33,7 +33,6 @@ if __name__ == "__main__":
     try:
         import uvloop
         uvicorn_config["loop"] = "uvloop"
-        app_logger.info("🚀 Usando uvloop para melhor performance")
     except ImportError:
         app_logger.info("⚠️ uvloop não disponível, usando loop padrão")
     

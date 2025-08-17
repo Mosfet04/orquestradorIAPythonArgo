@@ -48,7 +48,6 @@ class OrquestradorController:
                 return self._agents_cache.access()
             
             # Cache miss ou expirado - recarregar
-            app_logger.info("🔄 Recarregando cache de agentes")
             start_time = datetime.utcnow()
             
             try:
@@ -56,11 +55,6 @@ class OrquestradorController:
                 
                 # Atualizar cache
                 self._agents_cache = AgentCacheEntry(agents)
-                
-                load_time = (datetime.utcnow() - start_time).total_seconds()
-                app_logger.info("✅ Cache de agentes atualizado", 
-                              agent_count=len(agents), 
-                              load_time_seconds=load_time)
                 
                 return agents
                 
@@ -86,9 +80,7 @@ class OrquestradorController:
             
         self._cache_warming = True
         try:
-            app_logger.info("🔥 Aquecendo cache de agentes")
             await self.get_agents_async()
-            app_logger.info("✅ Cache aquecido com sucesso")
         finally:
             self._cache_warming = False
     
