@@ -7,7 +7,7 @@ import logging
 import json
 import re
 import traceback
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional, List, Sequence
 from datetime import datetime
 from enum import Enum
 from dataclasses import dataclass, asdict
@@ -83,23 +83,39 @@ class DataSanitizer:
         else:
             return data
     
+    # Mapa auxiliar para descobrir o nome do padrão a partir do regex usado no match
+    _PATTERN_TO_NAME = {pattern: name for name, pattern in SENSITIVE_PATTERNS.items()}
+
+    @staticmethod
+    def _mask_match(m: re.Match) -> str:
+        """Callback único para mascarar ocorrências encontradas pelos padrões."""
+        pattern = m.re
+        pattern_name = DataSanitizer._PATTERN_TO_NAME.get(pattern, "SENSITIVE").upper()
+        # Se houver grupo capturado, usar o primeiro grupo como chave; senão, só mascarar
+        try:
+            grp1 = m.group(1) if m.re.groups >= 1 else None
+        except IndexError:
+            grp1 = None
+        if grp1:
+            return f"{grp1}=***{pattern_name}_MASKED***"
+        return f"***{pattern_name}_MASKED***"
+
     @classmethod
     def _sanitize_string(cls, text: str) -> str:
         """Sanitiza uma string removendo dados sensíveis."""
         if not isinstance(text, str) or len(text) == 0:
             return text
-            
+
         # Limitar tamanho do log para performance
         if len(text) > 10000:
             text = text[:10000] + "...[TRUNCATED]"
-        
+
         sanitized = text
-        
-        # Aplicar padrões de sanitização
-        for pattern_name, pattern in cls.SENSITIVE_PATTERNS.items():
-            if pattern.search(sanitized):
-                sanitized = pattern.sub(lambda m: f"{m.group(1)}=***{pattern_name.upper()}_MASKED***", sanitized)
-        
+
+        # Aplicar padrões de sanitização (um único pass de sub por padrão, sem função criada por iteração)
+        for _name, pattern in cls.SENSITIVE_PATTERNS.items():
+            sanitized = pattern.sub(cls._mask_match, sanitized)
+
         return sanitized
     
     @classmethod
@@ -122,16 +138,16 @@ class DataSanitizer:
         return sanitized
     
     @classmethod
-    def _sanitize_list(cls, data: List[Any], max_depth: int) -> List[Any]:
-        """Sanitiza uma lista."""
+    def _sanitize_list(cls, data: Sequence[Any], max_depth: int) -> List[Any]:
+        """Sanitiza uma lista (ou tupla), retornando uma nova lista."""
         # Limitar tamanho da lista para performance
         if len(data) > 100:
-            sanitized_data = data[:100]
-            sanitized_data.append("[LIST_TRUNCATED]")
+            sliced = list(data[:100])
+            sliced.append("[LIST_TRUNCATED]")
         else:
-            sanitized_data = data
-            
-        return [cls.sanitize_data(item, max_depth) for item in sanitized_data]
+            sliced = list(data)
+
+        return [cls.sanitize_data(item, max_depth) for item in sliced]
     
     @classmethod
     def _create_masked_value(cls, value: str) -> str:

@@ -10,7 +10,7 @@ import os
 class MongoToolRepository(IToolRepository):
     """Implementação do repositório de tools usando MongoDB."""
     
-    def __init__(self, connection_string: str = "mongodb://localhost:27017", 
+    def __init__(self, connection_string: str = "mongodb://localhost:62659/?directConnection=true", 
                  database_name: str = "agno", 
                  collection_name: str = "tools"):
         self._connection_string = connection_string
@@ -39,8 +39,6 @@ class MongoToolRepository(IToolRepository):
         """Obtém a coleção do MongoDB de forma lazy."""
         if self._collection is None:
             try:
-                self.logger.info(f"Conectando ao MongoDB: {self._connection_string[:50]}... (TLS: {self._use_tls})")
-                
                 # Configurações de conexão para MongoDB Atlas
                 if self._use_tls:
                     self._client = MongoClient(
@@ -70,7 +68,6 @@ class MongoToolRepository(IToolRepository):
                 
                 # Testar conexão
                 self._client.admin.command('ping')
-                self.logger.info("Conexão com MongoDB estabelecida com sucesso")
                 
                 self._db = self._client[self._database_name]
                 self._collection = self._db[self._collection_name]
@@ -139,21 +136,45 @@ class MongoToolRepository(IToolRepository):
         # Mapear parâmetros
         parameters = []
         for param_data in tool_data.get("parameters", []):
+            # Tornar o mapeamento de tipo resiliente a maiúsculas/minúsculas e aceitar nome/valor
+            raw_type = param_data.get("type")
+            parsed_type = None
+            try:
+                parsed_type = ParameterType(raw_type)
+            except Exception:
+                if isinstance(raw_type, str):
+                    try:
+                        parsed_type = ParameterType[raw_type.upper()]
+                    except Exception:
+                        raise ValueError(f"Tipo de parâmetro inválido: {raw_type}")
+                else:
+                    raise
+
             parameter = ToolParameter(
                 name=param_data.get("name"),
-                type=ParameterType(param_data.get("type")),
+                type=parsed_type,
                 description=param_data.get("description"),
                 required=param_data.get("required", False),
                 default_value=param_data.get("default_value")
             )
             parameters.append(parameter)
         
+        # Mapeamento resiliente do método HTTP
+        raw_method = tool_data.get("http_method", "GET")
+        try:
+            http_method = HttpMethod(raw_method)
+        except Exception:
+            if isinstance(raw_method, str):
+                http_method = HttpMethod[raw_method.upper()]
+            else:
+                raise
+
         return Tool(
             id=tool_data.get("id", ""),
             name=tool_data.get("name", ""),
             description=tool_data.get("description", ""),
             route=tool_data.get("route", ""),
-            http_method=HttpMethod(tool_data.get("http_method", "GET")),
+            http_method=http_method,
             parameters=parameters,
             instructions=tool_data.get("instructions", ""),
             headers=tool_data.get("headers", {}),

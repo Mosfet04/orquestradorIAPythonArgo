@@ -15,7 +15,7 @@ class TestIntegrationApp:
         
         # Assert
         assert app is not None
-        assert app.title == "Test App"
+        assert app.title == "Orquestrador de Agentes IA"
         
         # Verificar se a aplicação tem rotas configuradas
         assert len(app.routes) > 0

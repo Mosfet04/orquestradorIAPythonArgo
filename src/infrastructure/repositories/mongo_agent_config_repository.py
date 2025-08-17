@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class MongoAgentConfigRepository(IAgentConfigRepository):
     """Implementação do repositório de configurações de agentes usando MongoDB."""
     
-    def __init__(self, connection_string: str = "mongodb://localhost:27017", 
+    def __init__(self, connection_string: str = "mongodb://localhost:62659/?directConnection=true", 
                  database_name: str = "agno", 
                  collection_name: str = "agents_config"):
         self._connection_string = connection_string
@@ -39,8 +39,6 @@ class MongoAgentConfigRepository(IAgentConfigRepository):
         """Obtém a coleção do MongoDB de forma lazy."""
         if self._collection is None:
             try:
-                logger.info(f"Conectando ao MongoDB: {self._connection_string[:50]}... (TLS: {self._use_tls})")
-                
                 # Configurações de conexão para MongoDB Atlas
                 if self._use_tls:
                     self._client = MongoClient(
@@ -70,7 +68,6 @@ class MongoAgentConfigRepository(IAgentConfigRepository):
                 
                 # Testar conexão
                 self._client.admin.command('ping')
-                logger.info("Conexão com MongoDB estabelecida com sucesso")
                 
                 self._db = self._client[self._database_name]
                 self._collection = self._db[self._collection_name]

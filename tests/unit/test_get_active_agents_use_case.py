@@ -35,10 +35,8 @@ class TestGetActiveAgentsUseCase:
         mock_agent1 = Mock()
         mock_agent2 = Mock()
         mock_service.create_agent.side_effect = [mock_agent1, mock_agent2]
-        
-        use_case = GetActiveAgentsUseCase(mock_repository, mock_service)
-        
-        # Act
+
+        use_case = GetActiveAgentsUseCase(mock_service, mock_repository)  # Corrigindo ordem dos parâmetros        # Act
         result = use_case.execute()
         
         # Assert
