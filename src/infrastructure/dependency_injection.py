@@ -158,7 +158,7 @@ class DependencyContainer:
                 app_logger.warning("⚠️ Usando repository mock para desenvolvimento", error=str(e))
                 # TODO: Implementar MockAgentConfigRepository
                 self._agent_config_repository = MongoAgentConfigRepository(
-                    connection_string="mongodb://localhost:27017",
+                    connection_string="mongodb://localhost:62659/?directConnection=true",
                     database_name="mock_db"
                 )
         
@@ -176,7 +176,7 @@ class DependencyContainer:
                 app_logger.warning("⚠️ Usando tool repository mock para desenvolvimento", error=str(e))
                 # TODO: Implementar MockToolRepository
                 self._tool_repository = MongoToolRepository(
-                    connection_string="mongodb://localhost:27017",
+                    connection_string="mongodb://localhost:62659/?directConnection=true",
                     database_name="mock_db"
                 )
         

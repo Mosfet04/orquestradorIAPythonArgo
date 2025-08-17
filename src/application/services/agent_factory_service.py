@@ -23,7 +23,7 @@ class AgentFactoryService:
     """Serviço responsável por criar instâncias de agentes com cache otimizado."""
     
     def __init__(self, 
-                 db_url: str = "mongodb://localhost:27017", 
+                 db_url: str = "mongodb://localhost:62659/?directConnection=true", 
                  db_name: str = "agno",
                  tool_repository: Optional[IToolRepository] = None):
         self._db_url = db_url

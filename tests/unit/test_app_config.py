@@ -16,7 +16,7 @@ class TestAppConfig:
         
         # Assert
         assert config.app_title == 'Orquestrador IA Otimizado'
-        assert config.mongo_connection_string == 'mongodb://localhost:27017'
+        assert config.mongo_connection_string == 'mongodb://localhost:62659/?directConnection=true'
         assert config.mongo_database_name == 'agno'
         assert config.app_host == '0.0.0.0'
         assert config.app_port == 7777
@@ -58,7 +58,7 @@ class TestAppConfig:
             
             # Assert
             assert config.app_title == 'Orquestrador IA Otimizado'
-            assert config.mongo_connection_string == 'mongodb://localhost:27017'
+            assert config.mongo_connection_string == 'mongodb://localhost:62659/?directConnection=true'
             assert config.mongo_database_name == 'agno'
             assert config.app_host == '0.0.0.0'
             assert config.app_port == 7777

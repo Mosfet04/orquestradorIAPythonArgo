@@ -28,7 +28,7 @@ class AppConfig:
         config = cls(
             mongo_connection_string=os.getenv(
                 "MONGO_CONNECTION_STRING", 
-                "mongodb://localhost:27017"
+                "mongodb://localhost:62659/?directConnection=true"
             ),
             mongo_database_name=os.getenv("MONGO_DATABASE_NAME", "agno"),
             app_title=os.getenv("APP_TITLE", "Orquestrador IA Otimizado"),

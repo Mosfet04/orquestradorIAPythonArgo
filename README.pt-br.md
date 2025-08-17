@@ -285,7 +285,7 @@ docker-compose up -d
 
 ```bash
 # Configuração do Banco de Dados
-MONGO_CONNECTION_STRING=mongodb://localhost:27017
+MONGO_CONNECTION_STRING=mongodb://localhost:62659/?directConnection=true
 MONGO_DATABASE_NAME=agno
 
 # Configuração da Aplicação
@@ -873,7 +873,7 @@ mongosh --eval "db.adminCommand('ismaster')"
 # Teste a conexão
 python -c "
 from pymongo import MongoClient
-client = MongoClient('mongodb://localhost:27017')
+client = MongoClient('mongodb://localhost:62659/?directConnection=true')
 print(client.admin.command('ismaster'))
 "
 ```

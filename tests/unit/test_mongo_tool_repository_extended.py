@@ -18,7 +18,7 @@ class TestMongoToolRepositoryExtended:
             mock_client.return_value.admin.command = Mock(return_value={})  # Mock ping command
             
             self.repository = MongoToolRepository(
-                connection_string="mongodb://localhost:27017",
+                connection_string="mongodb://localhost:62659/?directConnection=true",
                 database_name="test_db"
             )
             self.mock_collection = mock_collection
@@ -26,7 +26,7 @@ class TestMongoToolRepositoryExtended:
     def test_repository_initialization(self):
         """Testa inicialização do repositório."""
         # Assert
-        assert self.repository._connection_string == "mongodb://localhost:27017"
+        assert self.repository._connection_string == "mongodb://localhost:62659/?directConnection=true"
         assert self.repository._database_name == "test_db"
         assert self.repository._collection_name == "tools"
     
@@ -246,7 +246,7 @@ class TestMongoToolRepositoryExtended:
         with patch('os.getenv', return_value="false"):
             with patch('src.infrastructure.repositories.mongo_tool_repository.MongoClient'):
                 local_repo = MongoToolRepository(
-                    connection_string="mongodb://localhost:27017"
+                    connection_string="mongodb://localhost:62659/?directConnection=true"
                 )
                 
                 # Act

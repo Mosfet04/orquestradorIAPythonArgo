@@ -10,7 +10,7 @@ import os
 class MongoToolRepository(IToolRepository):
     """Implementação do repositório de tools usando MongoDB."""
     
-    def __init__(self, connection_string: str = "mongodb://localhost:27017", 
+    def __init__(self, connection_string: str = "mongodb://localhost:62659/?directConnection=true", 
                  database_name: str = "agno", 
                  collection_name: str = "tools"):
         self._connection_string = connection_string

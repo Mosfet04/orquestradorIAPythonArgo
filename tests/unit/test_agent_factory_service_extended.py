@@ -36,7 +36,7 @@ class TestAgentFactoryService:
         service = AgentFactoryService()
         
         # Assert
-        assert service._db_url == "mongodb://localhost:27017"
+        assert service._db_url == "mongodb://localhost:62659/?directConnection=true"
         assert service._db_name == "agno"
         assert service._tool_repository is None
     

@@ -13,7 +13,7 @@ async def test_app_factory_creates_app_and_mounts(monkeypatch):
 
     # Mock AppConfig.load_async
     monkeypatch.setattr(AppConfig, 'load_async', AsyncMock(return_value=AppConfig(
-        mongo_connection_string="mongodb://localhost:27017",
+        mongo_connection_string="mongodb://localhost:62659/?directConnection=true",
         mongo_database_name="agno",
         app_title="t",
         app_host="0.0.0.0",

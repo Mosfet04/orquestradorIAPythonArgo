@@ -12,9 +12,9 @@ def setup_test_environment():
     """Configura o ambiente de teste."""
     # Configurar variáveis de ambiente para testes
     test_env = {
-        'MONGO_CONNECTION_STRING': 'mongodb://test:test@localhost:27017/test',
-        'MONGO_DATABASE_NAME': 'test_db',
-        'APP_TITLE': 'Test App',
+        'MONGO_CONNECTION_STRING': os.getenv('MONGO_CONNECTION_STRING'),
+        'MONGO_DATABASE_NAME': os.getenv('MONGO_DATABASE_NAME'),
+        'APP_TITLE': 'Orquestrador de Agentes IA',
         'LOG_LEVEL': 'ERROR'  # Reduzir logs durante testes
     }
     
