@@ -127,6 +127,9 @@ LOGGING_CONFIG = {
 
 def setup_logging():
     """Configura o sistema de logging da aplicação."""
+    # Garantir que o diretório de logs exista no diretório de trabalho atual
+    Path("logs").mkdir(exist_ok=True, parents=True)
+
     # Ajustar nível baseado em variável de ambiente
     log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
     

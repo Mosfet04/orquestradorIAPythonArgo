@@ -98,7 +98,12 @@ class DataSanitizer:
         # Aplicar padrões de sanitização
         for pattern_name, pattern in cls.SENSITIVE_PATTERNS.items():
             if pattern.search(sanitized):
-                sanitized = pattern.sub(lambda m: f"{m.group(1)}=***{pattern_name.upper()}_MASKED***", sanitized)
+                # Se o padrão tiver grupos, usar o primeiro grupo como chave; caso contrário, apenas mascarar a ocorrência
+                def _repl(m):
+                    if m.groups():
+                        return f"{m.group(1)}=***{pattern_name.upper()}_MASKED***"
+                    return f"***{pattern_name.upper()}_MASKED***"
+                sanitized = pattern.sub(_repl, sanitized)
         
         return sanitized
     
