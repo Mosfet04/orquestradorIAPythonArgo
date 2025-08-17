@@ -64,7 +64,8 @@ class TestOrquestradorController:
         
         # Assert
         # O cache é recarregado, não apenas limpo
-        assert self.controller._agents_cache is not None
+        self.controller.get_agents()
+        assert self.mock_use_case.execute_async.call_count == 2
     
     def test_refresh_agents_forces_new_call_to_use_case(self):
         """Testa se refresh_agents força nova chamada ao caso de uso."""

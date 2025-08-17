@@ -77,12 +77,13 @@ class ModelCacheService:
             self._total_misses += 1
             
             try:
-                # Executar factory function em thread separada se assíncrona
+                # Se a factory for async, aguardar diretamente; caso contrário, offload para thread.
+                # Obs.: para operações CPU-bound considere usar ProcessPoolExecutor e/ou tornar a factory assíncrona.
                 if asyncio.iscoroutinefunction(factory_func):
                     model = await factory_func(*args, **kwargs)
                 else:
-                    loop = asyncio.get_event_loop()
-                    model = await loop.run_in_executor(None, factory_func, *args, **kwargs)
+                    # asyncio.to_thread preserva kwargs corretamente e usa o ThreadPool padrão
+                    model = await asyncio.to_thread(factory_func, *args, **kwargs)
                 
                 # Adicionar ao cache
                 self._cache[cache_key] = ModelCacheEntry(model, self._ttl_minutes)

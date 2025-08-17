@@ -114,45 +114,6 @@ class AgentFactoryService:
         # Para manter compatibilidade, usar diretamente o factory sem cache
         # Em uma refatoração futura, todo o fluxo deve ser assíncrono
         return self._model_factory.create_model(factory_type, model_name)
-        knowledge_base = None
-        if config.rag_config and config.rag_config.active:
-            if not config.rag_config.factoryIaModel or not config.rag_config.model:
-                raise ValueError("Configuração de RAG deve ter factoryIaModel e model definidos")
-            
-            validate_rag = self._embedder_model_factory.validate_model_config(
-                config.rag_config.factoryIaModel,
-                config.rag_config.model
-            )
-            if not validate_rag["valid"]:
-                errors = "; ".join(validate_rag["errors"])
-                raise ValueError(f"Configuração de RAG inválida: {errors}")
-            
-            knowledge_base = self._create_rag(config)
-
-        agent = Agent(
-            name=config.nome,
-            agent_id=config.id,
-            model=model,  # Usar o modelo criado pelo factory
-            reasoning=False,
-            markdown=True,
-            add_history_to_messages=True,
-            description=config.descricao,
-            add_datetime_to_instructions=True,
-            storage=storage,
-            user_id="ava",
-            memory=memory,
-            enable_agentic_memory=True,
-            enable_user_memories=True,
-            enable_session_summaries=True,
-            instructions=config.prompt,
-            num_history_responses=5,
-            tools=tools,
-            knowledge=knowledge_base,
-            search_knowledge=True if knowledge_base else False,
-            read_chat_history=True if knowledge_base else False,
-        )
-        
-        return agent
     
     def _create_tools(self, tool_ids: List[str]) -> List[Union[Toolkit, Callable, Function, Dict[str, Any]]]:
         """Cria as ferramentas para o agente."""
