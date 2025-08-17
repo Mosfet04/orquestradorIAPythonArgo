@@ -4,8 +4,8 @@ Decoradores para logging automático de métodos e funções.
 
 import time
 import functools
-from typing import Any, Callable, Optional, Dict
-from .structlog_logger import LoggerFactory, LogLevel
+from typing import Any, Callable, Dict
+from .structlog_logger import LoggerFactory
 
 
 def log_execution(logger_name: str = "execution", 

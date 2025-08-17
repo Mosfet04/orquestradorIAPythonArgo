@@ -1,5 +1,4 @@
 import pytest
-from unittest.mock import patch, MagicMock
 from src.application.services.model_factory_service import ModelFactory
 from agno.models.ollama import Ollama
 

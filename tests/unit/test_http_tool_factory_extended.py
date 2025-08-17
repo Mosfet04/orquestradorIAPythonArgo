@@ -1,5 +1,4 @@
-import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 from src.application.services.http_tool_factory_service import HttpToolFactory
 from src.domain.entities.tool import Tool, ToolParameter, HttpMethod, ParameterType
 

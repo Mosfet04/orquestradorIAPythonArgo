@@ -1,6 +1,5 @@
 import pytest
 import os
-import asyncio
 from unittest.mock import patch
 from src.infrastructure.config.app_config import AppConfig
 

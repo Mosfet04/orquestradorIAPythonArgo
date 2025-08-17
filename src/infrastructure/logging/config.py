@@ -138,9 +138,6 @@ def setup_logging():
     
     # Configurar logging
     logging.config.dictConfig(LOGGING_CONFIG)
-    
-    # Log inicial
-    logger = logging.getLogger('orquestrador_ia')
 
 
 # Configurar logging automaticamente na importação do módulo

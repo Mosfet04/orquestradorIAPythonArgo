@@ -1,6 +1,4 @@
-import pytest
-import asyncio
-from unittest.mock import Mock, MagicMock, AsyncMock
+from unittest.mock import Mock, AsyncMock
 from src.presentation.controllers.orquestrador_controller import OrquestradorController
 from src.application.use_cases.get_active_agents_use_case import GetActiveAgentsUseCase
 

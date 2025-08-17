@@ -1,4 +1,4 @@
-from typing import Union, Dict, Any, Type
+from typing import Dict, Any, Type
 import os
 
 
@@ -29,8 +29,8 @@ class EmbedderModelFactory:
                     return OpenAIEmbedder
                 except ImportError:
                     raise ValueError(
-                        f"Modelo OpenAI não está disponível. "
-                        f"Instale as dependências com: pip install openai"
+                        "Modelo OpenAI não está disponível. "
+                        "Instale as dependências com: pip install openai"
                     )
             elif factory_type in ["gemini", "google"]:
                 try:
@@ -43,8 +43,8 @@ class EmbedderModelFactory:
                     return GeminiEmbedder
                 except ImportError:
                     raise ValueError(
-                        f"Modelo Gemini não está disponível. "
-                        f"Instale as dependências com: pip install google-genai"
+                        "Modelo Gemini não está disponível. "
+                        "Instale as dependências com: pip install google-genai"
                     )
             elif factory_type in ["azure", "azureopenai"]:
                 try:
@@ -52,8 +52,8 @@ class EmbedderModelFactory:
                     return AzureOpenAIEmbedder
                 except ImportError:
                     raise ValueError(
-                        f"Modelo Azure OpenAI não está disponível. "
-                        f"Instale as dependências com: pip install openai"
+                        "Modelo Azure OpenAI não está disponível. "
+                        "Instale as dependências com: pip install openai"
                     )
             else:
                 supported_models = ", ".join(cls.get_supported_models())

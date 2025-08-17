@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import patch, MagicMock
 from src.domain.entities.tool import Tool, HttpMethod, ToolParameter, ParameterType
 from src.application.services.http_tool_factory_service import HttpToolFactory
 

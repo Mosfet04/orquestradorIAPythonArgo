@@ -1,6 +1,6 @@
 from typing import Optional, List, Union, Callable, Dict, Any, cast
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime
 from agno.agent import Agent
 from agno.storage.mongodb import MongoDbStorage
 from agno.memory.v2.memory import Memory
@@ -75,16 +75,26 @@ class AgentFactoryService:
             # Criar agente
             agent = Agent(
                 name=config.nome,
-                model=model,
+                agent_id=config.id,
+                model=model,  # Usar o modelo criado pelo factory
+                reasoning=False,
+                markdown=True,
+                add_history_to_messages=True,
                 description=config.descricao,
-                instructions=config.prompt,
-                tools=tools,
+                add_datetime_to_instructions=True,
                 storage=storage,
+                user_id="ava",
                 memory=memory,
-                show_tool_calls=True,
-                debug_mode=False,
+                enable_agentic_memory=True,
+                enable_user_memories=True,
+                enable_session_summaries=True,
+                instructions=config.prompt,
+                num_history_responses=5,
+                tools=tools,
+                knowledge=knowledge_base,
+                search_knowledge=True if knowledge_base else False,
+                read_chat_history=True if knowledge_base else False,
             )
-            # TODO: Adicionar knowledge base quando suportado pela biblioteca agno
             
             creation_time = (datetime.utcnow() - start_time).total_seconds()
             

@@ -1,6 +1,5 @@
 import httpx
-import os
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 import ast
 from agno.tools import Toolkit
 from src.domain.entities.tool import Tool, HttpMethod
@@ -8,8 +7,7 @@ from src.infrastructure.logging import (
     LoggerFactory, 
     log_execution, 
     log_http_request,
-    log_performance,
-    app_logger
+    log_performance
 )
 import os
 

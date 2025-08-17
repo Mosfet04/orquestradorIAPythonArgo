@@ -1,4 +1,4 @@
-from typing import Union, Dict, Any, Type
+from typing import Dict, Any, Type
 from agno.models.ollama import Ollama
 import os
 from src.infrastructure.logging import LoggerFactory, log_execution, log_ai_interaction
@@ -33,8 +33,8 @@ class ModelFactory:
                     return OpenAIChat
                 except ImportError:
                     raise ValueError(
-                        f"Modelo OpenAI não está disponível. "
-                        f"Instale as dependências com: pip install openai"
+                        "Modelo OpenAI não está disponível. "
+                        "Instale as dependências com: pip install openai"
                     )
             elif factory_type in ["anthropic"]:
                 try:
@@ -42,8 +42,8 @@ class ModelFactory:
                     return Claude
                 except ImportError:
                     raise ValueError(
-                        f"Modelo Anthropic não está disponível. "
-                        f"Instale as dependências com: pip install anthropic"
+                        "Modelo Anthropic não está disponível. "
+                        "Instale as dependências com: pip install anthropic"
                     )
             elif factory_type in ["gemini", "google"]:
                 try:
@@ -57,8 +57,8 @@ class ModelFactory:
                     return Gemini
                 except ImportError:
                     raise ValueError(
-                        f"Modelo Gemini não está disponível. "
-                        f"Instale as dependências com: pip install google-genai"
+                        "Modelo Gemini não está disponível. "
+                        "Instale as dependências com: pip install google-genai"
                     )
             elif factory_type in ["groq"]:
                 try:
@@ -66,8 +66,8 @@ class ModelFactory:
                     return GroqChat
                 except ImportError:
                     raise ValueError(
-                        f"Modelo Groq não está disponível. "
-                        f"Instale as dependências com: pip install groq"
+                        "Modelo Groq não está disponível. "
+                        "Instale as dependências com: pip install groq"
                     )
             elif factory_type in ["azure", "azureopenai"]:
                 try:
@@ -75,8 +75,8 @@ class ModelFactory:
                     return AzureOpenAIChat
                 except ImportError:
                     raise ValueError(
-                        f"Modelo Azure OpenAI não está disponível. "
-                        f"Instale as dependências com: pip install openai"
+                        "Modelo Azure OpenAI não está disponível. "
+                        "Instale as dependências com: pip install openai"
                     )
             else:
                 supported_models = ", ".join(cls.get_supported_models())

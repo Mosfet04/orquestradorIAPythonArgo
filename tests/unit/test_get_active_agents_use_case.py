@@ -1,5 +1,4 @@
-import pytest
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock
 from src.application.use_cases.get_active_agents_use_case import GetActiveAgentsUseCase
 from src.domain.entities.agent_config import AgentConfig
 
