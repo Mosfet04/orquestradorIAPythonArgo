@@ -2,7 +2,7 @@ import asyncio
 from typing import List
 from agno.agent import Agent
 from src.application.services.agent_factory_service import AgentFactoryService
-from src.infrastructure.repositories.mongo_agent_config_repository import MongoAgentConfigRepository
+from src.domain.repositories.agent_config_repository import IAgentConfigRepository
 from src.infrastructure.logging import app_logger
 
 
@@ -12,7 +12,7 @@ class GetActiveAgentsUseCase:
     def __init__(
         self, 
         agent_factory_service: AgentFactoryService,
-        agent_config_repository: MongoAgentConfigRepository
+        agent_config_repository: IAgentConfigRepository
     ):
         self._agent_factory_service = agent_factory_service
         self._agent_config_repository = agent_config_repository

@@ -16,23 +16,7 @@ from src.application.services.http_tool_factory_service import HttpToolFactory
 from src.application.services.model_factory_service import ModelFactory
 from src.application.services.embedder_model_factory_service import EmbedderModelFactory
 from src.infrastructure.logging import app_logger
-
-
-class ModelCacheEntry:
-    """Entrada de cache para modelos com TTL."""
-    
-    def __init__(self, model, ttl_minutes: int = 30):
-        self.model = model
-        self.created_at = datetime.utcnow()
-        self.ttl = timedelta(minutes=ttl_minutes)
-        self.hit_count = 0
-    
-    def is_expired(self) -> bool:
-        return datetime.utcnow() > (self.created_at + self.ttl)
-    
-    def access(self):
-        self.hit_count += 1
-        return self.model
+from src.infrastructure.cache.model_cache_service import ModelCacheService
 
 
 class AgentFactoryService:
@@ -48,10 +32,7 @@ class AgentFactoryService:
         self._http_tool_factory = HttpToolFactory()
         self._model_factory = ModelFactory()
         self._embedder_model_factory = EmbedderModelFactory()
-        
-        # Cache para modelos com TTL
-        self._model_cache: Dict[str, ModelCacheEntry] = {}
-        self._cache_lock = asyncio.Lock()
+        self._model_cache_service = ModelCacheService()
     
     async def create_agent_async(self, config: AgentConfig) -> Agent:
         """Versão assíncrona para criação de agentes."""
@@ -122,34 +103,22 @@ class AgentFactoryService:
                            creation_time_seconds=round(creation_time, 3))
             raise
     
-    def _get_or_create_model_cached(self, factory_type: str, model_name: str):
-        """Obtém modelo do cache ou cria novo com cache."""
+    async def _get_or_create_model_cached_async(self, factory_type: str, model_name: str):
+        """Obtém modelo do cache ou cria novo de forma assíncrona."""
         cache_key = f"{factory_type}_{model_name}"
         
-        # Verificar cache
-        if cache_key in self._model_cache:
-            cache_entry = self._model_cache[cache_key]
-            if not cache_entry.is_expired():
-                app_logger.debug("🎯 Cache hit para modelo", 
-                               factory_type=factory_type, 
-                               model_name=model_name,
-                               hit_count=cache_entry.hit_count)
-                return cache_entry.access()
-            else:
-                # Cache expirado - remover
-                del self._model_cache[cache_key]
-        
-        # Cache miss - criar novo modelo
-        app_logger.debug("🔄 Criando novo modelo", 
-                        factory_type=factory_type, 
-                        model_name=model_name)
-        
-        model = self._model_factory.create_model(factory_type, model_name)
-        
-        # Adicionar ao cache
-        self._model_cache[cache_key] = ModelCacheEntry(model)
-        
-        return model
+        return await self._model_cache_service.get_or_create(
+            cache_key,
+            self._model_factory.create_model,
+            factory_type,
+            model_name
+        )
+    
+    def _get_or_create_model_cached(self, factory_type: str, model_name: str):
+        """Obtém modelo do cache ou cria novo (versão síncrona)."""
+        # Para manter compatibilidade, usar diretamente o factory sem cache
+        # Em uma refatoração futura, todo o fluxo deve ser assíncrono
+        return self._model_factory.create_model(factory_type, model_name)
         knowledge_base = None
         if config.rag_config and config.rag_config.active:
             if not config.rag_config.factoryIaModel or not config.rag_config.model:

@@ -4,6 +4,8 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from src.infrastructure.config.app_config import AppConfig
 from src.infrastructure.repositories.mongo_agent_config_repository import MongoAgentConfigRepository  
 from src.infrastructure.repositories.mongo_tool_repository import MongoToolRepository
+from src.domain.repositories.agent_config_repository import IAgentConfigRepository
+from src.domain.repositories.tool_repository import IToolRepository
 from src.application.services.agent_factory_service import AgentFactoryService
 from src.application.use_cases.get_active_agents_use_case import GetActiveAgentsUseCase
 from src.presentation.controllers.orquestrador_controller import OrquestradorController
@@ -68,8 +70,8 @@ class DependencyContainer:
     def __init__(self, config: AppConfig):
         self.config = config
         self._mongo_client: Optional[AsyncIOMotorClient] = None
-        self._agent_config_repository: Optional[MongoAgentConfigRepository] = None
-        self._tool_repository: Optional[MongoToolRepository] = None
+        self._agent_config_repository: Optional[IAgentConfigRepository] = None
+        self._tool_repository: Optional[IToolRepository] = None
         self._agent_factory_service: Optional[AgentFactoryService] = None
         self._get_active_agents_use_case: Optional[GetActiveAgentsUseCase] = None
         self._orquestrador_controller: Optional[OrquestradorController] = None
@@ -143,7 +145,7 @@ class DependencyContainer:
         
         return self._agent_factory_service
     
-    async def _get_agent_config_repository_async(self) -> MongoAgentConfigRepository:
+    async def _get_agent_config_repository_async(self) -> IAgentConfigRepository:
         """Obtém repository de configuração assincronamente."""
         if not self._agent_config_repository:
             try:
@@ -161,7 +163,7 @@ class DependencyContainer:
         
         return self._agent_config_repository
     
-    async def _get_tool_repository_async(self) -> MongoToolRepository:
+    async def _get_tool_repository_async(self) -> IToolRepository:
         """Obtém tool repository assincronamente."""
         if not self._tool_repository:
             try:
