@@ -2,6 +2,7 @@ agno
 ollama
 fastapi
 pymongo
+motor
 uvicorn
 packaging
 importlib-metadata
