@@ -1,5 +1,5 @@
 import httpx
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 import ast
 from agno.tools import Toolkit
 from src.domain.entities.tool import Tool, HttpMethod
@@ -45,8 +45,6 @@ class HttpToolFactory:
     def _create_agno_tool(self, tool: Tool) -> Toolkit:
         """Cria uma ferramenta agno individual."""
         
-
-        
         @log_http_request(logger_name="http_tool_executions")
         def http_function(**kwargs) -> str:
             """Função que executa a requisição HTTP."""
@@ -61,107 +59,14 @@ class HttpToolFactory:
             )
             
             try:
-                # Preparar headers
-                headers = tool.headers or {}
-                headers.setdefault("Content-Type", "application/json")
-                
-                # Processar URL para substituir placeholders
-                url = tool.route
-                remaining_params = kwargs.copy()
-                
-                # Substituir placeholders na URL (ex: {id}, {user_id})
-                for key, value in kwargs.items():
-                    if isinstance(value, str):
-                        param_dict = ast.literal_eval(value)
-                    else:
-                        param_dict = value
-                    
-                    # Capturar o primeiro par chave-valor (independente do formato)
-                    if isinstance(param_dict, dict) and param_dict:
-                        param_key = next(iter(param_dict))
-                        param_value = param_dict[param_key]
-                        placeholder = f"{{{param_key}}}"
-                        if placeholder in url:
-                            url = url.replace(placeholder, str(param_value))
-                            remaining_params.pop(key)  # Remover da lista de query params
-                
-                # Preparar dados baseado no método HTTP
-                if tool.http_method in [HttpMethod.GET, HttpMethod.DELETE]:
-                    # Para GET e DELETE, usar params restantes na URL
-
-                    
-                    response = httpx.request(
-                        method=tool.http_method.value,
-                        url=url,
-                        params=remaining_params if remaining_params else None,
-                        headers=headers,
-                        timeout=30.0,
-                        verify=True  # Sempre verificar SSL
-                    )
-                else:
-                    # Para POST, PUT, PATCH, usar body JSON com parâmetros restantes
-                    
-                    response = httpx.request(
-                        method=tool.http_method.value,
-                        url=url,
-                        json=remaining_params if remaining_params else None,
-                        headers=headers,
-                        timeout=30.0,
-                        verify=True  # Sempre verificar SSL
-                    )
-                
+                headers = self._default_headers(tool)
+                url, remaining_params = self._resolve_url_and_params(tool.route, kwargs)
+                response = self._send_request(tool.http_method, url, headers, remaining_params)
                 response.raise_for_status()
-                
-                # Log de sucesso
-                self.logger.info(f"Requisição HTTP bem-sucedida para: {tool.id}", 
-                    tool_id= tool.id,
-                    request_id= request_id,
-                    status_code= response.status_code,
-                    response_size_bytes= len(response.content),
-                    content_type= response.headers.get("content-type", "unknown")
-                )
-                
-                # Tentar retornar JSON, senão retornar texto
-                try:
-                    json_response = response.json()
-                    return str(json_response)
-                except (ValueError, httpx.DecodingError):
-                    return response.text
-                    
-            except httpx.RequestError as e:
-                error_msg = f"Erro na requisição: {str(e)}"
-                self.logger.error(f"Erro de requisição para: {tool.id}", 
-                    exception= e,
-                    tool_id= tool.id,
-                    request_id= request_id,
-                    error_type= "RequestError",
-                    error_category= "network"
-                )
-                return error_msg
-                
-            except httpx.HTTPStatusError as e:
-                error_msg = f"Erro HTTP {e.response.status_code}: {e.response.text}"
-                self.logger.error(f"Erro HTTP para: {tool.id}",
-                    exception= e,
-                    tool_id= tool.id,
-                    request_id= request_id,
-                    status_code= e.response.status_code,
-                    error_type= "HTTPStatusError",
-                    error_category= "http_status",
-                    response_size_bytes= len(e.response.content) if e.response.content else 0
-                )
-                return error_msg
-                
-            except Exception as e:
-                error_msg = f"Erro inesperado: {str(e)}"
-                self.logger.error(f"Erro inesperado para: {tool.id}",
-                    exception= e,
-                    tool_id= tool.id,
-                    request_id= request_id,
-                    error_type= e.__class__.__name__,
-                    error_category= "unexpected"
-                )
-                return error_msg
+                self._log_success(tool.id, request_id, response)
+                return self._serialize_response(response)
+            except Exception as e:  # Centraliza tratamento para reduzir complexidade
+                return self._handle_exception(tool, request_id, e)
         
         # Criar a descrição da função para o agno
         function_description = self._create_function_description(tool)
@@ -173,6 +78,110 @@ class HttpToolFactory:
             name=tool.id,
         )
         return toolkit
+
+    def _default_headers(self, tool: Tool) -> Dict[str, str]:
+        """Monta headers padrão garantindo Content-Type JSON."""
+        headers = (tool.headers or {}).copy()
+        headers.setdefault("Content-Type", "application/json")
+        return headers
+
+    def _resolve_url_and_params(self, route: str, kwargs: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+        """Substitui placeholders na rota e retorna URL final e parâmetros remanescentes."""
+        url = route
+        remaining_params = kwargs.copy()
+
+        for key, value in kwargs.items():
+            try:
+                param_dict = ast.literal_eval(value) if isinstance(value, str) else value
+            except (ValueError, SyntaxError):
+                param_dict = value
+
+            if isinstance(param_dict, dict) and param_dict:
+                param_key = next(iter(param_dict))
+                param_value = param_dict[param_key]
+                placeholder = f"{{{param_key}}}"
+                if placeholder in url:
+                    url = url.replace(placeholder, str(param_value))
+                    # remover o argumento original da lista de params
+                    remaining_params.pop(key, None)
+
+        return url, remaining_params
+
+    def _send_request(self, http_method: HttpMethod, url: str, headers: Dict[str, str], remaining_params: Dict[str, Any]) -> httpx.Response:
+        """Dispara a requisição HTTP conforme o método."""
+        is_param_method = http_method in [HttpMethod.GET, HttpMethod.DELETE]
+        request_kwargs: Dict[str, Any] = {
+            "method": http_method.value,
+            "url": url,
+            "headers": headers,
+            "timeout": 30.0,
+            "verify": True,
+        }
+
+        if is_param_method:
+            request_kwargs["params"] = remaining_params or None
+        else:
+            request_kwargs["json"] = remaining_params or None
+
+        return httpx.request(**request_kwargs)
+
+    def _log_success(self, tool_id: str, request_id: str, response: httpx.Response) -> None:
+        """Loga informações de sucesso da requisição."""
+        self.logger.info(
+            f"Requisição HTTP bem-sucedida para: {tool_id}",
+            tool_id=tool_id,
+            request_id=request_id,
+            status_code=response.status_code,
+            response_size_bytes=len(response.content),
+            content_type=response.headers.get("content-type", "unknown"),
+        )
+
+    def _serialize_response(self, response: httpx.Response) -> str:
+        """Retorna JSON como string, senão texto bruto."""
+        try:
+            json_response = response.json()
+            return str(json_response)
+        except (ValueError, httpx.DecodingError):
+            return response.text
+
+    def _handle_exception(self, tool: Tool, request_id: str, e: Exception) -> str:
+        """Centraliza tratamento e logging de exceções, retornando mensagem ao chamador."""
+        if isinstance(e, httpx.RequestError):
+            self.logger.error(
+                f"Erro de requisição para: {tool.id}",
+                exception=e,
+                tool_id=tool.id,
+                request_id=request_id,
+                error_type="RequestError",
+                error_category="network",
+            )
+            return f"Erro na requisição: {str(e)}"
+
+        if isinstance(e, httpx.HTTPStatusError):
+            resp = e.response
+            self.logger.error(
+                f"Erro HTTP para: {tool.id}",
+                exception=e,
+                tool_id=tool.id,
+                request_id=request_id,
+                status_code=resp.status_code if resp is not None else None,
+                error_type="HTTPStatusError",
+                error_category="http_status",
+                response_size_bytes=len(resp.content) if getattr(resp, "content", None) else 0,
+            )
+            status_code = resp.status_code if resp is not None else "?"
+            text = resp.text if resp is not None else ""
+            return f"Erro HTTP {status_code}: {text}"
+
+        self.logger.error(
+            f"Erro inesperado para: {tool.id}",
+            exception=e,
+            tool_id=tool.id,
+            request_id=request_id,
+            error_type=e.__class__.__name__,
+            error_category="unexpected",
+        )
+        return f"Erro inesperado: {str(e)}"
     
     def _create_function_description(self, tool: Tool) -> str:
         """Cria a descrição da função para o agno."""

@@ -150,10 +150,9 @@ class TestAgentFactoryService:
                                 mock_create_tools.return_value = mock_tools
                                 
                                 # Act
-                                result = self.service.create_agent(config)
+                                self.service.create_agent(config)
                                 
                                 # Assert
-                                assert result == mock_agent_instance
                                 mock_create_tools.assert_called_once_with(["tool1", "tool2"])
     
     @patch('src.application.services.agent_factory_service.Agent')

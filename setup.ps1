@@ -9,9 +9,9 @@ param(
 
 # Color output functions
 function Write-Header {
-    Write-Host "==================================================" -ForegroundColor Blue
-    Write-Host "    AI Agents Orchestrator - Setup Script" -ForegroundColor Blue
-    Write-Host "==================================================" -ForegroundColor Blue
+    Write-Information "=================================================="
+    Write-Information "    AI Agents Orchestrator - Setup Script"
+    Write-Information "=================================================="
 }
 
 function Write-Step {
@@ -190,26 +190,26 @@ switch ($Command) {
         Setup-Environment
         Setup-Database
         Run-Tests
-        Write-Host ""
+        Write-Output ""
         Write-Success "Setup completed successfully!"
-        Write-Host ""
-        Write-Host "To start the application, run:" -ForegroundColor Cyan
-        Write-Host "  .\venv\Scripts\Activate.ps1" -ForegroundColor White
-        Write-Host "  python app.py" -ForegroundColor White
-        Write-Host ""
-        Write-Host "Or run: .\setup.ps1 start" -ForegroundColor White
+        Write-Output ""
+        Write-Information "To start the application, run:" -InformationAction Continue
+        Write-Information "  .\venv\Scripts\Activate.ps1" -InformationAction Continue
+        Write-Information "  python app.py" -InformationAction Continue
+        Write-Output ""
+        Write-Information "Or run: .\setup.ps1 start" -InformationAction Continue
     }
     default {
-        Write-Host "Usage: .\setup.ps1 [requirements|venv|install|env|db|test|start|all]"
-        Write-Host ""
-        Write-Host "Commands:"
-        Write-Host "  requirements  - Check system requirements"
-        Write-Host "  venv         - Setup virtual environment"
-        Write-Host "  install      - Install dependencies"
-        Write-Host "  env          - Setup environment configuration"
-        Write-Host "  db           - Setup database"
-        Write-Host "  test         - Run tests"
-        Write-Host "  start        - Start the application"
-        Write-Host "  all          - Run all setup steps (default)"
+        Write-Output "Usage: .\setup.ps1 [requirements|venv|install|env|db|test|start|all]"
+        Write-Output ""
+        Write-Output "Commands:"
+        Write-Output "  requirements  - Check system requirements"
+        Write-Output "  venv         - Setup virtual environment"
+        Write-Output "  install      - Install dependencies"
+        Write-Output "  env          - Setup environment configuration"
+        Write-Output "  db           - Setup database"
+        Write-Output "  test         - Run tests"
+        Write-Output "  start        - Start the application"
+        Write-Output "  all          - Run all setup steps (default)"
     }
 }

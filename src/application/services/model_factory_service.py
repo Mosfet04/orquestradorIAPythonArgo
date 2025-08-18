@@ -97,45 +97,44 @@ class ModelFactory:
     def create_model(cls, factory_ia_model: str, model_id: str, **kwargs) -> Any:
         """
         Cria uma instância do modelo baseado no tipo especificado.
-        
+
         Args:
             factory_ia_model: Tipo do modelo (ex: "ollama", "openai", "gemini")
             model_id: ID/nome do modelo específico
             **kwargs: Parâmetros adicionais para configuração do modelo
-            
+
         Returns:
             Instância do modelo configurado
-            
+
         Raises:
             ValueError: Se o tipo de modelo não for suportado
         """
-        # Normalizar o nome do modelo para lowercase
         factory_type = factory_ia_model.lower().strip()
-        
-        # Validar entrada
-        if not factory_type:
-            cls.logger.error("Tipo de modelo vazio fornecido")
-            raise ValueError("Tipo de modelo não pode estar vazio")
 
-        if not model_id or not model_id.strip():
-            cls.logger.error("ID do modelo vazio fornecido", factory_type=factory_type)
-            raise ValueError("ID do modelo não pode estar vazio")        # Obter a classe do modelo
-        model_class = cls._get_model_class(factory_type)
-        
-        try:
-            api_key = kwargs.get('api_key') or os.getenv(f"{factory_type.upper()}_API_KEY")
+        def validate_inputs():
+            if not factory_type:
+                cls.logger.error("Tipo de modelo vazio fornecido")
+                raise ValueError("Tipo de modelo não pode estar vazio")
+            if not model_id or not model_id.strip():
+                cls.logger.error("ID do modelo vazio fornecido", factory_type=factory_type)
+                raise ValueError("ID do modelo não pode estar vazio")
+
+        def get_api_key():
+            return kwargs.get('api_key') or os.getenv(f"{factory_type.upper()}_API_KEY")
+
+        def instantiate_model(model_class, api_key):
             if factory_type == "ollama":
-                # Para Ollama, não precisamos de API key, mas podemos passar outros kwargs
                 return model_class(id=model_id, **kwargs)
-            else:
-                # Para outros modelos, precisamos da API key
-                if not api_key:
-                    raise ValueError(f"{factory_type.upper()}_API_KEY não está configurado no ambiente")
-                
-                # Remover api_key dos kwargs se estiver presente visto que foi capturado acima
-                filtered_kwargs = {k: v for k, v in kwargs.items() if k != 'api_key'}
-                return model_class(id=model_id, api_key=api_key, **filtered_kwargs)
-                
+            if not api_key:
+                raise ValueError(f"{factory_type.upper()}_API_KEY não está configurado no ambiente")
+            filtered_kwargs = {k: v for k, v in kwargs.items() if k != 'api_key'}
+            return model_class(id=model_id, api_key=api_key, **filtered_kwargs)
+
+        try:
+            validate_inputs()
+            model_class = cls._get_model_class(factory_type)
+            api_key = get_api_key()
+            return instantiate_model(model_class, api_key)
         except Exception as e:
             raise ValueError(
                 f"Erro ao criar modelo {factory_ia_model} com ID '{model_id}': {str(e)}"

@@ -17,7 +17,7 @@
 ## 📋 Table of Contents
 
 - [Overview](#overview)
-- [Architecture](#architecture)
+- [Architecture](#-architecture)
 - [Features](#features)
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
