@@ -10,7 +10,7 @@
 
 *Uma aplicação Python robusta que implementa um orquestrador de agentes de IA utilizando arquitetura Onion (Clean Architecture), princípios de Clean Code e o framework **[agno](https://github.com/phidatahq/agno)***
 
-[🇺🇸 English](#english-version) | [📚 Documentação](#documentação) | [🚀 Início Rápido](#início-rápido)
+[🇺🇸 English](README.en.md) | [📚 Documentação](#api-reference) | [🚀 Início Rápido](#início-rápido)
 
 </div>
 
@@ -211,7 +211,7 @@ sequenceDiagram
 - ✅ **REST API**: Endpoints completos para integração externa
 - ✅ **Zero-Code Configuration**: Adicione agentes, tools e configurações apenas no banco
 
-## � Capacidades Dinâmicas
+## 🔮 Capacidades Dinâmicas
 
 ### 🎛️ Configuração Zero-Code
 O sistema permite configuração **100% dinâmica** através do MongoDB, sem necessidade de alteração de código:
@@ -242,7 +242,7 @@ graph TD
     style F fill:#e8f5e8
 ```
 
-## �🚀 Início Rápido
+## 🚀 Início Rápido
 
 ### 📋 Pré-requisitos
 
@@ -944,7 +944,7 @@ Este projeto está licenciado sob a MIT License - veja o arquivo [LICENSE](LICEN
 
 <div align="center">
 
-**[⬆ Voltar ao topo](#-orquestrador-de-agentes-ia)**
+**[⬆ Voltar ao topo](#orquestrador-de-agentes-ia)**
 
 Feito com ❤️ por [Mateus Meireles Ribeiro](https://github.com/Mosfet04)
 

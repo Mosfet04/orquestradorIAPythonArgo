@@ -10,14 +10,14 @@
 
 *A robust Python application implementing an AI agents orchestrator using Onion Architecture (Clean Architecture) and Clean Code principles*
 
-[🇧🇷 Português](#portuguese-version) | [📚 Documentation](#documentation) | [🚀 Quick Start](#quick-start)
+[🇧🇷 Português](README.pt-br.md) | [📚 Documentation](#api-reference) | [🚀 Quick Start](#quick-start)
 
 </div>
 
 ## 📋 Table of Contents
 
 - [Overview](#overview)
-- [Architecture](#-architecture)
+- [Architecture](#architecture)
 - [Features](#features)
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
@@ -944,7 +944,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 <div align="center">
 
-**[⬆ Back to top](#-ai-agents-orchestrator)**
+**[⬆ Back to top](#ai-agents-orchestrator)**
 
 Made with ❤️ by [Mateus Meireles Ribeiro](https://github.com/Mosfet04)
 
