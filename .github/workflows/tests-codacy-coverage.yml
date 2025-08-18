@@ -40,7 +40,7 @@ jobs:
           CODACY_USERNAME: Mosfet04
           CODACY_PROJECT_NAME: orquestradorIAPythonArgo
         run: |
-          bash <(curl -Ls https://coverage.codacy.com/get.sh)
+          bash <(curl -Ls https://coverage.codacy.com/get.sh) report -r coverage.xml
 
       - name: Upload HTML coverage as artifact (optional)
         if: always()
