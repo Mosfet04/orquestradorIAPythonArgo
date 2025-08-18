@@ -13,6 +13,8 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,9 +34,8 @@ jobs:
           pytest tests/unit/ --cov=src --cov-report=term-missing --cov-report=xml --cov-report=html -v
 
       - name: Upload coverage to Codacy
-        if: ${{ secrets.CODACY_API_TOKEN != '' }}
+        if: ${{ env.CODACY_API_TOKEN != '' }}
         env:
-          CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}
           CODACY_ORGANIZATION_PROVIDER: gh
           CODACY_USERNAME: Mosfet04
           CODACY_PROJECT_NAME: orquestradorIAPythonArgo

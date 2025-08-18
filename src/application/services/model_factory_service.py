@@ -24,68 +24,48 @@ class ModelFactory:
         Raises:
             ValueError: Se o modelo não for suportado ou não puder ser importado
         """
+        # Normalização de tipo e aliases
+        ft = (factory_type or "").lower().strip()
+        aliases = {"google": "gemini", "azureopenai": "azure"}
+        ft = aliases.get(ft, ft)
+
+        # Casos simples sem import dinâmico
+        if ft == "ollama":
+            return Ollama
+
+        # Especificações de import: ft -> (module_path, class_name, pip_pkg, human_name)
+        import_specs = {
+            "openai": ("agno.models.openai.chat", "OpenAIChat", "openai", "OpenAI"),
+            "anthropic": ("agno.models.anthropic.claude", "Claude", "anthropic", "Anthropic"),
+            "gemini": ("agno.models.google.gemini", "Gemini", "google-genai", "Gemini"),
+            "groq": ("agno.models.groq.chat", "GroqChat", "groq", "Groq"),
+            "azure": ("agno.models.azure.openai_chat", "AzureOpenAIChat", "openai", "Azure OpenAI"),
+        }
+
+        if ft not in import_specs:
+            supported_models = ", ".join(cls.get_supported_models())
+            raise ValueError(
+                f"Tipo de modelo '{factory_type}' não suportado. "
+                f"Modelos suportados: {supported_models}"
+            )
+
+        # Pré-validação específica
+        if ft == "gemini":
+            api_key_env = os.getenv("GEMINI_API_KEY")
+            if not api_key_env:
+                cls.logger.error(f"GEMINI_API_KEY não configurada para modelo: {factory_type}")
+                raise ValueError("GEMINI_API_KEY não está configurado no ambiente")
+
+        module_path, class_name, pip_pkg, human_name = import_specs[ft]
         try:
-            if factory_type == "ollama":
-                return Ollama
-            elif factory_type in ["openai"]:
-                try:
-                    from agno.models.openai.chat import OpenAIChat
-                    return OpenAIChat
-                except ImportError:
-                    raise ValueError(
-                        "Modelo OpenAI não está disponível. "
-                        "Instale as dependências com: pip install openai"
-                    )
-            elif factory_type in ["anthropic"]:
-                try:
-                    from agno.models.anthropic.claude import Claude
-                    return Claude
-                except ImportError:
-                    raise ValueError(
-                        "Modelo Anthropic não está disponível. "
-                        "Instale as dependências com: pip install anthropic"
-                    )
-            elif factory_type in ["gemini", "google"]:
-                try:
-                    # Verificar se as variáveis de ambiente estão configuradas
-                    api_key_env = os.getenv("GEMINI_API_KEY")
-                    if not api_key_env:
-                        cls.logger.error(f"GEMINI_API_KEY não configurada para modelo: {factory_type}")
-                        raise ValueError("GEMINI_API_KEY não está configurado no ambiente")
-                    
-                    from agno.models.google.gemini import Gemini
-                    return Gemini
-                except ImportError:
-                    raise ValueError(
-                        "Modelo Gemini não está disponível. "
-                        "Instale as dependências com: pip install google-genai"
-                    )
-            elif factory_type in ["groq"]:
-                try:
-                    from agno.models.groq.chat import GroqChat
-                    return GroqChat
-                except ImportError:
-                    raise ValueError(
-                        "Modelo Groq não está disponível. "
-                        "Instale as dependências com: pip install groq"
-                    )
-            elif factory_type in ["azure", "azureopenai"]:
-                try:
-                    from agno.models.azure.openai_chat import AzureOpenAIChat
-                    return AzureOpenAIChat
-                except ImportError:
-                    raise ValueError(
-                        "Modelo Azure OpenAI não está disponível. "
-                        "Instale as dependências com: pip install openai"
-                    )
-            else:
-                supported_models = ", ".join(cls.get_supported_models())
-                raise ValueError(
-                    f"Tipo de modelo '{factory_type}' não suportado. "
-                    f"Modelos suportados: {supported_models}"
-                )
-                
-        except ImportError as e:
+            module = __import__(module_path, fromlist=[class_name])
+            return getattr(module, class_name)
+        except ImportError:
+            raise ValueError(
+                f"Modelo {human_name} não está disponível. "
+                f"Instale as dependências com: pip install {pip_pkg}"
+            )
+        except Exception as e:
             raise ValueError(
                 f"Não foi possível importar o modelo '{factory_type}'. "
                 f"Erro: {str(e)}"
