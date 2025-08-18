@@ -5,12 +5,11 @@ Otimizado para ambientes cloud (AWS CloudWatch, ELK Stack, etc.).
 
 import structlog
 import logging
-import json
 import re
 import traceback
 import os
 import sys
-from typing import Any, Dict, Optional, List, Union
+from typing import Any, Dict, Optional, List
 from datetime import datetime
 from enum import Enum
 from dataclasses import dataclass, asdict

@@ -1,4 +1,4 @@
-from typing import Union, Dict, Any, Type
+from typing import Dict, Any, Type
 from agno.models.ollama import Ollama
 import os
 from src.infrastructure.logging import LoggerFactory, log_execution, log_ai_interaction
@@ -24,68 +24,48 @@ class ModelFactory:
         Raises:
             ValueError: Se o modelo não for suportado ou não puder ser importado
         """
+        # Normalização de tipo e aliases
+        ft = (factory_type or "").lower().strip()
+        aliases = {"google": "gemini", "azureopenai": "azure"}
+        ft = aliases.get(ft, ft)
+
+        # Casos simples sem import dinâmico
+        if ft == "ollama":
+            return Ollama
+
+        # Especificações de import: ft -> (module_path, class_name, pip_pkg, human_name)
+        import_specs = {
+            "openai": ("agno.models.openai.chat", "OpenAIChat", "openai", "OpenAI"),
+            "anthropic": ("agno.models.anthropic.claude", "Claude", "anthropic", "Anthropic"),
+            "gemini": ("agno.models.google.gemini", "Gemini", "google-genai", "Gemini"),
+            "groq": ("agno.models.groq.chat", "GroqChat", "groq", "Groq"),
+            "azure": ("agno.models.azure.openai_chat", "AzureOpenAIChat", "openai", "Azure OpenAI"),
+        }
+
+        if ft not in import_specs:
+            supported_models = ", ".join(cls.get_supported_models())
+            raise ValueError(
+                f"Tipo de modelo '{factory_type}' não suportado. "
+                f"Modelos suportados: {supported_models}"
+            )
+
+        # Pré-validação específica
+        if ft == "gemini":
+            api_key_env = os.getenv("GEMINI_API_KEY")
+            if not api_key_env:
+                cls.logger.error(f"GEMINI_API_KEY não configurada para modelo: {factory_type}")
+                raise ValueError("GEMINI_API_KEY não está configurado no ambiente")
+
+        module_path, class_name, pip_pkg, human_name = import_specs[ft]
         try:
-            if factory_type == "ollama":
-                return Ollama
-            elif factory_type in ["openai"]:
-                try:
-                    from agno.models.openai.chat import OpenAIChat
-                    return OpenAIChat
-                except ImportError:
-                    raise ValueError(
-                        f"Modelo OpenAI não está disponível. "
-                        f"Instale as dependências com: pip install openai"
-                    )
-            elif factory_type in ["anthropic"]:
-                try:
-                    from agno.models.anthropic.claude import Claude
-                    return Claude
-                except ImportError:
-                    raise ValueError(
-                        f"Modelo Anthropic não está disponível. "
-                        f"Instale as dependências com: pip install anthropic"
-                    )
-            elif factory_type in ["gemini", "google"]:
-                try:
-                    # Verificar se as variáveis de ambiente estão configuradas
-                    api_key_env = os.getenv("GEMINI_API_KEY")
-                    if not api_key_env:
-                        cls.logger.error(f"GEMINI_API_KEY não configurada para modelo: {factory_type}")
-                        raise ValueError("GEMINI_API_KEY não está configurado no ambiente")
-                    
-                    from agno.models.google.gemini import Gemini
-                    return Gemini
-                except ImportError:
-                    raise ValueError(
-                        f"Modelo Gemini não está disponível. "
-                        f"Instale as dependências com: pip install google-genai"
-                    )
-            elif factory_type in ["groq"]:
-                try:
-                    from agno.models.groq.chat import GroqChat
-                    return GroqChat
-                except ImportError:
-                    raise ValueError(
-                        f"Modelo Groq não está disponível. "
-                        f"Instale as dependências com: pip install groq"
-                    )
-            elif factory_type in ["azure", "azureopenai"]:
-                try:
-                    from agno.models.azure.openai_chat import AzureOpenAIChat
-                    return AzureOpenAIChat
-                except ImportError:
-                    raise ValueError(
-                        f"Modelo Azure OpenAI não está disponível. "
-                        f"Instale as dependências com: pip install openai"
-                    )
-            else:
-                supported_models = ", ".join(cls.get_supported_models())
-                raise ValueError(
-                    f"Tipo de modelo '{factory_type}' não suportado. "
-                    f"Modelos suportados: {supported_models}"
-                )
-                
-        except ImportError as e:
+            module = __import__(module_path, fromlist=[class_name])
+            return getattr(module, class_name)
+        except ImportError:
+            raise ValueError(
+                f"Modelo {human_name} não está disponível. "
+                f"Instale as dependências com: pip install {pip_pkg}"
+            )
+        except Exception as e:
             raise ValueError(
                 f"Não foi possível importar o modelo '{factory_type}'. "
                 f"Erro: {str(e)}"
@@ -97,45 +77,44 @@ class ModelFactory:
     def create_model(cls, factory_ia_model: str, model_id: str, **kwargs) -> Any:
         """
         Cria uma instância do modelo baseado no tipo especificado.
-        
+
         Args:
             factory_ia_model: Tipo do modelo (ex: "ollama", "openai", "gemini")
             model_id: ID/nome do modelo específico
             **kwargs: Parâmetros adicionais para configuração do modelo
-            
+
         Returns:
             Instância do modelo configurado
-            
+
         Raises:
             ValueError: Se o tipo de modelo não for suportado
         """
-        # Normalizar o nome do modelo para lowercase
         factory_type = factory_ia_model.lower().strip()
-        
-        # Validar entrada
-        if not factory_type:
-            cls.logger.error("Tipo de modelo vazio fornecido")
-            raise ValueError("Tipo de modelo não pode estar vazio")
 
-        if not model_id or not model_id.strip():
-            cls.logger.error("ID do modelo vazio fornecido", factory_type=factory_type)
-            raise ValueError("ID do modelo não pode estar vazio")        # Obter a classe do modelo
-        model_class = cls._get_model_class(factory_type)
-        
-        try:
-            api_key = kwargs.get('api_key') or os.getenv(f"{factory_type.upper()}_API_KEY")
+        def validate_inputs():
+            if not factory_type:
+                cls.logger.error("Tipo de modelo vazio fornecido")
+                raise ValueError("Tipo de modelo não pode estar vazio")
+            if not model_id or not model_id.strip():
+                cls.logger.error("ID do modelo vazio fornecido", factory_type=factory_type)
+                raise ValueError("ID do modelo não pode estar vazio")
+
+        def get_api_key():
+            return kwargs.get('api_key') or os.getenv(f"{factory_type.upper()}_API_KEY")
+
+        def instantiate_model(model_class, api_key):
             if factory_type == "ollama":
-                # Para Ollama, não precisamos de API key, mas podemos passar outros kwargs
                 return model_class(id=model_id, **kwargs)
-            else:
-                # Para outros modelos, precisamos da API key
-                if not api_key:
-                    raise ValueError(f"{factory_type.upper()}_API_KEY não está configurado no ambiente")
-                
-                # Remover api_key dos kwargs se estiver presente visto que foi capturado acima
-                filtered_kwargs = {k: v for k, v in kwargs.items() if k != 'api_key'}
-                return model_class(id=model_id, api_key=api_key, **filtered_kwargs)
-                
+            if not api_key:
+                raise ValueError(f"{factory_type.upper()}_API_KEY não está configurado no ambiente")
+            filtered_kwargs = {k: v for k, v in kwargs.items() if k != 'api_key'}
+            return model_class(id=model_id, api_key=api_key, **filtered_kwargs)
+
+        try:
+            validate_inputs()
+            model_class = cls._get_model_class(factory_type)
+            api_key = get_api_key()
+            return instantiate_model(model_class, api_key)
         except Exception as e:
             raise ValueError(
                 f"Erro ao criar modelo {factory_ia_model} com ID '{model_id}': {str(e)}"

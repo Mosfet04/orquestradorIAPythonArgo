@@ -1,6 +1,6 @@
 import pytest
 import asyncio
-from unittest.mock import Mock, AsyncMock, patch
+from unittest.mock import Mock, patch
 from src.application.use_cases.get_active_agents_use_case import GetActiveAgentsUseCase
 from src.application.services.agent_factory_service import AgentFactoryService
 from src.domain.repositories.agent_config_repository import IAgentConfigRepository

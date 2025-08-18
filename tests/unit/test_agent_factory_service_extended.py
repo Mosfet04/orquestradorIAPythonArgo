@@ -1,7 +1,5 @@
 import pytest
-import asyncio
-from unittest.mock import Mock, patch, AsyncMock, MagicMock
-from datetime import datetime, timedelta
+from unittest.mock import Mock, patch
 from src.application.services.agent_factory_service import AgentFactoryService
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.rag_config import RagConfig
@@ -90,9 +88,9 @@ class TestAgentFactoryService:
             with patch.object(self.service, '_get_or_create_model_cached') as mock_get_model:
                 mock_get_model.return_value = mock_model
                 
-                with patch.object(self.service, '_create_memory_db') as mock_create_memory_db:
-                    with patch.object(self.service, '_create_memory') as mock_create_memory:
-                        with patch.object(self.service, '_create_storage') as mock_create_storage:
+                with patch.object(self.service, '_create_memory_db'), \
+                     patch.object(self.service, '_create_memory'), \
+                     patch.object(self.service, '_create_storage'):
                             with patch.object(self.service, '_create_tools') as mock_create_tools:
                                 mock_create_tools.return_value = []
                                 
@@ -152,7 +150,7 @@ class TestAgentFactoryService:
                                 mock_create_tools.return_value = mock_tools
                                 
                                 # Act
-                                result = self.service.create_agent(config)
+                                self.service.create_agent(config)
                                 
                                 # Assert
                                 mock_create_tools.assert_called_once_with(["tool1", "tool2"])
@@ -193,7 +191,7 @@ class TestAgentFactoryService:
                                     mock_create_rag.return_value = mock_knowledge_base
                                     
                                     # Act
-                                    result = self.service.create_agent(config)
+                                    self.service.create_agent(config)
                                     
                                     # Assert
                                     mock_create_rag.assert_called_once_with(config)

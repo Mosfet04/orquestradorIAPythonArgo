@@ -1,5 +1,4 @@
 import pytest
-from unittest.mock import Mock
 from src.application.services.agent_factory_service import AgentFactoryService
 from src.domain.entities.agent_config import AgentConfig
 

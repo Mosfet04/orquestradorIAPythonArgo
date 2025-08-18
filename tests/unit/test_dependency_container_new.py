@@ -2,10 +2,6 @@ import pytest
 from unittest.mock import Mock, patch, AsyncMock
 from src.infrastructure.dependency_injection import DependencyContainer, HealthService
 from src.infrastructure.config.app_config import AppConfig
-from src.domain.repositories.agent_config_repository import IAgentConfigRepository
-from src.application.services.agent_factory_service import AgentFactoryService
-from src.application.use_cases.get_active_agents_use_case import GetActiveAgentsUseCase
-from src.presentation.controllers.orquestrador_controller import OrquestradorController
 
 
 class TestDependencyContainer:

@@ -1,4 +1,3 @@
-import os
 from src.infrastructure.logging.structlog_logger import LoggerFactory, StructlogLogger, DataSanitizer
 
 

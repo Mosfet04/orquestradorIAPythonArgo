@@ -1,6 +1,6 @@
 from typing import Optional, List, Union, Callable, Dict, Any, cast
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime
 from agno.agent import Agent
 from agno.storage.mongodb import MongoDbStorage
 from agno.memory.v2.memory import Memory
@@ -42,61 +42,67 @@ class AgentFactoryService:
     def create_agent(self, config: AgentConfig) -> Agent:
         """Cria um agente baseado na configuração fornecida com cache otimizado."""
         start_time = datetime.utcnow()
-        
         try:
-            
-            # Validar configuração do modelo
-            validation_result = self._model_factory.validate_model_config(
-                config.factoryIaModel, 
-                config.model
-            )
-            
-            if not validation_result["valid"]:
-                errors = "; ".join(validation_result["errors"])
-                raise ValueError(f"Configuração de modelo inválida: {errors}")
-            
-            # Obter modelo com cache
+            self._validate_model_config_or_raise(config)
             model = self._get_or_create_model_cached(config.factoryIaModel, config.model)
-            
-            # Criar componentes de forma otimizada
             memory_db = self._create_memory_db()
             memory = self._create_memory(memory_db, model)
             storage = self._create_storage()
-            tools = self._create_tools(config.tools_ids) if config.tools_ids else []
-            
-            # Criar RAG se configurado
-            knowledge_base = None
-            if config.rag_config and config.rag_config.active:
-                try:
-                    knowledge_base = self._create_rag(config)
-                except Exception as e:
-                    app_logger.warning("⚠️ Erro ao criar RAG", error=str(e))
-            
-            # Criar agente
-            agent = Agent(
-                name=config.nome,
-                model=model,
-                description=config.descricao,
-                instructions=config.prompt,
-                tools=tools,
-                storage=storage,
-                memory=memory,
-                show_tool_calls=True,
-                debug_mode=False,
-            )
-            # TODO: Adicionar knowledge base quando suportado pela biblioteca agno
-            
-            creation_time = (datetime.utcnow() - start_time).total_seconds()
-            
+            tools = self._get_tools_if_any(config)
+            knowledge_base = self._get_knowledge_base_if_active(config)
+            agent = self._build_agent(config, model, memory, storage, tools, knowledge_base)
             return agent
-            
         except Exception as e:
             creation_time = (datetime.utcnow() - start_time).total_seconds()
             app_logger.error("❌ Erro ao criar agente", 
-                           agent_id=config.id, 
-                           error=str(e),
-                           creation_time_seconds=round(creation_time, 3))
+                             agent_id=config.id, 
+                             error=str(e),
+                             creation_time_seconds=round(creation_time, 3))
             raise
+
+    def _validate_model_config_or_raise(self, config: AgentConfig):
+        validation_result = self._model_factory.validate_model_config(
+            config.factoryIaModel, 
+            config.model
+        )
+        if not validation_result["valid"]:
+            errors = "; ".join(validation_result["errors"])
+            raise ValueError(f"Configuração de modelo inválida: {errors}")
+
+    def _get_tools_if_any(self, config: AgentConfig):
+        return self._create_tools(config.tools_ids) if config.tools_ids else []
+
+    def _get_knowledge_base_if_active(self, config: AgentConfig):
+        if config.rag_config and config.rag_config.active:
+            try:
+                return self._create_rag(config)
+            except Exception as e:
+                app_logger.warning("⚠️ Erro ao criar RAG", error=str(e))
+        return None
+
+    def _build_agent(self, config, model, memory, storage, tools, knowledge_base):
+        return Agent(
+            name=config.nome,
+            agent_id=config.id,
+            model=model,
+            reasoning=False,
+            markdown=True,
+            add_history_to_messages=True,
+            description=config.descricao,
+            add_datetime_to_instructions=True,
+            storage=storage,
+            user_id="ava",
+            memory=memory,
+            enable_agentic_memory=True,
+            enable_user_memories=True,
+            enable_session_summaries=True,
+            instructions=config.prompt,
+            num_history_responses=5,
+            tools=tools,
+            knowledge=knowledge_base,
+            search_knowledge=True if knowledge_base else False,
+            read_chat_history=True if knowledge_base else False,
+        )
     
     async def _get_or_create_model_cached_async(self, factory_type: str, model_name: str):
         """Obtém modelo do cache ou cria novo de forma assíncrona."""
@@ -164,8 +170,7 @@ class AgentFactoryService:
         if config.rag_config and hasattr(config.rag_config, 'doc_name') and config.rag_config.doc_name:
             doc_path = f"docs/{config.rag_config.doc_name}"
             try:
-                with open(doc_path, 'r', encoding='utf-8') as file:
-                    content = file.read()
+                with open(doc_path, 'r', encoding='utf-8'):
                     knowledge_base.load_document(path=doc_path)
 
             except FileNotFoundError:

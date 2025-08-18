@@ -1,6 +1,5 @@
 import pytest
 import os
-import asyncio
 from unittest.mock import patch
 from src.infrastructure.config.app_config import AppConfig
 
@@ -18,7 +17,7 @@ class TestAppConfig:
         assert config.app_title == 'Orquestrador IA Otimizado'
         assert config.mongo_connection_string == 'mongodb://localhost:62659/?directConnection=true'
         assert config.mongo_database_name == 'agno'
-        assert config.app_host == '0.0.0.0'
+        assert config.app_host == '127.0.0.1'
         assert config.app_port == 7777
         assert config.log_level == 'INFO'
         assert config.ollama_base_url == 'http://localhost:11434'
@@ -60,7 +59,7 @@ class TestAppConfig:
             assert config.app_title == 'Orquestrador IA Otimizado'
             assert config.mongo_connection_string == 'mongodb://localhost:62659/?directConnection=true'
             assert config.mongo_database_name == 'agno'
-            assert config.app_host == '0.0.0.0'
+            assert config.app_host == '127.0.0.1'
             assert config.app_port == 7777
             assert config.log_level == 'INFO'
             assert config.ollama_base_url == 'http://localhost:11434'

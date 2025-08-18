@@ -20,7 +20,7 @@
 
 ```bash
 # Clone and run
-git clone https://github.com/your-username/orquestradorIAPythonArgo.git
+git clone https://github.com/Mosfet04/orquestradorIAPythonArgo.git
 cd orquestradorIAPythonArgo
 pip install -r requirements.txt
 python app.py

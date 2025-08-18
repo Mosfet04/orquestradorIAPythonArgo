@@ -38,7 +38,7 @@ This project adheres to a code of conduct. By participating, you are expected to
 
 1. **Fork the repository**
    ```bash
-   git clone https://github.com/your-username/orquestradorIAPythonArgo.git
+    git clone https://github.com/Mosfet04/orquestradorIAPythonArgo.git
    cd orquestradorIAPythonArgo
    ```
 

@@ -1,5 +1,4 @@
 import pytest
-import asyncio
 from unittest.mock import Mock, AsyncMock
 from datetime import datetime, timedelta
 from src.infrastructure.cache.model_cache_service import ModelCacheService, ModelCacheEntry

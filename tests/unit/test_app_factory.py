@@ -1,5 +1,3 @@
-import asyncio
-import types
 import pytest
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -25,8 +23,6 @@ async def test_app_factory_creates_app_and_mounts(monkeypatch):
 
     # Mock DependencyContainer.create_async e métodos do controller
     fake_controller = Mock()
-    fake_playground = Mock()
-    fake_fastapi = Mock()
     FakeSubApp = Mock()
     FakeSubApp.get_app = Mock(return_value=Mock())
     fake_controller.create_playground_async = AsyncMock(return_value=FakeSubApp)

@@ -1,4 +1,4 @@
-from typing import Union, Dict, Any, Type
+from typing import Dict, Any, Type
 import os
 
 
@@ -19,50 +19,52 @@ class EmbedderModelFactory:
         Raises:
             ValueError: Se o modelo não for suportado ou não puder ser importado
         """
-        try:
-            if factory_type == "ollama":
-                from agno.embedder.ollama import OllamaEmbedder
-                return OllamaEmbedder
-            elif factory_type in ["openai"]:
-                try:
-                    from agno.embedder.openai import OpenAIEmbedder
-                    return OpenAIEmbedder
-                except ImportError:
-                    raise ValueError(
-                        f"Modelo OpenAI não está disponível. "
-                        f"Instale as dependências com: pip install openai"
-                    )
-            elif factory_type in ["gemini", "google"]:
-                try:
-                    # Verificar se as variáveis de ambiente estão configuradas
-                    api_key_env = os.getenv("GEMINI_API_KEY")
-                    if not api_key_env:
-                        raise ValueError("GEMINI_API_KEY não está configurado no ambiente")
-                    
-                    from agno.embedder.google import GeminiEmbedder
-                    return GeminiEmbedder
-                except ImportError:
-                    raise ValueError(
-                        f"Modelo Gemini não está disponível. "
-                        f"Instale as dependências com: pip install google-genai"
-                    )
-            elif factory_type in ["azure", "azureopenai"]:
-                try:
-                    from agno.embedder.azure_openai import AzureOpenAIEmbedder
-                    return AzureOpenAIEmbedder
-                except ImportError:
-                    raise ValueError(
-                        f"Modelo Azure OpenAI não está disponível. "
-                        f"Instale as dependências com: pip install openai"
-                    )
-            else:
-                supported_models = ", ".join(cls.get_supported_models())
+        # Normalização e aliases
+        ft = (factory_type or "").lower().strip()
+        aliases = {"google": "gemini", "azureopenai": "azure"}
+        ft = aliases.get(ft, ft)
+
+        # Caso simples sem import dinâmico pesado
+        if ft == "ollama":
+            try:
+                module = __import__("agno.embedder.ollama", fromlist=["OllamaEmbedder"])
+                return getattr(module, "OllamaEmbedder")
+            except Exception as e:
                 raise ValueError(
-                    f"Tipo de modelo '{factory_type}' não suportado. "
-                    f"Modelos suportados: {supported_models}"
+                    f"Não foi possível importar o modelo '{factory_type}'. "
+                    f"Erro: {str(e)}"
                 )
-                
-        except ImportError as e:
+
+        # Mapa de import por provider
+        import_specs = {
+            "openai": ("agno.embedder.openai", "OpenAIEmbedder", "openai", "OpenAI"),
+            "gemini": ("agno.embedder.google", "GeminiEmbedder", "google-genai", "Gemini"),
+            "azure": ("agno.embedder.azure_openai", "AzureOpenAIEmbedder", "openai", "Azure OpenAI"),
+        }
+
+        if ft not in import_specs:
+            supported_models = ", ".join(cls.get_supported_models())
+            raise ValueError(
+                f"Tipo de modelo '{factory_type}' não suportado. "
+                f"Modelos suportados: {supported_models}"
+            )
+
+        # Pré-validação específica
+        if ft == "gemini":
+            api_key_env = os.getenv("GEMINI_API_KEY")
+            if not api_key_env:
+                raise ValueError("GEMINI_API_KEY não está configurado no ambiente")
+
+        module_path, class_name, pip_pkg, human_name = import_specs[ft]
+        try:
+            module = __import__(module_path, fromlist=[class_name])
+            return getattr(module, class_name)
+        except ImportError:
+            raise ValueError(
+                f"Modelo {human_name} não está disponível. "
+                f"Instale as dependências com: pip install {pip_pkg}"
+            )
+        except Exception as e:
             raise ValueError(
                 f"Não foi possível importar o modelo '{factory_type}'. "
                 f"Erro: {str(e)}"

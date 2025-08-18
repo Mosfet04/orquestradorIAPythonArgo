@@ -1,6 +1,5 @@
 import json
 import httpx
-import pytest
 from unittest.mock import patch, Mock
 
 from src.application.services.http_tool_factory_service import HttpToolFactory

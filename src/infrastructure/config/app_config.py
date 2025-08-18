@@ -2,7 +2,6 @@ import asyncio
 import os
 from dataclasses import dataclass
 from typing import Optional
-from src.infrastructure.logging import app_logger
 
 
 @dataclass
@@ -32,7 +31,7 @@ class AppConfig:
             ),
             mongo_database_name=os.getenv("MONGO_DATABASE_NAME", "agno"),
             app_title=os.getenv("APP_TITLE", "Orquestrador IA Otimizado"),
-            app_host=os.getenv("APP_HOST", "0.0.0.0"),
+            app_host=os.getenv("APP_HOST", "127.0.0.1"),
             app_port=int(os.getenv("APP_PORT", "7777")),
             log_level=os.getenv("LOG_LEVEL", "INFO"),
             ollama_base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
