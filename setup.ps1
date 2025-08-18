@@ -16,17 +16,17 @@ function Write-Header {
 
 function Write-Step {
     param([string]$Message)
-    Write-Host "[STEP] $Message" -ForegroundColor Yellow
+    Write-Information "[STEP] $Message" -InformationAction Continue
 }
 
 function Write-Success {
     param([string]$Message)
-    Write-Host "[SUCCESS] $Message" -ForegroundColor Green
+    Write-Information "[SUCCESS] $Message" -InformationAction Continue
 }
 
 function Write-Error {
     param([string]$Message)
-    Write-Host "[ERROR] $Message" -ForegroundColor Red
+    Write-Information "[ERROR] $Message" -InformationAction Continue
 }
 
 function Check-Requirements {
@@ -117,9 +117,9 @@ function Setup-Database {
         $mongoProcess = Get-Process -Name "mongod" -ErrorAction SilentlyContinue
         if (!$mongoProcess) {
             Write-Error "MongoDB is not running. Please start MongoDB:"
-            Write-Host "  - Using Windows Service: net start MongoDB"
-            Write-Host "  - Using Docker: docker run -d -p 27017:27017 mongo:7-jammy"
-            Write-Host "  - Manual start: mongod --dbpath=C:\data\db"
+            Write-Information "  - Using Windows Service: net start MongoDB"
+            Write-Information "  - Using Docker: docker run -d -p 27017:27017 mongo:7-jammy"
+            Write-Information "  - Manual start: mongod --dbpath=C:\data\db"
             exit 1
         }
     }
@@ -160,15 +160,15 @@ function Run-Tests {
 
 function Start-Application {
     Write-Step "Starting the application..."
-    
-    Write-Host "Starting AI Agents Orchestrator..." -ForegroundColor Cyan
-    Write-Host "Access points:" -ForegroundColor Cyan
-    Write-Host "  - API Documentation: http://localhost:7777/docs" -ForegroundColor White
-    Write-Host "  - Interactive Playground: http://localhost:7777/playground" -ForegroundColor White
-    Write-Host "  - Health Check: http://localhost:7777/health" -ForegroundColor White
-    Write-Host ""
-    Write-Host "Press Ctrl+C to stop the application" -ForegroundColor Yellow
-    
+
+    Write-Information "Starting AI Agents Orchestrator..." -InformationAction Continue
+    Write-Information "Access points:" -InformationAction Continue
+    Write-Information "  - API Documentation: http://localhost:7777/docs" -InformationAction Continue
+    Write-Information "  - Interactive Playground: http://localhost:7777/playground" -InformationAction Continue
+    Write-Information "  - Health Check: http://localhost:7777/health" -InformationAction Continue
+    Write-Output ""
+    Write-Information "Press Ctrl+C to stop the application" -InformationAction Continue
+
     python app.py
 }
 

@@ -191,7 +191,7 @@ class TestAgentFactoryService:
                                     mock_create_rag.return_value = mock_knowledge_base
                                     
                                     # Act
-                                    result = self.service.create_agent(config)
+                                    self.service.create_agent(config)
                                     
                                     # Assert
                                     mock_create_rag.assert_called_once_with(config)

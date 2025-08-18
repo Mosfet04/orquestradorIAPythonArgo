@@ -26,8 +26,7 @@ def log_execution(logger_name: str = "execution",
     def decorator(func: Callable) -> Callable:
         logger = LoggerFactory.get_logger(logger_name)
         
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs) -> Any:
+        def _exec_with_logging(args, kwargs) -> Any:
             start_time = time.time()
             func_name = f"{func.__module__}.{func.__qualname__}"
             
@@ -75,6 +74,10 @@ def log_execution(logger_name: str = "execution",
                 
                 logger.error(f"Erro na execução: {func_name}", exception=e, **error_data)
                 raise
+
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs) -> Any:
+            return _exec_with_logging(args, kwargs)
         
         return wrapper
     return decorator
