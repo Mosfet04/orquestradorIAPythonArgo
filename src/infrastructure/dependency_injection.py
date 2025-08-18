@@ -1,5 +1,5 @@
 import asyncio
-from typing import Optional
+from typing import Optional, Any
 from motor.motor_asyncio import AsyncIOMotorClient
 from src.infrastructure.config.app_config import AppConfig
 from src.infrastructure.repositories.mongo_agent_config_repository import MongoAgentConfigRepository  
@@ -188,6 +188,13 @@ class DependencyContainer:
         return self._health_service
     
     async def cleanup(self) -> None:
-        """Cleanup assíncrono de recursos."""        
+        """Cleanup assíncrono de recursos."""
         if self._mongo_client:
-            self._mongo_client.close()
+            # close() do AsyncIOMotorClient é síncrono, mas em testes pode ser AsyncMock (coroutine)
+            try:
+                result: Any = self._mongo_client.close()
+                if asyncio.iscoroutine(result):
+                    await result
+            except Exception:
+                # Não falhar no cleanup
+                pass
