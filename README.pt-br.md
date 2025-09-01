@@ -310,20 +310,31 @@ O sistema utiliza múltiplas collections para configuração dinâmica e persist
 
 ```json
 {
-  "_id": ObjectId("..."),
-  "id": "agent-1",
-  "nome": "Assistente Geral",
-  "model": "llama3.2:latest",
+  "_id": {
+    "$oid": "6885a4c9813bbb6328bbe3f2"
+  },
+  "nome": "Coding Agent",
+  "id": "coding_agent",
   "factoryIaModel": "ollama",
-  "descricao": "Um assistente para tarefas gerais",
-  "prompt": "Você é um assistente útil que ajuda com tarefas gerais...",
-  "active": true,
-  "tools_ids": ["tool-1", "tool-2"],
+  "model": "qwen3:latest",
+  "descricao": "Você é um assistente de programacao de agentes de IA com o Agno.",
+  "prompt": [
+    "Você deve agir como um assistente de remocao de duvidas sobre Agentes de IA e Agno. A ideia é auxiliar o usuario a desenvolver agentes de IA com o Agno. Busque consultar sua base de conhecimento toda vez que o usuario apresentar uma duvida de design patterns, clean code ou boas praticas de programacão em python."
+  ],
+  "tools_ids": [
+    "get-python-package-info"
+  ],
   "rag_config": {
     "active": true,
-    "doc_name": "knowledge_base",
-    "model": "text-embedding-3-small",
-    "factoryIaModel": "openai"
+    "doc_name": "basic-prog.txt",
+    "model": "gemini-embedding-exp-03-07",
+    "factoryIaModel": "gemini"
+  },
+  "user_memory_active": false,
+  "summary_active": false,
+  "active": true,
+  "updated_at": {
+    "$date": "2025-08-16T22:28:47.695Z"
   }
 }
 ```
@@ -589,6 +600,8 @@ db.agents_config.insertOne({
   "descricao": "Especialista em desenvolvimento Python",
   "prompt": "Você é um expert em Python com 10+ anos de experiência...",
   "active": true,
+  "user_memory_active": false,
+  "summary_active": false,
   "tools_ids": ["github-tool", "stack-overflow-tool"]
 });
 ```

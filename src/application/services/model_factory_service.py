@@ -39,7 +39,7 @@ class ModelFactory:
             "anthropic": ("agno.models.anthropic.claude", "Claude", "anthropic", "Anthropic"),
             "gemini": ("agno.models.google.gemini", "Gemini", "google-genai", "Gemini"),
             "groq": ("agno.models.groq.chat", "GroqChat", "groq", "Groq"),
-            "azure": ("agno.models.azure.openai_chat", "AzureOpenAIChat", "openai", "Azure OpenAI"),
+            "azure": ("agno.models.azure.openai_chat", "AzureOpenAI", "openai", "Azure OpenAI"),
         }
 
         if ft not in import_specs:
@@ -105,6 +105,22 @@ class ModelFactory:
         def instantiate_model(model_class, api_key):
             if factory_type == "ollama":
                 return model_class(id=model_id, **kwargs)
+            if factory_type == "azure":
+                # Configuração específica para Azure
+                azure_endpoint = os.getenv('AZURE_ENDPOINT')
+                api_version = os.getenv('AZURE_VERSION')
+                if not api_key:
+                    raise ValueError(f"{factory_type.upper()}_API_KEY não está configurado no ambiente")
+                if not azure_endpoint:
+                    raise ValueError("AZURE_ENDPOINT não está configurado no ambiente")
+                filtered_kwargs = {k: v for k, v in kwargs.items() if k != 'api_key'}
+                return model_class(
+                    id=model_id,
+                    api_key=api_key,
+                    azure_endpoint=azure_endpoint,
+                    api_version=api_version,
+                    **filtered_kwargs
+                )
             if not api_key:
                 raise ValueError(f"{factory_type.upper()}_API_KEY não está configurado no ambiente")
             filtered_kwargs = {k: v for k, v in kwargs.items() if k != 'api_key'}
@@ -131,7 +147,7 @@ class ModelFactory:
             "google",  # alias para gemini
             "groq",
             "azure",
-            "azureopenai"  # alias para azure
+            "azureopenai",  # alias para azure
         ]
     
     @classmethod
