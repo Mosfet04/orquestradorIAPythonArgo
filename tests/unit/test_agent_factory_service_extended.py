@@ -266,30 +266,65 @@ class TestAgentFactoryService:
         result = self.service._get_or_create_model_cached(factory_model, model_id)
         assert result is not None
     
-    def test_create_memory_db_method_exists(self):
+    @patch('src.application.services.agent_factory_service.MongoMemoryDb')
+    def test_create_memory_db_method_exists(self, mock_mongo_memory_db):
         """Testa que o método _create_memory_db existe e pode ser chamado."""
-        # Act & Assert
-        # Apenas verificar que o método existe e pode ser chamado
+        # Arrange
+        mock_instance = Mock()
+        mock_mongo_memory_db.return_value = mock_instance
+        
+        # Act
         result = self.service._create_memory_db()
-        assert result is not None
+        
+        # Assert
+        assert result == mock_instance
+        mock_mongo_memory_db.assert_called_once_with(
+            collection_name="user_memories",
+            db_url=self.service._db_url,
+            db_name=self.service._db_name
+        )
     
-    def test_create_memory_method_exists(self):
+    @patch('src.application.services.agent_factory_service.Memory')
+    @patch('src.application.services.agent_factory_service.SessionSummarizer')
+    def test_create_memory_method_exists(self, mock_session_summarizer, mock_memory):
         """Testa que o método _create_memory existe e pode ser chamado."""
         # Arrange
         mock_memory_db = Mock()
         mock_model = Mock()
+        mock_summarizer_instance = Mock()
+        mock_memory_instance = Mock()
         
-        # Act & Assert
-        # Apenas verificar que o método existe e pode ser chamado
+        mock_session_summarizer.return_value = mock_summarizer_instance
+        mock_memory.return_value = mock_memory_instance
+        
+        # Act
         result = self.service._create_memory(mock_memory_db, mock_model)
-        assert result is not None
+        
+        # Assert
+        assert result == mock_memory_instance
+        mock_session_summarizer.assert_called_once_with(model=mock_model)
+        mock_memory.assert_called_once_with(
+            db=mock_memory_db,
+            summarizer=mock_summarizer_instance
+        )
     
-    def test_create_storage_method_exists(self):
+    @patch('src.application.services.agent_factory_service.MongoDbStorage')
+    def test_create_storage_method_exists(self, mock_mongo_db_storage):
         """Testa que o método _create_storage existe e pode ser chamado."""
-        # Act & Assert
-        # Apenas verificar que o método existe e pode ser chamado
+        # Arrange
+        mock_storage_instance = Mock()
+        mock_mongo_db_storage.return_value = mock_storage_instance
+        
+        # Act
         result = self.service._create_storage()
-        assert result is not None
+        
+        # Assert
+        assert result == mock_storage_instance
+        mock_mongo_db_storage.assert_called_once_with(
+            collection_name="storage",
+            db_url=self.service._db_url,
+            db_name=self.service._db_name
+        )
     
     def test_create_tools_with_repository(self):
         """Testa criação de ferramentas com repositório."""
