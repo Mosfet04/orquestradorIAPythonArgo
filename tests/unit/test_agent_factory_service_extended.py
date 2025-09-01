@@ -272,7 +272,7 @@ class TestAgentFactoryService:
         # Arrange
         config = AgentConfig(
             id="test_agent",
-            nome="Test Agent", 
+            nome="Test Agent",
             descricao="Test description",
             prompt="Test prompt",
             factoryIaModel="ollama",
@@ -301,7 +301,7 @@ class TestAgentFactoryService:
         config = AgentConfig(
             id="test_agent",
             nome="Test Agent",
-            descricao="Test description", 
+            descricao="Test description",
             prompt="Test prompt",
             factoryIaModel="ollama",
             model="llama2",
@@ -333,7 +333,7 @@ class TestAgentFactoryService:
             id="test_agent",
             nome="Test Agent",
             descricao="Test description",
-            prompt="Test prompt", 
+            prompt="Test prompt",
             factoryIaModel="ollama",
             model="llama2",
             user_memory_active=False
@@ -349,7 +349,7 @@ class TestAgentFactoryService:
         """Testa que _create_memory retorna None quando user_memory_active é False."""
         # Arrange
         config = AgentConfig(
-            id="test_agent", 
+            id="test_agent",
             nome="Test Agent",
             descricao="Test description",
             prompt="Test prompt",

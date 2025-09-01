@@ -115,8 +115,8 @@ class ModelFactory:
                     raise ValueError("AZURE_ENDPOINT não está configurado no ambiente")
                 filtered_kwargs = {k: v for k, v in kwargs.items() if k != 'api_key'}
                 return model_class(
-                    id=model_id, 
-                    api_key=api_key, 
+                    id=model_id,
+                    api_key=api_key,
                     azure_endpoint=azure_endpoint,
                     api_version=api_version,
                     **filtered_kwargs

@@ -200,7 +200,7 @@ class AgentFactoryService:
             return Memory(
             db=memory_db,
             summarizer=SessionSummarizer(model=model),
-        )   
+        )
         return None
     
     def _create_storage(self) -> MongoDbStorage:
