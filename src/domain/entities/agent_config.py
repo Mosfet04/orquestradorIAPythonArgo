@@ -15,6 +15,8 @@ class AgentConfig:
     prompt: str
     tools_ids: Optional[list[str]] = None
     rag_config: Optional[RagConfig]= None
+    user_memory_active: bool = False
+    summary_active: bool = False
     active: bool = True
     
     def __post_init__(self):

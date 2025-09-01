@@ -286,7 +286,7 @@ docker-compose up -d
 
 ```bash
 # Database Configuration
-MONGO_CONNECTION_STRING=mongodb://localhost:62659/?directConnection=true
+MONGO_CONNECTION_STRING=mongodb://localhost:56588/?directConnection=true
 MONGO_DATABASE_NAME=agno
 
 # Application Configuration
@@ -311,20 +311,31 @@ The system uses multiple collections for dynamic configuration and data persiste
 
 ```json
 {
-  "_id": ObjectId("..."),
-  "id": "agent-1",
-  "nome": "General Assistant",
-  "model": "llama3.2:latest",
+  "_id": {
+    "$oid": "6885a4c9813bbb6328bbe3f2"
+  },
+  "nome": "Coding Agent",
+  "id": "coding_agent",
   "factoryIaModel": "ollama",
-  "descricao": "A general purpose assistant",
-  "prompt": "You are a helpful assistant that helps with general tasks...",
-  "active": true,
-  "tools_ids": ["tool-1", "tool-2"],
+  "model": "qwen3:latest",
+  "descricao": "Você é um assistente de programacao de agentes de IA com o Agno.",
+  "prompt": [
+    "Você deve agir como um assistente de remocao de duvidas sobre Agentes de IA e Agno. A ideia é auxiliar o usuario a desenvolver agentes de IA com o Agno. Busque consultar sua base de conhecimento toda vez que o usuario apresentar uma duvida de design patterns, clean code ou boas praticas de programacão em python."
+  ],
+  "tools_ids": [
+    "get-python-package-info"
+  ],
   "rag_config": {
     "active": true,
-    "doc_name": "knowledge_base",
-    "model": "text-embedding-3-small",
-    "factoryIaModel": "openai"
+    "doc_name": "basic-prog.txt",
+    "model": "gemini-embedding-exp-03-07",
+    "factoryIaModel": "gemini"
+  },
+  "user_memory_active": false,
+  "summary_active": false,
+  "active": true,
+  "updated_at": {
+    "$date": "2025-08-16T22:28:47.695Z"
   }
 }
 ```
@@ -589,6 +600,8 @@ db.agents_config.insertOne({
   "descricao": "Expert in Python development",
   "prompt": "You are a Python expert with 10+ years of experience...",
   "active": true,
+  "user_memory_active": false,
+  "summary_active": false,
   "tools_ids": ["github-tool", "stack-overflow-tool"]
 });
 ```
@@ -873,7 +886,7 @@ mongosh --eval "db.adminCommand('ismaster')"
 # Test connection
 python -c "
 from pymongo import MongoClient
-client = MongoClient('mongodb://localhost:62659/?directConnection=true')
+client = MongoClient('mongodb://localhost:56588/?directConnection=true')
 print(client.admin.command('ismaster'))
 "
 ```

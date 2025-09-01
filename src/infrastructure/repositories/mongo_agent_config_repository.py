@@ -129,5 +129,7 @@ class MongoAgentConfigRepository(IAgentConfigRepository):
                 doc_name=agent_data.get("rag_config", {}).get("doc_name"),
                 model=agent_data.get("rag_config", {}).get("model", "nomic-embed-text:latest"),
                 factoryIaModel=agent_data.get("rag_config", {}).get("factoryIaModel","ollama"),
-            ) if agent_data.get("rag_config") else None
+            ) if agent_data.get("rag_config") else None,
+            user_memory_active=agent_data.get("user_memory_active", False),
+            summary_active=agent_data.get("summary_active", False)
         )

@@ -45,8 +45,8 @@ class AgentFactoryService:
         try:
             self._validate_model_config_or_raise(config)
             model = self._get_or_create_model_cached(config.factoryIaModel, config.model)
-            memory_db = self._create_memory_db()
-            memory = self._create_memory(memory_db, model)
+            memory_db = self._create_memory_db(config)
+            memory = self._create_memory(config, memory_db, model)
             storage = self._create_storage()
             tools = self._get_tools_if_any(config)
             knowledge_base = self._get_knowledge_base_if_active(config)
@@ -93,9 +93,9 @@ class AgentFactoryService:
             storage=storage,
             user_id="ava",
             memory=memory,
-            enable_agentic_memory=True,
-            enable_user_memories=True,
-            enable_session_summaries=True,
+            enable_agentic_memory=True if config.user_memory_active else False,
+            enable_user_memories=True if config.user_memory_active else False,
+            enable_session_summaries=True if config.summary_active else False,
             instructions=config.prompt,
             num_history_responses=5,
             tools=tools,
@@ -184,20 +184,24 @@ class AgentFactoryService:
             
         return knowledge_base
 
-    def _create_memory_db(self) -> MongoMemoryDb:
+    def _create_memory_db(self, config: AgentConfig) -> Optional[MongoMemoryDb]:
         """Cria a instância do banco de dados de memória."""
-        return MongoMemoryDb(
-            collection_name="user_memories",
-            db_url=self._db_url,
-            db_name=self._db_name
-        )
+        if config.user_memory_active:
+            return MongoMemoryDb(
+                collection_name="user_memories",
+                db_url=self._db_url,
+                db_name=self._db_name
+            )
+        return None
     
-    def _create_memory(self, memory_db, model) -> Memory:
+    def _create_memory(self, config: AgentConfig, memory_db, model) -> Optional[Memory]:
         """Cria a instância de memória do agente."""
-        return Memory(
+        if config.user_memory_active:
+            return Memory(
             db=memory_db,
             summarizer=SessionSummarizer(model=model),
-        )
+        )   
+        return None
     
     def _create_storage(self) -> MongoDbStorage:
         """Cria a instância de armazenamento do agente."""
