@@ -270,11 +270,20 @@ class TestAgentFactoryService:
     def test_create_memory_db_method_exists(self, mock_mongo_memory_db):
         """Testa que o método _create_memory_db existe e pode ser chamado."""
         # Arrange
+        config = AgentConfig(
+            id="test_agent",
+            nome="Test Agent", 
+            descricao="Test description",
+            prompt="Test prompt",
+            factoryIaModel="ollama",
+            model="llama2",
+            user_memory_active=True
+        )
         mock_instance = Mock()
         mock_mongo_memory_db.return_value = mock_instance
         
         # Act
-        result = self.service._create_memory_db()
+        result = self.service._create_memory_db(config)
         
         # Assert
         assert result == mock_instance
@@ -289,6 +298,15 @@ class TestAgentFactoryService:
     def test_create_memory_method_exists(self, mock_session_summarizer, mock_memory):
         """Testa que o método _create_memory existe e pode ser chamado."""
         # Arrange
+        config = AgentConfig(
+            id="test_agent",
+            nome="Test Agent",
+            descricao="Test description", 
+            prompt="Test prompt",
+            factoryIaModel="ollama",
+            model="llama2",
+            user_memory_active=True
+        )
         mock_memory_db = Mock()
         mock_model = Mock()
         mock_summarizer_instance = Mock()
@@ -298,7 +316,7 @@ class TestAgentFactoryService:
         mock_memory.return_value = mock_memory_instance
         
         # Act
-        result = self.service._create_memory(mock_memory_db, mock_model)
+        result = self.service._create_memory(config, mock_memory_db, mock_model)
         
         # Assert
         assert result == mock_memory_instance
@@ -307,6 +325,46 @@ class TestAgentFactoryService:
             db=mock_memory_db,
             summarizer=mock_summarizer_instance
         )
+    
+    def test_create_memory_db_with_memory_disabled(self):
+        """Testa que _create_memory_db retorna None quando user_memory_active é False."""
+        # Arrange
+        config = AgentConfig(
+            id="test_agent",
+            nome="Test Agent",
+            descricao="Test description",
+            prompt="Test prompt", 
+            factoryIaModel="ollama",
+            model="llama2",
+            user_memory_active=False
+        )
+        
+        # Act
+        result = self.service._create_memory_db(config)
+        
+        # Assert
+        assert result is None
+    
+    def test_create_memory_with_memory_disabled(self):
+        """Testa que _create_memory retorna None quando user_memory_active é False."""
+        # Arrange
+        config = AgentConfig(
+            id="test_agent", 
+            nome="Test Agent",
+            descricao="Test description",
+            prompt="Test prompt",
+            factoryIaModel="ollama",
+            model="llama2",
+            user_memory_active=False
+        )
+        mock_memory_db = Mock()
+        mock_model = Mock()
+        
+        # Act
+        result = self.service._create_memory(config, mock_memory_db, mock_model)
+        
+        # Assert
+        assert result is None
     
     @patch('src.application.services.agent_factory_service.MongoDbStorage')
     def test_create_storage_method_exists(self, mock_mongo_db_storage):
