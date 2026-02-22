@@ -1,46 +1,62 @@
-from unittest.mock import Mock
+"""Testes para GetActiveAgentsUseCase."""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
 from src.application.use_cases.get_active_agents_use_case import GetActiveAgentsUseCase
 from src.domain.entities.agent_config import AgentConfig
 
 
-class TestGetActiveAgentsUseCase:
-    """Testes unitários para o GetActiveAgentsUseCase."""
-    
-    def test_execute_returns_active_agents(self):
-        """Testa se o caso de uso retorna agentes ativos."""
-        # Arrange
-        mock_repository = Mock()
-        mock_service = Mock()
-        
-        config1 = AgentConfig(
-            id="agent1",
-            nome="Agente 1",
-            factoryIaModel="ollama",
-            model="llama3.2:latest",
-            descricao="Primeiro agente",
-            prompt="Você é o agente 1"
-        )
-        
-        config2 = AgentConfig(
-            id="agent2",
-            nome="Agente 2",
-            factoryIaModel="ollama",
-            model="llama3.2:latest",
-            descricao="Segundo agente",
-            prompt="Você é o agente 2"
-        )
-        
-        mock_repository.get_active_agents.return_value = [config1, config2]
-        mock_agent1 = Mock()
-        mock_agent2 = Mock()
-        mock_service.create_agent.side_effect = [mock_agent1, mock_agent2]
+def _make_config(agent_id: str = "a1") -> AgentConfig:
+    return AgentConfig(
+        id=agent_id,
+        nome="Agente",
+        factory_ia_model="ollama",
+        model="llama3.2:latest",
+        descricao="desc",
+        prompt="prompt",
+    )
 
-        use_case = GetActiveAgentsUseCase(mock_service, mock_repository)  # Corrigindo ordem dos parâmetros        # Act
-        result = use_case.execute()
-        
-        # Assert
-        assert len(result) == 2
-        assert result[0] == mock_agent1
-        assert result[1] == mock_agent2
-        mock_repository.get_active_agents.assert_called_once()
-        assert mock_service.create_agent.call_count == 2
+
+class TestGetActiveAgentsUseCase:
+    async def test_execute_returns_agents(self, mock_agent_config_repository):
+        configs = [_make_config("a1"), _make_config("a2")]
+        mock_agent_config_repository.get_active_agents.return_value = configs
+
+        mock_factory = AsyncMock()
+        mock_agent = MagicMock()
+        mock_factory.create_agent = AsyncMock(return_value=mock_agent)
+
+        use_case = GetActiveAgentsUseCase(mock_factory, mock_agent_config_repository)
+        agents = await use_case.execute()
+
+        assert len(agents) == 2
+        assert mock_factory.create_agent.await_count == 2
+
+    async def test_execute_returns_empty_when_no_configs(self, mock_agent_config_repository):
+        mock_agent_config_repository.get_active_agents.return_value = []
+        mock_factory = AsyncMock()
+
+        use_case = GetActiveAgentsUseCase(mock_factory, mock_agent_config_repository)
+        agents = await use_case.execute()
+
+        assert agents == []
+        mock_factory.create_agent.assert_not_awaited()
+
+    async def test_execute_skips_failed_agents(self, mock_agent_config_repository):
+        configs = [_make_config("ok"), _make_config("fail")]
+        mock_agent_config_repository.get_active_agents.return_value = configs
+
+        mock_factory = AsyncMock()
+        mock_agent = MagicMock()
+        mock_factory.create_agent = AsyncMock(
+            side_effect=[mock_agent, RuntimeError("boom")]
+        )
+
+        use_case = GetActiveAgentsUseCase(mock_factory, mock_agent_config_repository)
+        agents = await use_case.execute()
+
+        assert len(agents) == 1

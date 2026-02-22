@@ -8,7 +8,7 @@ import json
 import re
 import traceback
 from typing import Any, Dict, Optional, List, Sequence
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from dataclasses import dataclass, asdict
 import hashlib
@@ -213,7 +213,7 @@ class SecureLogger:
                          exception: Optional[Exception] = None) -> Dict[str, Any]:
         """Cria entrada de log estruturada."""
         log_entry = {
-            'timestamp': datetime.utcnow().isoformat(),
+            'timestamp': datetime.now(timezone.utc).isoformat(),
             'level': level.value,
             'message': message,
             'context': asdict(self.context),

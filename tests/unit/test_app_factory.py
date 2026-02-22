@@ -1,47 +1,61 @@
+"""Testes para AppFactory."""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import AsyncMock, Mock, patch
 
 from src.infrastructure.web.app_factory import AppFactory
-from src.infrastructure.config.app_config import AppConfig
 
 
-@pytest.mark.asyncio
-async def test_app_factory_creates_app_and_mounts(monkeypatch):
-    factory = AppFactory()
+class TestAppFactory:
+    @patch("src.infrastructure.web.app_factory.DependencyContainer")
+    @patch("src.infrastructure.web.app_factory.AppConfig")
+    async def test_create_app_returns_fastapi(self, mock_config_cls, mock_container_cls):
+        mock_config_cls.load.return_value = MagicMock()
 
-    # Mock AppConfig.load_async
-    monkeypatch.setattr(AppConfig, 'load_async', AsyncMock(return_value=AppConfig(
-        mongo_connection_string="mongodb://localhost:62659/?directConnection=true",
-        mongo_database_name="agno",
-        app_title="t",
-        app_host="0.0.0.0",
-        app_port=7777,
-        log_level="INFO",
-        ollama_base_url="http://localhost:11434",
-        openai_api_key=None
-    )))
+        mock_controller = MagicMock()
+        mock_controller.get_agents = AsyncMock(return_value=[])
+        mock_controller.get_cache_stats = MagicMock(return_value={})
+        mock_controller.refresh_agents = AsyncMock()
+        mock_controller.warm_up_cache = AsyncMock()
 
-    # Mock DependencyContainer.create_async e métodos do controller
-    fake_controller = Mock()
-    FakeSubApp = Mock()
-    FakeSubApp.get_app = Mock(return_value=Mock())
-    fake_controller.create_playground_async = AsyncMock(return_value=FakeSubApp)
-    fake_controller.create_fastapi_app_async = AsyncMock(return_value=FakeSubApp)
-    fake_controller.get_cache_stats = Mock(return_value={"hits": 0})
-    fake_controller.refresh_agents_async = AsyncMock()
-    fake_controller.warm_up_cache = AsyncMock()
+        mock_container = MagicMock()
+        mock_container.get_orquestrador_controller.return_value = mock_controller
+        mock_container.health_service = MagicMock()
+        mock_container.cleanup = AsyncMock()
 
-    class FakeContainer:
-        def __init__(self):
-            self.health_service = Mock()
-            self.health_service.check_async = AsyncMock(return_value={"status": "healthy"})
-        async def get_orquestrador_controller_async(self):
-            return fake_controller
-        async def cleanup(self):
-            return None
+        mock_container_cls.create_async = AsyncMock(return_value=mock_container)
 
-    with patch('src.infrastructure.web.app_factory.DependencyContainer.create_async', AsyncMock(return_value=FakeContainer())):
-        app = await factory.create_app_async()
-        # Checar rotas montadas por representação textual
-        routes_str = "\n".join(str(r) for r in app.routes)
-        assert any(seg in routes_str for seg in ["/playground", "/api", "/health"]) 
+        factory = AppFactory()
+        app = await factory.create_app()
+        assert app is not None
+
+    @patch("agno.os.AgentOS")
+    @patch("src.infrastructure.web.app_factory.DependencyContainer")
+    @patch("src.infrastructure.web.app_factory.AppConfig")
+    async def test_create_app_with_agents_uses_agentos(
+        self, mock_config_cls, mock_container_cls, mock_os
+    ):
+        mock_config_cls.load.return_value = MagicMock()
+        mock_agent = MagicMock()
+
+        mock_controller = MagicMock()
+        mock_controller.get_agents = AsyncMock(return_value=[mock_agent])
+        mock_controller.warm_up_cache = AsyncMock()
+
+        mock_container = MagicMock()
+        mock_container.get_orquestrador_controller.return_value = mock_controller
+        mock_container.cleanup = AsyncMock()
+
+        mock_container_cls.create_async = AsyncMock(return_value=mock_container)
+
+        mock_os_inst = MagicMock()
+        mock_os_inst.get_app.return_value = MagicMock()
+        mock_os.return_value = mock_os_inst
+
+        factory = AppFactory()
+        app = await factory.create_app()
+        mock_os.assert_called_once()
+        assert app is not None

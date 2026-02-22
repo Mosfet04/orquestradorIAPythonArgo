@@ -1,212 +1,178 @@
-from typing import Optional, List, Union, Callable, Dict, Any, cast
-import asyncio
-from datetime import datetime
+"""Serviço de criação de agentes — agno v2.5."""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Any, List, Optional
+
 from agno.agent import Agent
-from agno.storage.mongodb import MongoDbStorage
-from agno.memory.v2.memory import Memory
-from agno.memory.v2.summarizer import SessionSummarizer
-from agno.memory.v2.db.mongodb import MongoMemoryDb
+from agno.db.mongo import MongoDb as MongoAgentDb
+from agno.knowledge import Knowledge
 from agno.tools import Toolkit
-from agno.tools.function import Function
-from agno.knowledge.text import TextKnowledgeBase
-from agno.vectordb.mongodb import MongoDb
+from agno.vectordb.mongodb import MongoDb as MongoVectorDb
+
 from src.domain.entities.agent_config import AgentConfig
+from src.domain.ports import ILogger, IModelFactory, IEmbedderFactory, IToolFactory
 from src.domain.repositories.tool_repository import IToolRepository
-from src.application.services.http_tool_factory_service import HttpToolFactory
-from src.application.services.model_factory_service import ModelFactory
-from src.application.services.embedder_model_factory_service import EmbedderModelFactory
-from src.infrastructure.logging import app_logger
-from src.infrastructure.cache.model_cache_service import ModelCacheService
 
 
 class AgentFactoryService:
-    """Serviço responsável por criar instâncias de agentes com cache otimizado."""
-    
-    def __init__(self, 
-                 db_url: str = "mongodb://localhost:62659/?directConnection=true", 
-                 db_name: str = "agno",
-                 tool_repository: Optional[IToolRepository] = None):
+    """Cria instâncias de ``Agent`` (agno v2.5) a partir de ``AgentConfig``."""
+
+    def __init__(
+        self,
+        *,
+        db_url: str,
+        db_name: str = "agno",
+        logger: ILogger,
+        model_factory: IModelFactory,
+        embedder_factory: IEmbedderFactory,
+        tool_factory: IToolFactory,
+        tool_repository: IToolRepository,
+    ) -> None:
         self._db_url = db_url
         self._db_name = db_name
+        self._logger = logger
+        self._model_factory = model_factory
+        self._embedder_factory = embedder_factory
+        self._tool_factory = tool_factory
         self._tool_repository = tool_repository
-        self._http_tool_factory = HttpToolFactory()
-        self._model_factory = ModelFactory()
-        self._embedder_model_factory = EmbedderModelFactory()
-        self._model_cache_service = ModelCacheService()
-    
-    async def create_agent_async(self, config: AgentConfig) -> Agent:
-        """Versão assíncrona para criação de agentes."""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self.create_agent, config)
-    
-    def create_agent(self, config: AgentConfig) -> Agent:
-        """Cria um agente baseado na configuração fornecida com cache otimizado."""
-        start_time = datetime.utcnow()
+
+    # ── public ──────────────────────────────────────────────────────
+
+    async def create_agent(self, config: AgentConfig) -> Agent:
+        """Cria um agente baseado na configuração fornecida."""
+        start = datetime.now(timezone.utc)
         try:
-            self._validate_model_config_or_raise(config)
-            model = self._get_or_create_model_cached(config.factoryIaModel, config.model)
-            memory_db = self._create_memory_db(config)
-            memory = self._create_memory(config, memory_db, model)
-            storage = self._create_storage()
-            tools = self._get_tools_if_any(config)
-            knowledge_base = self._get_knowledge_base_if_active(config)
-            agent = self._build_agent(config, model, memory, storage, tools, knowledge_base)
+            self._validate_model_config(config)
+            model = self._model_factory.create_model(
+                config.factory_ia_model, config.model
+            )
+            tools = await self._build_tools(config)
+            knowledge = self._build_knowledge(config)
+            db = self._build_db()
+            agent = self._assemble_agent(config, model, db, tools, knowledge)
+            elapsed = (datetime.now(timezone.utc) - start).total_seconds()
+            self._logger.info(
+                "Agente criado",
+                agent_id=config.id,
+                elapsed_s=round(elapsed, 3),
+            )
             return agent
-        except Exception as e:
-            creation_time = (datetime.utcnow() - start_time).total_seconds()
-            app_logger.error("❌ Erro ao criar agente", 
-                             agent_id=config.id, 
-                             error=str(e),
-                             creation_time_seconds=round(creation_time, 3))
+        except Exception as exc:
+            elapsed = (datetime.now(timezone.utc) - start).total_seconds()
+            self._logger.error(
+                "Erro ao criar agente",
+                agent_id=config.id,
+                error=str(exc),
+                elapsed_s=round(elapsed, 3),
+            )
             raise
 
-    def _validate_model_config_or_raise(self, config: AgentConfig):
-        validation_result = self._model_factory.validate_model_config(
-            config.factoryIaModel, 
-            config.model
+    # ── private ─────────────────────────────────────────────────────
+
+    def _validate_model_config(self, config: AgentConfig) -> None:
+        result = self._model_factory.validate_model_config(
+            config.factory_ia_model, config.model
         )
-        if not validation_result["valid"]:
-            errors = "; ".join(validation_result["errors"])
+        if not result["valid"]:
+            errors = "; ".join(result["errors"])
             raise ValueError(f"Configuração de modelo inválida: {errors}")
 
-    def _get_tools_if_any(self, config: AgentConfig):
-        return self._create_tools(config.tools_ids) if config.tools_ids else []
-
-    def _get_knowledge_base_if_active(self, config: AgentConfig):
-        if config.rag_config and config.rag_config.active:
-            try:
-                return self._create_rag(config)
-            except Exception as e:
-                app_logger.warning("⚠️ Erro ao criar RAG", error=str(e))
-        return None
-
-    def _build_agent(self, config, model, memory, storage, tools, knowledge_base):
-        return Agent(
-            name=config.nome,
-            agent_id=config.id,
-            model=model,
-            reasoning=False,
-            markdown=True,
-            add_history_to_messages=True,
-            description=config.descricao,
-            add_datetime_to_instructions=True,
-            storage=storage,
-            user_id="ava",
-            memory=memory,
-            enable_agentic_memory=True if config.user_memory_active else False,
-            enable_user_memories=True if config.user_memory_active else False,
-            enable_session_summaries=True if config.summary_active else False,
-            instructions=config.prompt,
-            num_history_responses=5,
-            tools=tools,
-            knowledge=knowledge_base,
-            search_knowledge=True if knowledge_base else False,
-            read_chat_history=True if knowledge_base else False,
+    def _build_db(self) -> MongoAgentDb:
+        """Cria instância unificada de db (storage + memory) — agno v2."""
+        return MongoAgentDb(
+            db_url=self._db_url,
+            db_name=self._db_name,
         )
-    
-    async def _get_or_create_model_cached_async(self, factory_type: str, model_name: str):
-        """Obtém modelo do cache ou cria novo de forma assíncrona."""
-        cache_key = f"{factory_type}_{model_name}"
-        
-        return await self._model_cache_service.get_or_create(
-            cache_key,
-            self._model_factory.create_model,
-            factory_type,
-            model_name
-        )
-    
-    def _get_or_create_model_cached(self, factory_type: str, model_name: str):
-        """Obtém modelo do cache ou cria novo (versão síncrona)."""
-        # Para manter compatibilidade, usar diretamente o factory sem cache
-        # Em uma refatoração futura, todo o fluxo deve ser assíncrono
-        return self._model_factory.create_model(factory_type, model_name)
-    
-    def _create_tools(self, tool_ids: List[str]) -> List[Union[Toolkit, Callable, Function, Dict[str, Any]]]:
-        """Cria as ferramentas para o agente."""
-        if not self._tool_repository or not tool_ids:
+
+    async def _build_tools(self, config: AgentConfig) -> List[Any]:
+        if not config.tools_ids:
             return []
-        
         try:
-            # Buscar configurações das tools no repositório
-            tool_configs = self._tool_repository.get_tools_by_ids(tool_ids)
-            
-            # Criar tools do agno usando o factory
-            agno_tools = self._http_tool_factory.create_tools_from_configs(tool_configs)
-            
-            return cast(List[Union[Toolkit, Callable, Function, Dict[str, Any]]], agno_tools)
-        except Exception as e:
-            # Log do erro (em ambiente real, usar logging adequado)
-            print(f"Erro ao criar tools: {e}")
+            tool_configs = await self._tool_repository.get_tools_by_ids(
+                config.tools_ids
+            )
+            return await self._tool_factory.create_tools_from_configs(tool_configs)
+        except Exception as exc:
+            self._logger.warning("Erro ao criar tools", error=str(exc))
             return []
-    def _create_rag(self, config: AgentConfig) -> TextKnowledgeBase:
-        """Cria a base de conhecimento Rag para o agente."""
-        
-        # Verificar se rag_config existe e tem os campos necessários
-        if not config.rag_config:
-            raise ValueError("Configuração de RAG não encontrada")
-        
-        if not config.rag_config.factoryIaModel or not config.rag_config.model:
-            raise ValueError("Configuração de RAG deve ter factoryIaModel e model definidos")
 
-        embedder_model = self._embedder_model_factory.create_model(
-            config.rag_config.factoryIaModel, 
-            config.rag_config.model
-        )
-            
+    def _build_knowledge(self, config: AgentConfig) -> Optional[Knowledge]:
+        rag = config.rag_config
+        if not rag or not rag.active:
+            return None
+
+        if not rag.factory_ia_model or not rag.model:
+            self._logger.warning(
+                "RAG ativo sem factory_ia_model ou model — ignorando"
+            )
+            return None
+
         try:
-            knowledge_base = TextKnowledgeBase(
-                vector_db=MongoDb(
+            embedder = self._embedder_factory.create_model(
+                rag.factory_ia_model, rag.model
+            )
+            knowledge = Knowledge(
+                vector_db=MongoVectorDb(
                     collection_name="rag",
                     db_url=self._db_url,
                     database=self._db_name,
-                    embedder=embedder_model,
-                )
+                    embedder=embedder,
+                ),
             )
-        except Exception as e:
-            print(f"❌ Erro ao criar AgentKnowledge: {e}")
-            raise
-        
-        # Carrega o arquivo de documentação se especificado
-        if config.rag_config and hasattr(config.rag_config, 'doc_name') and config.rag_config.doc_name:
-            doc_path = f"docs/{config.rag_config.doc_name}"
-            try:
-                with open(doc_path, 'r', encoding='utf-8'):
-                    knowledge_base.load_document(path=doc_path)
+            self._load_document(knowledge, rag.doc_name)
+            return knowledge
+        except Exception as exc:
+            self._logger.warning("Erro ao criar RAG", error=str(exc))
+            return None
 
-            except FileNotFoundError:
-                print(f"❌ Arquivo de documentação não encontrado: {doc_path}")
-            except Exception as e:
-                print(f"❌ Erro ao carregar documentação: {type(e).__name__}: {e}")
-                import traceback
-                traceback.print_exc()
-        else:
-            print("⚠️ Nenhum arquivo de documentação especificado para RAG")
-            
-        return knowledge_base
-
-    def _create_memory_db(self, config: AgentConfig) -> Optional[MongoMemoryDb]:
-        """Cria a instância do banco de dados de memória."""
-        if config.user_memory_active:
-            return MongoMemoryDb(
-                collection_name="user_memories",
-                db_url=self._db_url,
-                db_name=self._db_name
+    def _load_document(
+        self, knowledge: Knowledge, doc_name: Optional[str]
+    ) -> None:
+        if not doc_name:
+            self._logger.info("Nenhum documento especificado para RAG")
+            return
+        doc_path = f"docs/{doc_name}"
+        try:
+            knowledge.load_document(path=doc_path)
+        except FileNotFoundError:
+            self._logger.warning(
+                "Documento não encontrado", path=doc_path
             )
-        return None
-    
-    def _create_memory(self, config: AgentConfig, memory_db, model) -> Optional[Memory]:
-        """Cria a instância de memória do agente."""
-        if config.user_memory_active:
-            return Memory(
-            db=memory_db,
-            summarizer=SessionSummarizer(model=model),
-        )
-        return None
-    
-    def _create_storage(self) -> MongoDbStorage:
-        """Cria a instância de armazenamento do agente."""
-        return MongoDbStorage(
-            collection_name="storage",
-            db_url=self._db_url,
-            db_name=self._db_name,
+        except Exception as exc:
+            self._logger.error(
+                "Erro ao carregar documento RAG",
+                path=doc_path,
+                error=str(exc),
+            )
+
+    def _assemble_agent(
+        self,
+        config: AgentConfig,
+        model: Any,
+        db: MongoAgentDb,
+        tools: List[Any],
+        knowledge: Optional[Knowledge],
+    ) -> Agent:
+        return Agent(
+            id=config.id,
+            name=config.nome,
+            model=model,
+            db=db,
+            user_id="ava",
+            reasoning=False,
+            markdown=True,
+            description=config.descricao,
+            instructions=config.prompt,
+            add_history_to_context=True,
+            add_datetime_to_context=True,
+            num_history_runs=5,
+            enable_agentic_memory=config.user_memory_active,
+            enable_user_memories=config.user_memory_active,
+            enable_session_summaries=config.summary_active,
+            tools=tools or None,
+            knowledge=knowledge,
+            search_knowledge=bool(knowledge),
+            read_chat_history=bool(knowledge),
         )

@@ -1,135 +1,84 @@
+"""Repositório de AgentConfig — MongoDB async (motor)."""
+
+from __future__ import annotations
+
 from typing import List
-from pymongo import MongoClient
-from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
+
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.rag_config import RagConfig
+from src.domain.ports import ILogger
 from src.domain.repositories.agent_config_repository import IAgentConfigRepository
-import os
-import logging
+from src.infrastructure.repositories.mongo_base import AsyncMongoRepository
 
-logger = logging.getLogger(__name__)
 
-class MongoAgentConfigRepository(IAgentConfigRepository):
-    """Implementação do repositório de configurações de agentes usando MongoDB."""
-    
-    def __init__(self, connection_string: str = "mongodb://localhost:62659/?directConnection=true", 
-                 database_name: str = "agno", 
-                 collection_name: str = "agents_config"):
-        self._connection_string = connection_string
-        self._database_name = database_name
-        self._collection_name = collection_name
-        self._client = None
-        self._db = None
-        self._collection = None
-        
-        # Configuração TLS/SSL para MongoDB Atlas
-        self._use_tls = self._should_use_tls()
-        self._tls_allow_invalid_certificates = os.getenv("TLS_ALLOW_INVALID_CERTIFICATES", "false").lower() == "true"
-    
-    def _should_use_tls(self) -> bool:
-        """Determina se deve usar TLS baseado na connection string."""
-        # MongoDB Atlas sempre requer TLS
-        if "mongodb.net" in self._connection_string:
-            return True
-        
-        # Para conexões locais, verificar variável de ambiente
-        return os.getenv("USE_TLS", "false").lower() == "true"
-    
-    def _get_collection(self):
-        """Obtém a coleção do MongoDB de forma lazy."""
-        if self._collection is None:
-            try:
-                # Configurações de conexão para MongoDB Atlas
-                if self._use_tls:
-                    self._client = MongoClient(
-                        self._connection_string,
-                        serverSelectionTimeoutMS=30000,
-                        connectTimeoutMS=30000,
-                        socketTimeoutMS=30000,
-                        maxPoolSize=10,
-                        minPoolSize=1,
-                        maxIdleTimeMS=30000,
-                        tls=True,
-                        tlsAllowInvalidCertificates=self._tls_allow_invalid_certificates,
-                        tlsAllowInvalidHostnames=self._tls_allow_invalid_certificates,
-                        retryWrites=True,
-                        w="majority"
-                    )
-                else:
-                    self._client = MongoClient(
-                        self._connection_string,
-                        serverSelectionTimeoutMS=30000,
-                        connectTimeoutMS=30000,
-                        socketTimeoutMS=30000,
-                        maxPoolSize=10,
-                        minPoolSize=1,
-                        maxIdleTimeMS=30000
-                    )
-                
-                # Testar conexão
-                self._client.admin.command('ping')
-                
-                self._db = self._client[self._database_name]
-                self._collection = self._db[self._collection_name]
-                
-            except (ConnectionFailure, ServerSelectionTimeoutError) as e:
-                logger.error(f"Erro ao conectar ao MongoDB: {str(e)}")
-                raise ConnectionError(f"Não foi possível conectar ao MongoDB: {str(e)}")
-            except Exception as e:
-                logger.error(f"Erro inesperado ao conectar ao MongoDB: {str(e)}")
-                raise
-        
-        return self._collection
-    
-    def get_active_agents(self) -> List[AgentConfig]:
-        """Retorna lista de agentes ativos."""
+class MongoAgentConfigRepository(AsyncMongoRepository, IAgentConfigRepository):
+    """Implementação async do repositório de configurações de agentes."""
+
+    def __init__(
+        self,
+        *,
+        connection_string: str,
+        database_name: str = "agno",
+        collection_name: str = "agents_config",
+        logger: ILogger,
+    ) -> None:
+        super().__init__(
+            connection_string=connection_string,
+            database_name=database_name,
+            collection_name=collection_name,
+            logger=logger,
+        )
+
+    async def get_active_agents(self) -> List[AgentConfig]:
         try:
-            collection = self._get_collection()
-            query = {"active": True}
-            resultados = collection.find(query)
-            
-            agents = []
-            for agent_data in resultados:
-                agent_config = self._map_to_entity(agent_data)
-                agents.append(agent_config)
-            
-            return agents
-        except Exception as e:
-            logger.error(f"Erro ao buscar agentes ativos: {str(e)}")
+            cursor = self._collection.find({"active": True})
+            return [self._map_to_entity(doc) async for doc in cursor]
+        except Exception as exc:
+            self._logger.error("Erro ao buscar agentes ativos", error=str(exc))
             raise
-    
-    def get_agent_by_id(self, agent_id: str) -> AgentConfig:
-        """Retorna um agente por ID."""
+
+    async def get_agent_by_id(self, agent_id: str) -> AgentConfig:
         try:
-            collection = self._get_collection()
-            query = {"id": agent_id}
-            agent_data = collection.find_one(query)
-            
-            if not agent_data:
-                raise ValueError(f"Agente com ID {agent_id} não encontrado")
-            
-            return self._map_to_entity(agent_data)
-        except Exception as e:
-            logger.error(f"Erro ao buscar agente por ID {agent_id}: {str(e)}")
+            doc = await self._collection.find_one({"id": agent_id})
+            if not doc:
+                raise ValueError(f"Agente {agent_id} não encontrado")
+            return self._map_to_entity(doc)
+        except Exception as exc:
+            self._logger.error(
+                "Erro ao buscar agente", agent_id=agent_id, error=str(exc)
+            )
             raise
-    
-    def _map_to_entity(self, agent_data: dict) -> AgentConfig:
-        """Mapeia dados do banco para a entidade AgentConfig."""
+
+    @staticmethod
+    def _map_to_entity(data: dict) -> AgentConfig:
+        rag_data = data.get("rag_config")
+        rag_config = (
+            RagConfig(
+                active=rag_data.get("active", False),
+                doc_name=rag_data.get("doc_name"),
+                model=rag_data.get("model", "nomic-embed-text:latest"),
+                factory_ia_model=rag_data.get(
+                    "factory_ia_model",
+                    rag_data.get("factoryIaModel", "ollama"),
+                ),
+            )
+            if rag_data
+            else None
+        )
+
         return AgentConfig(
-            id=agent_data.get("id", ""),
-            nome=agent_data.get("nome", ""),
-            model=agent_data.get("model", ""),
-            factoryIaModel=agent_data.get("factoryIaModel", "ollama"),  # valor padrão
-            descricao=agent_data.get("descricao", ""),
-            prompt=agent_data.get("prompt", ""),
-            active=agent_data.get("active", True),
-            tools_ids=agent_data.get("tools_ids", []),
-            rag_config=RagConfig(
-                active=agent_data.get("rag_config", {}).get("active", False),
-                doc_name=agent_data.get("rag_config", {}).get("doc_name"),
-                model=agent_data.get("rag_config", {}).get("model", "nomic-embed-text:latest"),
-                factoryIaModel=agent_data.get("rag_config", {}).get("factoryIaModel","ollama"),
-            ) if agent_data.get("rag_config") else None,
-            user_memory_active=agent_data.get("user_memory_active", False),
-            summary_active=agent_data.get("summary_active", False)
+            id=data.get("id", ""),
+            nome=data.get("nome", ""),
+            model=data.get("model", ""),
+            factory_ia_model=data.get(
+                "factory_ia_model",
+                data.get("factoryIaModel", "ollama"),
+            ),
+            descricao=data.get("descricao", ""),
+            prompt=data.get("prompt", ""),
+            active=data.get("active", True),
+            tools_ids=data.get("tools_ids", []),
+            rag_config=rag_config,
+            user_memory_active=data.get("user_memory_active", False),
+            summary_active=data.get("summary_active", False),
         )

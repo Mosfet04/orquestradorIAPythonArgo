@@ -1,138 +1,92 @@
+"""Controller do orquestrador de agentes — agno v2.5."""
+
+from __future__ import annotations
+
 import asyncio
-import threading
-from typing import List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional
+
 from agno.agent import Agent
-from agno.playground import Playground
-from agno.app.fastapi import FastAPIApp
+
 from src.application.use_cases.get_active_agents_use_case import GetActiveAgentsUseCase
-from src.infrastructure.logging import app_logger
+from src.domain.ports import ILogger
 
 
 class AgentCacheEntry:
-    """Entrada otimizada de cache com TTL e métricas."""
-    
-    def __init__(self, agents: List[Agent], ttl_minutes: int = 5):
+    """Cache de agentes com TTL."""
+
+    def __init__(self, agents: List[Agent], ttl_minutes: int = 5) -> None:
         self.agents = agents
-        self.created_at = datetime.utcnow()
+        self.created_at = datetime.now(timezone.utc)
         self.ttl = timedelta(minutes=ttl_minutes)
         self.hit_count = 0
         self.last_access = self.created_at
-    
+
     def is_expired(self) -> bool:
-        """Verifica se o cache expirou."""
-        return datetime.utcnow() > (self.created_at + self.ttl)
-    
+        return datetime.now(timezone.utc) > (self.created_at + self.ttl)
+
     def access(self) -> List[Agent]:
-        """Acessa o cache e atualiza métricas."""
         self.hit_count += 1
-        self.last_access = datetime.utcnow()
+        self.last_access = datetime.now(timezone.utc)
         return self.agents
 
 
 class OrquestradorController:
-    """Controller responsável por gerenciar o orquestrador de agentes - Otimizado."""
-    
-    def __init__(self, get_active_agents_use_case: GetActiveAgentsUseCase):
-        self._get_active_agents_use_case = get_active_agents_use_case
-        self._agents_cache: Optional[AgentCacheEntry] = None
-        self._cache_lock = threading.Lock()
-        self._cache_warming = False
-    
-    async def _load_agents_internal(self) -> List[Agent]:
-        """Carrega agentes sem lock - uso interno."""
-        try:
-            agents = await self._get_active_agents_use_case.execute_async()
-            # Atualizar cache
-            self._agents_cache = AgentCacheEntry(agents)
-            return agents
-        except Exception as e:
-            app_logger.error("❌ Erro ao carregar agentes", 
-                           error=str(e), error_type=e.__class__.__name__)
-            # Retornar cache antigo se disponível em caso de erro
-            if self._agents_cache:
-                app_logger.warning("⚠️ Usando cache expirado devido a erro")
-                return self._agents_cache.access()
-            raise
+    """Gerencia o orquestrador de agentes com cache."""
 
-    async def get_agents_async(self) -> List[Agent]:
-        """Obtém a lista de agentes com cache inteligente assíncrono."""
-        with self._cache_lock:
-            # Verificar se cache existe e não expirou
-            if self._agents_cache and not self._agents_cache.is_expired():
-                return self._agents_cache.access()
-            
-            # Cache miss ou expirado - recarregar
-        return await self._load_agents_internal()
-    
-    def get_agents(self) -> List[Agent]:
-        """Versão síncrona mantida para compatibilidade."""
-        return asyncio.run(self.get_agents_async())
-    
+    def __init__(
+        self,
+        get_active_agents_use_case: GetActiveAgentsUseCase,
+        logger: ILogger,
+    ) -> None:
+        self._use_case = get_active_agents_use_case
+        self._logger = logger
+        self._cache: Optional[AgentCacheEntry] = None
+        self._lock = asyncio.Lock()
+
+    async def get_agents(self) -> List[Agent]:
+        """Retorna agentes com cache inteligente."""
+        async with self._lock:
+            if self._cache and not self._cache.is_expired():
+                return self._cache.access()
+        return await self._load_agents()
+
     async def warm_up_cache(self) -> None:
         """Pre-aquece o cache durante a inicialização."""
-        if self._cache_warming:
-            return
-            
-        self._cache_warming = True
-        try:
-            await self.get_agents_async()
-        finally:
-            self._cache_warming = False
-    
-    async def create_playground_async(self) -> Playground:
-        """Cria playground assincronamente com agentes em cache."""
-        agents = await self.get_agents_async()
-        
-        return Playground(
-            agents=agents,
-            name="Playground Otimizado",
-            description="Playground para agentes múltiplos com cache otimizado",
-            app_id="playground_optimized",
-        )
-    
-    def create_playground(self) -> Playground:
-        """Versão síncrona mantida para compatibilidade."""
-        return asyncio.run(self.create_playground_async())
-    
-    async def create_fastapi_app_async(self) -> FastAPIApp:
-        """Cria FastAPI app assincronamente com agentes em cache."""
-        agents = await self.get_agents_async()
-        
-        return FastAPIApp(
-            agents=agents,
-            name="API Fast Otimizada",
-            app_id="api_fast_optimized",
-            description="API Fast otimizada para consumo de múltiplos agentes",
-        )
-    
-    def create_fastapi_app(self) -> FastAPIApp:
-        """Versão síncrona mantida para compatibilidade."""
-        return asyncio.run(self.create_fastapi_app_async())
-    
-    async def refresh_agents_async(self) -> None:
-        """Força atualização do cache de agentes assincronamente."""
-        with self._cache_lock:
-            app_logger.info("🔄 Invalidando cache de agentes manualmente")
-            self._agents_cache = None
-            
-        # Recarregar imediatamente (fora do lock para evitar deadlock)
-        await self._load_agents_internal()
-    
-    def refresh_agents(self) -> None:
-        """Versão síncrona mantida para compatibilidade."""
-        asyncio.run(self.refresh_agents_async())
-    
-    def get_cache_stats(self) -> dict:
-        """Retorna estatísticas do cache para monitoramento."""
-        if not self._agents_cache:
+        await self.get_agents()
+
+    async def refresh_agents(self) -> None:
+        """Força recarga do cache."""
+        async with self._lock:
+            self._cache = None
+        await self._load_agents()
+        self._logger.info("Cache de agentes atualizado")
+
+    def get_cache_stats(self) -> Dict[str, Any]:
+        if not self._cache:
             return {"status": "empty"}
-        
         return {
             "status": "active",
-            "hit_count": self._agents_cache.hit_count,
-            "created_at": self._agents_cache.created_at.isoformat(),
-            "last_access": self._agents_cache.last_access.isoformat(),
-            "is_expired": self._agents_cache.is_expired(),
-            "agent_count": len(self._agents_cache.agents)
+            "hit_count": self._cache.hit_count,
+            "created_at": self._cache.created_at.isoformat(),
+            "last_access": self._cache.last_access.isoformat(),
+            "is_expired": self._cache.is_expired(),
+            "agent_count": len(self._cache.agents),
         }
+
+    # ── private ─────────────────────────────────────────────────────
+
+    async def _load_agents(self) -> List[Agent]:
+        try:
+            agents = await self._use_case.execute()
+            self._cache = AgentCacheEntry(agents)
+            return agents
+        except Exception as exc:
+            self._logger.error(
+                "Erro ao carregar agentes",
+                error=str(exc),
+            )
+            if self._cache:
+                self._logger.warning("Usando cache expirado como fallback")
+                return self._cache.access()
+            raise

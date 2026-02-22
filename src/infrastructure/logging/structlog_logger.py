@@ -10,7 +10,7 @@ import traceback
 import os
 import sys
 from typing import Any, Dict, Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from dataclasses import dataclass, asdict
 import hashlib
@@ -170,7 +170,7 @@ def add_correlation_id(logger, method_name, event_dict):
 
 def add_timestamp(logger, method_name, event_dict):
     """Adiciona timestamp ISO para compatibilidade cloud."""
-    event_dict['timestamp'] = datetime.utcnow().isoformat() + 'Z'
+    event_dict['timestamp'] = datetime.now(timezone.utc).isoformat()
     return event_dict
 
 

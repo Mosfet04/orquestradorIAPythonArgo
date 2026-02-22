@@ -1,13 +1,16 @@
-import asyncio
+"""Configuração da aplicação."""
+
+from __future__ import annotations
+
 import os
 from dataclasses import dataclass
 from typing import Optional
 
 
-@dataclass
+@dataclass(frozen=True)
 class AppConfig:
-    """Configuração da aplicação com carregamento assíncrono."""
-    
+    """Configuração imutável da aplicação, carregada a partir de variáveis de ambiente."""
+
     mongo_connection_string: str
     mongo_database_name: str
     app_title: str
@@ -16,18 +19,14 @@ class AppConfig:
     log_level: str
     ollama_base_url: str
     openai_api_key: Optional[str] = None
-    
+
     @classmethod
-    async def load_async(cls) -> "AppConfig":
-        """Carrega configurações assincronamente com validação."""
-        
-        # Simular operação assíncrona se necessário (ex: buscar de API externa)
-        await asyncio.sleep(0.001)  # Placeholder para futuras operações async
-        
+    def load(cls) -> AppConfig:
+        """Carrega e valida configurações a partir de variáveis de ambiente."""
         config = cls(
             mongo_connection_string=os.getenv(
-                "MONGO_CONNECTION_STRING", 
-                "mongodb://localhost:62659/?directConnection=true"
+                "MONGO_CONNECTION_STRING",
+                "mongodb://localhost:62659/?directConnection=true",
             ),
             mongo_database_name=os.getenv("MONGO_DATABASE_NAME", "agno"),
             app_title=os.getenv("APP_TITLE", "Orquestrador IA Otimizado"),
@@ -35,23 +34,14 @@ class AppConfig:
             app_port=int(os.getenv("APP_PORT", "7777")),
             log_level=os.getenv("LOG_LEVEL", "INFO"),
             ollama_base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
-            openai_api_key=os.getenv("OPENAI_API_KEY")
+            openai_api_key=os.getenv("OPENAI_API_KEY"),
         )
-        
-        # Validação assíncrona
-        await config._validate_async()
-        
+        config._validate()
         return config
-    
-    @classmethod
-    def load(cls) -> "AppConfig":
-        """Método síncrono mantido para compatibilidade."""
-        return asyncio.run(cls.load_async())
-    
-    async def _validate_async(self) -> None:
-        """Valida configurações assincronamente."""
+
+    def _validate(self) -> None:
+        """Valida campos obrigatórios."""
         if not self.mongo_connection_string:
             raise ValueError("MONGO_CONNECTION_STRING é obrigatória")
-        
         if not self.mongo_database_name:
             raise ValueError("MONGO_DATABASE_NAME é obrigatório")

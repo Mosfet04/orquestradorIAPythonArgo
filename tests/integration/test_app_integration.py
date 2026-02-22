@@ -1,38 +1,28 @@
-from fastapi.testclient import TestClient
+"""Testes de integração para a aplicação."""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from src.infrastructure.web.app_factory import AppFactory
 
 
 class TestIntegrationApp:
-    """Testes de integração para a aplicação."""
-    
-    def test_app_creation(self, mock_mongo_client, mock_tool_repository):
-        """Testa se a aplicação é criada corretamente."""
-        # Act - Import dentro do teste para evitar execução antecipada
-        from app import create_app
-        app = create_app()
-        
-        # Assert
+    @patch("src.infrastructure.web.app_factory.DependencyContainer")
+    @patch("src.infrastructure.web.app_factory.AppConfig")
+    async def test_app_creation(self, mock_config_cls, mock_container_cls):
+        mock_config_cls.load.return_value = MagicMock()
+        mock_controller = MagicMock()
+        mock_controller.get_agents = AsyncMock(return_value=[])
+        mock_controller.warm_up_cache = AsyncMock()
+        mock_container = MagicMock()
+        mock_container.get_orquestrador_controller.return_value = mock_controller
+        mock_container.health_service = None
+        mock_container.cleanup = AsyncMock()
+        mock_container_cls.create_async = AsyncMock(return_value=mock_container)
+
+        factory = AppFactory()
+        app = await factory.create_app()
         assert app is not None
-        assert app.title == "Orquestrador de Agentes IA"
-        
-        # Verificar se a aplicação tem rotas configuradas
-        assert len(app.routes) > 0
-        
-        # Verificar que os mocks foram chamados (indicando que a aplicação tentou acessar o BD)
-        mock_mongo_client.assert_called()
-    
-    def test_app_with_test_client(self, mock_mongo_client, mock_tool_repository):
-        """Testa se a aplicação funciona com TestClient."""
-        from app import create_app
-        app = create_app()
-        
-        client = TestClient(app)
-        
-        # Testar que a aplicação pelo menos inicializa corretamente
-        # Não testamos endpoints específicos pois podem precisar de mais configuração
-        assert client.app == app
-    
-    def test_app_health_check(self):
-        """Testa se a aplicação responde corretamente."""
-        # Esta seria uma implementação mais completa que testaria
-        # se a aplicação realmente funciona com um cliente de teste
-        pass

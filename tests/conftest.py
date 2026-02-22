@@ -1,87 +1,53 @@
-"""
-Configurações compartilhadas para todos os testes.
-"""
+"""Configurações compartilhadas para todos os testes."""
+
+from __future__ import annotations
+
+import os
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import os
-from unittest.mock import patch, MagicMock
 
 
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_environment():
-    """Configura o ambiente de teste."""
-    # Configurar variáveis de ambiente para testes
+    """Configura variáveis de ambiente para testes."""
     test_env = {
-    # Garantir strings válidas (os.environ não aceita None)
-    'MONGO_CONNECTION_STRING': os.getenv('MONGO_CONNECTION_STRING', 'mongodb://localhost:27017'),
-    'MONGO_DATABASE_NAME': os.getenv('MONGO_DATABASE_NAME', 'testdb'),
-        'APP_TITLE': 'Orquestrador de Agentes IA',
-        'LOG_LEVEL': 'ERROR'  # Reduzir logs durante testes
+        "MONGO_CONNECTION_STRING": os.getenv(
+            "MONGO_CONNECTION_STRING", "mongodb://localhost:27017"
+        ),
+        "MONGO_DATABASE_NAME": os.getenv("MONGO_DATABASE_NAME", "testdb"),
+        "APP_TITLE": "Orquestrador de Agentes IA",
+        "LOG_LEVEL": "ERROR",
     }
-    
     with patch.dict(os.environ, test_env):
         yield
 
 
 @pytest.fixture
-def mock_mongo_client():
-    """Mock para cliente MongoDB."""
-    with patch('src.infrastructure.repositories.mongo_agent_config_repository.MongoClient') as mock_client:
-        # Configurar mock
-        mock_collection = MagicMock()
-        mock_db = MagicMock()
-        mock_client_instance = MagicMock()
-        
-        mock_client.return_value = mock_client_instance
-        mock_client_instance.__getitem__.return_value = mock_db
-        mock_db.__getitem__.return_value = mock_collection
-        
-        # Configurar dados de teste padrão
-        mock_collection.find.return_value = [
-            {
-                "id": "test-agent-1",
-                "nome": "Agente Teste 1",
-                "model": "llama3.2:latest",
-                "descricao": "Primeiro agente de teste",
-                "prompt": "Você é um assistente útil.",
-                "active": True
-            },
-            {
-                "id": "test-agent-2", 
-                "nome": "Agente Teste 2",
-                "model": "llama3.2:latest",
-                "descricao": "Segundo agente de teste",
-                "prompt": "Você é um especialista em testes.",
-                "active": True
-            }
-        ]
-        
-        mock_collection.find_one.return_value = {
-            "id": "test-agent-1",
-            "nome": "Agente Teste 1",
-            "model": "llama3.2:latest",
-            "descricao": "Primeiro agente de teste",
-            "prompt": "Você é um assistente útil.",
-            "active": True
-        }
-        
-        yield mock_client
+def mock_logger():
+    """Mock para ILogger."""
+    logger = MagicMock()
+    logger.info = MagicMock()
+    logger.warning = MagicMock()
+    logger.error = MagicMock()
+    logger.debug = MagicMock()
+    return logger
+
+
+@pytest.fixture
+def mock_agent_config_repository():
+    """Mock assíncrono para IAgentConfigRepository."""
+    repo = AsyncMock()
+    repo.get_active_agents = AsyncMock(return_value=[])
+    repo.get_agent_by_id = AsyncMock(return_value=None)
+    return repo
 
 
 @pytest.fixture
 def mock_tool_repository():
-    """Mock para repositório de ferramentas."""
-    with patch('src.infrastructure.repositories.mongo_tool_repository.MongoClient') as mock_client:
-        # Configurar mock similar ao acima
-        mock_collection = MagicMock()
-        mock_db = MagicMock()
-        mock_client_instance = MagicMock()
-        
-        mock_client.return_value = mock_client_instance
-        mock_client_instance.__getitem__.return_value = mock_db
-        mock_db.__getitem__.return_value = mock_collection
-        
-        # Dados de teste para ferramentas
-        mock_collection.find.return_value = []
-        
-        yield mock_client
+    """Mock assíncrono para IToolRepository."""
+    repo = AsyncMock()
+    repo.get_tools_by_ids = AsyncMock(return_value=[])
+    repo.get_all_active_tools = AsyncMock(return_value=[])
+    repo.get_tool_by_id = AsyncMock(return_value=None)
+    return repo
