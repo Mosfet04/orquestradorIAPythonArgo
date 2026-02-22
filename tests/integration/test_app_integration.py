@@ -12,7 +12,7 @@ from src.infrastructure.web.app_factory import AppFactory
 class TestIntegrationApp:
     @patch("src.infrastructure.web.app_factory.DependencyContainer")
     @patch("src.infrastructure.web.app_factory.AppConfig")
-    async def test_app_creation(self, mock_config_cls, mock_container_cls):
+    def test_app_creation(self, mock_config_cls, mock_container_cls):
         mock_config_cls.load.return_value = MagicMock()
         mock_controller = MagicMock()
         mock_controller.get_agents = AsyncMock(return_value=[])
@@ -24,5 +24,5 @@ class TestIntegrationApp:
         mock_container_cls.create_async = AsyncMock(return_value=mock_container)
 
         factory = AppFactory()
-        app = await factory.create_app()
+        app = factory.create_app()
         assert app is not None

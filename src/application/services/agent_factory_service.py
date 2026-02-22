@@ -135,7 +135,8 @@ class AgentFactoryService:
             return
         doc_path = f"docs/{doc_name}"
         try:
-            knowledge.load_document(path=doc_path)
+            knowledge.insert(path=doc_path, skip_if_exists=True)
+            self._logger.info("Documento RAG inserido", path=doc_path)
         except FileNotFoundError:
             self._logger.warning(
                 "Documento não encontrado", path=doc_path

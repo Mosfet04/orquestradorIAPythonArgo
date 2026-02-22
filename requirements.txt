@@ -1,10 +1,11 @@
-# pylint: skip-file
+﻿# pylint: skip-file
 # === Core AI Framework ===
 agno>=2.5.3
 
 # === Web Framework ===
 fastapi>=0.115.0
 uvicorn>=0.34.0
+python-dotenv>=1.0.0
 
 # === Database ===
 motor>=3.7.0
@@ -35,3 +36,6 @@ importlib-metadata>=8.0.0
 pytest>=8.4.0
 pytest-asyncio>=0.25.0
 pytest-cov>=6.0.0
+
+# === AG-UI Protocol (interface AGUI para os.agno.com) ===
+ag-ui-protocol>=0.1.13

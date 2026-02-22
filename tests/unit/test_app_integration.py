@@ -28,34 +28,25 @@ class TestAppFactory:
     async def test_create_app_no_agents(self, mock_container):
         """Sem agentes, retorna FastAPI base (sem AgentOS)."""
         factory = AppFactory()
-        with patch.object(
-            AppFactory, "_lifespan", return_value=_null_lifespan()
-        ):
-            factory._container = mock_container
-            app = await factory.create_app()
-            assert app is not None
+        factory._container = mock_container
+        app = factory.create_app()
+        assert app is not None
 
     async def test_health_endpoint(self, mock_container):
         factory = AppFactory()
-        with patch.object(
-            AppFactory, "_lifespan", return_value=_null_lifespan()
-        ):
-            factory._container = mock_container
-            app = await factory.create_app()
+        factory._container = mock_container
+        app = factory.create_app()
 
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/health")
+            resp = await client.get("/admin/health")
             assert resp.status_code == 200
             assert resp.json()["status"] == "healthy"
 
     async def test_cache_metrics_endpoint(self, mock_container):
         factory = AppFactory()
-        with patch.object(
-            AppFactory, "_lifespan", return_value=_null_lifespan()
-        ):
-            factory._container = mock_container
-            app = await factory.create_app()
+        factory._container = mock_container
+        app = factory.create_app()
 
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -64,11 +55,8 @@ class TestAppFactory:
 
     async def test_refresh_cache_endpoint(self, mock_container):
         factory = AppFactory()
-        with patch.object(
-            AppFactory, "_lifespan", return_value=_null_lifespan()
-        ):
-            factory._container = mock_container
-            app = await factory.create_app()
+        factory._container = mock_container
+        app = factory.create_app()
 
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
