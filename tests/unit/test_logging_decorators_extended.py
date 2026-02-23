@@ -110,14 +110,14 @@ class TestLogHttpRequest:
 class TestLogExecutionExtras:
     def test_mask_sensitive_kwargs(self):
         @log_execution(include_args=True, mask_sensitive=True)
-        def fn(password="FAKE_PASS_FOR_TEST", data="safe"):  # noqa: S107
+        def fn(password=None, data="safe"):
             return True
 
         assert fn(password="s3cret_test", data="value") is True
 
     def test_no_masking(self):
         @log_execution(include_args=True, mask_sensitive=False)
-        def fn(password="FAKE_PASS_FOR_TEST"):  # noqa: S107
+        def fn(password=None):
             return True
 
         assert fn(password="plain_test") is True
