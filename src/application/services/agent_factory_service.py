@@ -171,6 +171,10 @@ class AgentFactoryService:
             enable_agentic_memory=config.user_memory_active,
             enable_user_memories=config.user_memory_active,
             enable_session_summaries=config.summary_active,
+            # ── persistência de mensagens ──
+            store_history_messages=True,
+            store_tool_messages=True,
+            store_events=True,
             tools=tools or None,
             knowledge=knowledge,
             search_knowledge=bool(knowledge),

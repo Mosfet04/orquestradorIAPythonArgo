@@ -86,3 +86,15 @@ class TestAgentFactoryService:
         config = _make_config(rag_config=rag)
         agent = await service.create_agent(config)
         assert agent is not None
+
+    @patch("src.application.services.agent_factory_service.Agent")
+    @patch("src.application.services.agent_factory_service.MongoAgentDb")
+    async def test_create_agent_enables_message_persistence(self, mock_db, mock_agent, service):
+        mock_agent.return_value = MagicMock()
+        config = _make_config()
+        await service.create_agent(config)
+
+        call_kwargs = mock_agent.call_args[1]
+        assert call_kwargs["store_history_messages"] is True
+        assert call_kwargs["store_tool_messages"] is True
+        assert call_kwargs["store_events"] is True

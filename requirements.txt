@@ -28,6 +28,11 @@ structlog>=24.0.0
 rich>=13.9.0
 psutil>=5.9.0
 
+# === Tracing / OpenTelemetry ===
+opentelemetry-api>=1.30.0
+opentelemetry-sdk>=1.30.0
+openinference-instrumentation-agno>=0.1.28
+
 # === Utilities ===
 packaging>=24.0
 importlib-metadata>=8.0.0

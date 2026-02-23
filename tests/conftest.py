@@ -51,3 +51,12 @@ def mock_tool_repository():
     repo.get_all_active_tools = AsyncMock(return_value=[])
     repo.get_tool_by_id = AsyncMock(return_value=None)
     return repo
+
+
+@pytest.fixture
+def mock_team_config_repository():
+    """Mock assíncrono para ITeamConfigRepository."""
+    repo = AsyncMock()
+    repo.get_active_teams = AsyncMock(return_value=[])
+    repo.get_team_by_id = AsyncMock(return_value=None)
+    return repo
