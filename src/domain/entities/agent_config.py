@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, List
 from src.domain.entities.rag_config import RagConfig
 
 
@@ -9,12 +9,12 @@ class AgentConfig:
     
     id: str
     nome: str
-    factoryIaModel: str
+    factory_ia_model: str
     model: str
     descricao: str
     prompt: str
-    tools_ids: Optional[list[str]] = None
-    rag_config: Optional[RagConfig]= None
+    tools_ids: Optional[List[str]] = None
+    rag_config: Optional[RagConfig] = None
     user_memory_active: bool = False
     summary_active: bool = False
     active: bool = True
@@ -26,5 +26,5 @@ class AgentConfig:
             raise ValueError("Nome do agente não pode estar vazio")
         if not self.model:
             raise ValueError("Modelo do agente não pode estar vazio")
-        if not self.factoryIaModel:
+        if not self.factory_ia_model:
             raise ValueError("Factory do modelo do agente não pode estar vazio")

@@ -2,19 +2,21 @@
 
 <div align="center">
 
-![Python](https://img.shields.io/badge/python-v3.9+-blue.svg)
+![Python](https://img.shields.io/badge/python-v3.11+-blue.svg)
 ![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)
 ![MongoDB](https://img.shields.io/badge/MongoDB-%234ea94b.svg?style=for-the-badge&logo=mongodb&logoColor=white)
-![agno](https://img.shields.io/badge/agno-AI%20Framework-purple?style=for-the-badge)
+![agno](https://img.shields.io/badge/agno_v2.5-AI%20Framework-purple?style=for-the-badge)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
-*A robust Python application implementing an AI agents orchestrator using Onion Architecture (Clean Architecture), Clean Code principles, and the powerful **[agno](https://github.com/phidatahq/agno)** framework*
+*AI agents orchestrator built with Onion Architecture, SOLID principles, and **[agno v2.5](https://github.com/agno-agi/agno)** — configurable entirely via MongoDB*
 
-**📖 Full Documentation**
+**📖 Full Documentation / Documentação Completa**
 
 🇧🇷 **[Documentação em Português](README.pt-br.md)** | 🇺🇸 **[English Documentation](README.en.md)**
 
 </div>
+
+---
 
 ## 🚀 Quick Start
 
@@ -22,88 +24,94 @@
 # Clone and run
 git clone https://github.com/Mosfet04/orquestradorIAPythonArgo.git
 cd orquestradorIAPythonArgo
+python -m venv .venv && .venv\Scripts\Activate.ps1  # Windows
+# source .venv/bin/activate                          # Linux/macOS
 pip install -r requirements.txt
+cp .env.example .env  # configure MongoDB + API keys
 python app.py
 ```
 
-**Access:**
-- 🌐 API Documentation: http://localhost:7777/docs
-- 🎮 Interactive Playground: http://localhost:7777/playground
-- ❤️ Health Check: http://localhost:7777/health
+**Or with Docker:**
+```bash
+docker-compose up -d
+```
 
-## 🏗️ Architecture Overview
+**Access:**
+- 🌐 API Docs: http://localhost:7777/docs
+- 🤖 Agents: http://localhost:7777/agents
+- ❤️ Health: http://localhost:7777/health
+- 🖥️ Frontend: [os.agno.com](https://os.agno.com) → Endpoint: `http://localhost:7777`
+
+## 🏗️ Architecture
 
 ```mermaid
 graph TB
     subgraph "🎯 Domain"
-        E[Entities]
-        R[Repositories]
+        E["Entities<br/>(AgentConfig, Tool, RagConfig)"]
+        P["Ports & Repository Interfaces"]
     end
-    
+
     subgraph "📋 Application"
-        UC[Use Cases]
-        S[Services]
+        UC["Use Cases"]
+        S["Services<br/>(AgentFactory, ModelFactory)"]
     end
-    
+
     subgraph "🔧 Infrastructure"
-        DB[(MongoDB)]
-        HTTP[HTTP Tools]
+        DB["MongoDB Repositories"]
+        WEB["AppFactory + AgentOS"]
+        DI["DependencyContainer"]
     end
-    
+
     subgraph "🌐 Presentation"
-        API[FastAPI]
-        PG[Playground]
+        CTRL["OrquestradorController"]
     end
-    
-    API --> UC
-    PG --> UC
-    UC --> S
-    S --> E
-    S --> R
-    DB --> R
-    HTTP --> R
+
+    CTRL --> UC --> S --> E
+    S --> P
+    DB -.->|implements| P
+    DI --> CTRL & S & DB
+    WEB --> DI
+
+    style E fill:#e1f5fe
+    style UC fill:#f3e5f5
+    style CTRL fill:#e8f5e9
 ```
 
 ## ✨ Key Features
 
-- 🤖 **Multi-Agent Management** with RAG support powered by **agno**
-- 🛠️ **Dynamic Configuration** - Zero-code agent and tools management via MongoDB
-- 🧠 **Multiple AI Model Providers** (Ollama, OpenAI, Azure, etc.)
-- 💾 **Intelligent Memory System** with conversation summaries and user profiling
-- 🎮 **Interactive Web Playground** for testing and experimentation
-- 🌐 **RESTful API** with comprehensive FastAPI endpoints
-- 📊 **Structured Logging** and observability features
-- 🧪 **Enterprise-Grade Testing** suite with high coverage
-- 🏗️ **Clean Architecture** implementation following SOLID principles
+- 🤖 **Multi-Agent** — Multiple AI agents with their own models, tools, and RAG
+- 🛠️ **Zero-Code Config** — Add agents and tools via MongoDB only
+- 🧠 **6 Providers** — Ollama, OpenAI, Anthropic, Gemini, Groq, Azure
+- 📚 **RAG** — Document embeddings persisted in MongoDB
+- 💾 **Smart Memory** — User long-term memory + session summaries
+- 🌐 **AgentOS + AG-UI** — Web UI via [os.agno.com](https://os.agno.com) with SSE streaming
+- 🧪 **89 Tests** — Comprehensive unit test coverage
+- 🏗️ **Onion Architecture** — Clean separation with SOLID principles
 
 ## 📚 Documentation
 
-For complete documentation, choose your language:
+Choose your language for the complete guide (architecture, configuration, database schemas, developer guide, troubleshooting):
 
 ### 🇧🇷 Português
-- **[README Completo em Português](README.pt-br.md)** - Documentação detalhada em português
-- Inclui guias para desenvolvedores iniciantes e experientes
-- Diagramas de arquitetura e fluxo de dados
-- Exemplos práticos e configurações
+**[README Completo em Português](README.pt-br.md)** — Documentação detalhada incluindo arquitetura, configuração MongoDB, guia de desenvolvimento, troubleshooting e diagramas Mermaid.
 
 ### 🇺🇸 English
-- **[Complete English README](README.en.md)** - Detailed documentation in English
-- Includes guides for junior and senior developers
-- Architecture and data flow diagrams
-- Practical examples and configurations
+**[Complete English README](README.en.md)** — Full documentation including architecture, MongoDB setup, developer guide, troubleshooting, and Mermaid diagrams.
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please read our documentation for guidelines on how to contribute to this project.
+1. Fork → Branch → Commit (conventional) → PR
+2. Run `pytest` (89 tests must pass)
+3. Follow Onion Architecture — no infrastructure imports in domain
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT — see [LICENSE](LICENSE).
 
 ---
 
 <div align="center">
 
-**Made with ❤️ using Clean Architecture principles**
+Made with ❤️ by [Mateus Meireles Ribeiro](https://github.com/Mosfet04)
 
 </div>

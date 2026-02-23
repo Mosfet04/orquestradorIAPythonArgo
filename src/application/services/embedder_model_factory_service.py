@@ -1,215 +1,92 @@
-from typing import Dict, Any, Type
+"""Factory de modelos embedder para RAG — agno v2.5."""
+
+from __future__ import annotations
+
 import os
+from typing import Any, Dict, List, Type
+
+from src.domain.ports import ILogger
 
 
 class EmbedderModelFactory:
-    """Factory responsável por criar instâncias de modelos de IA para embedder rag baseado no tipo especificado."""
-    
-    @classmethod
-    def _get_model_class(cls, factory_type: str) -> Type:
-        """
-        Retorna a classe do modelo baseado no tipo, com import dinâmico.
-        
-        Args:
-            factory_type: Tipo do modelo normalizado
-            
-        Returns:
-            Classe do modelo
-            
-        Raises:
-            ValueError: Se o modelo não for suportado ou não puder ser importado
-        """
-        # Normalização e aliases
-        ft = (factory_type or "").lower().strip()
-        aliases = {"google": "gemini", "azureopenai": "azure"}
-        ft = aliases.get(ft, ft)
+    """Cria instâncias de embedders para RAG baseado no tipo especificado."""
 
-        # Caso simples sem import dinâmico pesado
+    _ALIASES: Dict[str, str] = {"google": "gemini", "azureopenai": "azure"}
+
+    # agno v2.5: agno.embedder.* → agno.knowledge.embedder.*
+    _IMPORT_SPECS: Dict[str, tuple[str, str, str, str]] = {
+        "ollama": (
+            "agno.knowledge.embedder.ollama", "OllamaEmbedder", "agno", "Ollama"
+        ),
+        "openai": (
+            "agno.knowledge.embedder.openai", "OpenAIEmbedder", "openai", "OpenAI"
+        ),
+        "gemini": (
+            "agno.knowledge.embedder.google", "GeminiEmbedder", "google-genai", "Gemini"
+        ),
+        "azure": (
+            "agno.knowledge.embedder.azure_openai", "AzureOpenAIEmbedder", "openai",
+            "Azure OpenAI",
+        ),
+    }
+
+    def __init__(self, logger: ILogger) -> None:
+        self._logger = logger
+
+    # ── public ──────────────────────────────────────────────────────
+
+    def create_model(self, factory_ia_model: str, model_id: str, **kwargs: Any) -> Any:
+        """Cria uma instância do embedder."""
+        ft = self._normalize(factory_ia_model)
+        self._validate_inputs(ft, model_id)
+        model_class = self._get_model_class(ft)
+        api_key = kwargs.get("api_key") or os.getenv(f"{ft.upper()}_API_KEY")
+
+        filtered = {k: v for k, v in kwargs.items() if k != "api_key"}
         if ft == "ollama":
-            try:
-                module = __import__("agno.embedder.ollama", fromlist=["OllamaEmbedder"])
-                return getattr(module, "OllamaEmbedder")
-            except Exception as e:
-                raise ValueError(
-                    f"Não foi possível importar o modelo '{factory_type}'. "
-                    f"Erro: {str(e)}"
-                )
+            return model_class(id=model_id, **filtered)
+        if not api_key:
+            raise ValueError(f"{ft.upper()}_API_KEY não configurado")
+        return model_class(id=model_id, api_key=api_key, **filtered)
 
-        # Mapa de import por provider
-        import_specs = {
-            "openai": ("agno.embedder.openai", "OpenAIEmbedder", "openai", "OpenAI"),
-            "gemini": ("agno.embedder.google", "GeminiEmbedder", "google-genai", "Gemini"),
-            "azure": ("agno.embedder.azure_openai", "AzureOpenAIEmbedder", "openai", "Azure OpenAI"),
-        }
+    @staticmethod
+    def get_supported_models() -> List[str]:
+        return ["ollama", "openai", "gemini", "google", "azure", "azureopenai"]
 
-        if ft not in import_specs:
-            supported_models = ", ".join(cls.get_supported_models())
+    @classmethod
+    def is_supported_model(cls, factory_ia_model: str) -> bool:
+        ft = cls._normalize(factory_ia_model)
+        return ft in cls._IMPORT_SPECS
+
+    # ── private ─────────────────────────────────────────────────────
+
+    @classmethod
+    def _normalize(cls, value: str) -> str:
+        ft = (value or "").lower().strip()
+        return cls._ALIASES.get(ft, ft)
+
+    @staticmethod
+    def _validate_inputs(factory_type: str, model_id: str) -> None:
+        if not factory_type:
+            raise ValueError("Tipo de embedder não pode estar vazio")
+        if not model_id or not model_id.strip():
+            raise ValueError("ID do embedder não pode estar vazio")
+
+    def _get_model_class(self, factory_type: str) -> Type:
+        if factory_type == "gemini" and not os.getenv("GEMINI_API_KEY"):
+            raise ValueError("GEMINI_API_KEY não configurado")
+
+        if factory_type not in self._IMPORT_SPECS:
             raise ValueError(
-                f"Tipo de modelo '{factory_type}' não suportado. "
-                f"Modelos suportados: {supported_models}"
+                f"Embedder '{factory_type}' não suportado. "
+                f"Suportados: {', '.join(self.get_supported_models())}"
             )
 
-        # Pré-validação específica
-        if ft == "gemini":
-            api_key_env = os.getenv("GEMINI_API_KEY")
-            if not api_key_env:
-                raise ValueError("GEMINI_API_KEY não está configurado no ambiente")
-
-        module_path, class_name, pip_pkg, human_name = import_specs[ft]
+        module_path, class_name, pip_pkg, human_name = self._IMPORT_SPECS[factory_type]
         try:
             module = __import__(module_path, fromlist=[class_name])
             return getattr(module, class_name)
         except ImportError:
             raise ValueError(
-                f"Modelo {human_name} não está disponível. "
-                f"Instale as dependências com: pip install {pip_pkg}"
+                f"Embedder {human_name} indisponível. Instale: pip install {pip_pkg}"
             )
-        except Exception as e:
-            raise ValueError(
-                f"Não foi possível importar o modelo '{factory_type}'. "
-                f"Erro: {str(e)}"
-            )
-    
-    @classmethod
-    def create_model(cls, factory_ia_model: str, model_id: str, **kwargs) -> Any:
-        """
-        Cria uma instância do modelo baseado no tipo especificado.
-        
-        Args:
-            factory_ia_model: Tipo do modelo (ex: "ollama", "openai", "gemini")
-            model_id: ID/nome do modelo específico
-            **kwargs: Parâmetros adicionais para configuração do modelo
-            
-        Returns:
-            Instância do modelo configurado
-            
-        Raises:
-            ValueError: Se o tipo de modelo não for suportado
-        """
-        # Normalizar o nome do modelo para lowercase
-        factory_type = factory_ia_model.lower().strip()
-        
-        # Validar entrada
-        if not factory_type:
-            raise ValueError("Tipo de modelo não pode estar vazio")
-        
-        if not model_id or not model_id.strip():
-            raise ValueError("ID do modelo não pode estar vazio")
-        
-        # Obter a classe do modelo
-        model_class = cls._get_model_class(factory_type)
-        
-        try:
-            api_key = kwargs.get('api_key') or os.getenv(f"{factory_type.upper()}_API_KEY")
-            if factory_type == "ollama":
-                # Para Ollama, não precisamos de API key, mas podemos passar outros kwargs
-                return model_class(id=model_id, **kwargs)
-            else:
-                # Para outros modelos, precisamos da API key
-                if not api_key:
-                    raise ValueError(f"{factory_type.upper()}_API_KEY não está configurado no ambiente")
-                
-                # Remover api_key dos kwargs se estiver presente visto que foi capturado acima
-                filtered_kwargs = {k: v for k, v in kwargs.items() if k != 'api_key'}
-                return model_class(id=model_id, api_key=api_key, **filtered_kwargs)
-                
-        except Exception as e:
-            raise ValueError(
-                f"Erro ao criar modelo {factory_ia_model} com ID '{model_id}': {str(e)}"
-            )
-    
-    @classmethod
-    def get_supported_models(cls) -> list[str]:
-        """Retorna lista dos tipos de modelos suportados."""
-        return [
-            "ollama",
-            "openai", 
-            "gemini",
-            "google",  # alias para gemini
-            "azure",
-            "azureopenai"  # alias para azure
-        ]
-    
-    @classmethod
-    def get_available_models(cls) -> Dict[str, bool]:
-        """
-        Retorna um dicionário com todos os modelos suportados e sua disponibilidade.
-        
-        Returns:
-            Dict[str, bool]: Chave = nome do modelo, Valor = disponível (True/False)
-        """
-        models_availability = {}
-        
-        for model_type in cls.get_supported_models():
-            try:
-                cls._get_model_class(model_type)
-                models_availability[model_type] = True
-            except ValueError:
-                models_availability[model_type] = False
-                
-        return models_availability
-    
-    @classmethod
-    def is_supported_model(cls, factory_ia_model: str) -> bool:
-        """Verifica se um tipo de modelo é suportado."""
-        factory_type = factory_ia_model.lower().strip()
-        return factory_type in cls.get_supported_models()
-    
-    @classmethod
-    def is_available_model(cls, factory_ia_model: str) -> bool:
-        """Verifica se um tipo de modelo está disponível (dependências instaladas)."""
-        factory_type = factory_ia_model.lower().strip()
-        try:
-            cls._get_model_class(factory_type)
-            return True
-        except ValueError:
-            return False
-    
-    @classmethod
-    def validate_model_config(cls, factory_ia_model: str, model_id: str) -> Dict[str, Any]:
-        """
-        Valida a configuração do modelo sem criar a instância.
-        
-        Args:
-            factory_ia_model: Tipo do modelo
-            model_id: ID do modelo
-            
-        Returns:
-            Dict com informações de validação
-        """
-        result = {
-            "valid": True,
-            "factory_type": factory_ia_model.lower().strip(),
-            "model_id": model_id,
-            "supported": False,
-            "available": False,
-            "errors": []
-        }
-        
-        # Verificar se o tipo é suportado
-        if not cls.is_supported_model(factory_ia_model):
-            result["valid"] = False
-            supported_models = ", ".join(cls.get_supported_models())
-            result["errors"].append(
-                f"Tipo de modelo '{factory_ia_model}' não suportado. "
-                f"Modelos suportados: {supported_models}"
-            )
-        else:
-            result["supported"] = True
-        
-        # Verificar se o model_id não está vazio
-        if not model_id or not model_id.strip():
-            result["valid"] = False
-            result["errors"].append("ID do modelo não pode estar vazio")
-        
-        # Tentar validar se o modelo pode ser importado
-        if result["supported"]:
-            try:
-                cls._get_model_class(result["factory_type"])
-                result["available"] = True
-            except ValueError as e:
-                result["valid"] = False
-                result["available"] = False
-                result["errors"].append(str(e))
-        
-        return result

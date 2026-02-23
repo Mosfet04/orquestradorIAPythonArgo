@@ -75,3 +75,7 @@ build/
 
 # Jupyter Notebooks
 .ipynb_checkpoints/
+
+
+#Ignore vscode AI rules
+.github\instructions\codacy.instructions.md

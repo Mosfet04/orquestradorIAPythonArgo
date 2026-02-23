@@ -1,13 +1,12 @@
-"""
-Serviço de cache para modelos de IA na camada de Infrastructure.
+"""Serviço de cache para modelos de IA na camada de Infrastructure."""
 
-Este serviço implementa um cache otimizado com TTL para modelos de IA,
-seguindo os princípios da Onion Architecture.
-"""
+from __future__ import annotations
+
 import asyncio
-from datetime import datetime, timedelta
-from typing import Dict, Optional, Any, Callable
-from src.infrastructure.logging import app_logger
+from datetime import datetime, timedelta, timezone
+from typing import Any, Callable, Dict, Optional
+
+from src.domain.ports import ILogger
 
 
 class ModelCacheEntry:
@@ -15,31 +14,32 @@ class ModelCacheEntry:
     
     def __init__(self, model: Any, ttl_minutes: int = 30):
         self.model = model
-        self.created_at = datetime.utcnow()
+        self.created_at = datetime.now(timezone.utc)
         self.ttl = timedelta(minutes=ttl_minutes)
         self.hit_count = 0
         self.last_access = self.created_at
-    
+
     def is_expired(self) -> bool:
         """Verifica se a entrada expirou."""
-        return datetime.utcnow() > (self.created_at + self.ttl)
-    
+        return datetime.now(timezone.utc) > (self.created_at + self.ttl)
+
     def access(self) -> Any:
         """Acessa o modelo e atualiza métricas."""
         self.hit_count += 1
-        self.last_access = datetime.utcnow()
+        self.last_access = datetime.now(timezone.utc)
         return self.model
 
 
 class ModelCacheService:
     """Serviço de cache otimizado para modelos de IA."""
     
-    def __init__(self, ttl_minutes: int = 30):
+    def __init__(self, logger: ILogger, ttl_minutes: int = 30):
         self._cache: Dict[str, ModelCacheEntry] = {}
         self._cache_lock: Optional[asyncio.Lock] = None
         self._ttl_minutes = ttl_minutes
         self._total_hits = 0
         self._total_misses = 0
+        self._logger = logger
     
     def _get_cache_lock(self) -> asyncio.Lock:
         """Obtém o lock de cache, criando-o se necessário."""
@@ -91,8 +91,8 @@ class ModelCacheService:
                 return model
                 
             except Exception as e:
-                app_logger.error("❌ Erro ao criar modelo", 
-                               cache_key=cache_key, error=str(e))
+                self._logger.error("Erro ao criar modelo",
+                                   cache_key=cache_key, error=str(e))
                 raise
     
     async def invalidate(self, cache_key: Optional[str] = None) -> None:
@@ -161,4 +161,4 @@ class ModelCacheService:
         try:
             await asyncio.gather(*tasks, return_exceptions=True)
         except Exception as e:
-            app_logger.warning("⚠️ Erro durante warmup do cache", error=str(e))
+            self._logger.warning("Erro durante warmup do cache", error=str(e))

@@ -1,23 +1,23 @@
-"""
-Ponto de entrada da aplicação FastAPI.
+"""Ponto de entrada da aplicação FastAPI."""
 
-Este arquivo deve conter apenas a configuração mínima de inicialização,
-delegando toda a lógica de criação da aplicação para a camada de Infrastructure.
-"""
-import asyncio
+from dotenv import load_dotenv
+
+load_dotenv()  # carrega .env antes de qualquer acesso a os.getenv()
+
+from src.infrastructure.logging import setup_structlog
 from src.infrastructure.web.app_factory import create_app
-from src.infrastructure.logging import setup_structlog, app_logger
 
-# Configurar logging estruturado na inicialização
+# Configurar logging estruturado
 setup_structlog()
 
-# Criar instância da aplicação
+# Criar app via factory síncrona — uvicorn recebe um objeto ASGI real
 app = create_app()
 
 if __name__ == "__main__":
+    import asyncio
     import uvicorn
-    
-    # Configurações otimizadas do uvicorn
+    from src.infrastructure.logging import app_logger
+
     uvicorn_config = {
         "app": "app:app",
         "host": "127.0.0.1",
@@ -26,16 +26,14 @@ if __name__ == "__main__":
         "workers": 1,
         "access_log": False,
         "log_level": "info",
-        "backlog": 2048,
-        "h11_max_incomplete_event_size": 16384
     }
-    
+
     try:
-        import uvloop
+        import uvloop  # noqa: F401
         uvicorn_config["loop"] = "uvloop"
     except ImportError:
-        app_logger.info("⚠️ uvloop não disponível, usando loop padrão")
-    
+        app_logger.info("uvloop não disponível, usando loop padrão")
+
     config = uvicorn.Config(**uvicorn_config)
     server = uvicorn.Server(config)
     asyncio.run(server.serve())

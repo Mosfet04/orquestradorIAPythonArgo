@@ -9,4 +9,4 @@ class RagConfig:
     active: bool = False
     doc_name: Optional[str] = None
     model: Optional[str] = None
-    factoryIaModel: Optional[str] = None
+    factory_ia_model: Optional[str] = None

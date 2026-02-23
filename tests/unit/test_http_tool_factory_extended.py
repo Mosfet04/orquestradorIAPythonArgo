@@ -1,248 +1,231 @@
-from unittest.mock import Mock, patch
-from src.application.services.http_tool_factory_service import HttpToolFactory
-from src.domain.entities.tool import Tool, ToolParameter, HttpMethod, ParameterType
+"""Testes estendidos para HttpToolFactory — cobertura de _build_description, _resolve_url, _serialize e http_function."""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import httpx
+import pytest
+
+from src.domain.entities.tool import HttpMethod, ToolParameter, Tool
+from src.infrastructure.http.http_tool_factory import (
+    HttpToolFactory,
+    _resolve_url,
+    _serialize,
+)
 
 
-class TestHttpToolFactory:
-    """Testes unitários para HttpToolFactory com foco em aumentar cobertura."""
-    
-    def setup_method(self):
-        """Setup executado antes de cada teste."""
-        self.factory = HttpToolFactory()
-    
-    def test_create_tools_from_configs_with_empty_list(self):
-        """Testa criação de tools com lista vazia."""
-        # Arrange
-        tools = []
-        
-        # Act
-        result = self.factory.create_tools_from_configs(tools)
-        
-        # Assert
-        assert result == []
-    
-    def test_create_tools_from_configs_with_error_in_one_tool(self):
-        """Testa que erros em uma tool não afetam as outras."""
-        # Arrange
-        valid_tool = Tool(
-            id="valid_tool",
-            name="Valid Tool",
-            description="A valid tool",
-            route="http://example.com/api/test",
-            http_method=HttpMethod.GET,
-            parameters=[]
+@pytest.fixture
+def factory(mock_logger):
+    return HttpToolFactory(logger=mock_logger)
+
+
+def _make_tool(**overrides) -> Tool:
+    defaults = dict(
+        id="test-tool",
+        name="Test Tool",
+        description="Ferramenta de teste",
+        route="http://example.com/api/test",
+        http_method=HttpMethod.GET,
+        parameters=[],
+    )
+    defaults.update(overrides)
+    return Tool(**defaults)
+
+
+# ── _resolve_url ────────────────────────────────────────────────────
+
+
+class TestResolveUrl:
+    def test_no_placeholders(self):
+        url, remaining = _resolve_url("http://example.com/api", {"q": "hello"})
+        assert url == "http://example.com/api"
+        assert remaining == {"q": "hello"}
+
+    def test_with_placeholder(self):
+        url, remaining = _resolve_url(
+            "http://example.com/api/{user_id}",
+            {"param": '{"user_id": "123"}'},
         )
-        
-        # Simular erro ao criar a segunda tool usando mock
-        tools = [valid_tool]
-        
-        # Act
-        with patch.object(self.factory, '_create_agno_tool') as mock_create:
-            mock_create.side_effect = [Mock(), Exception("Test error")]
-            # Simular duas tools, mas criar apenas uma válida
-            result = self.factory.create_tools_from_configs(tools)
-        
-        # Assert
-        assert len(result) == 1  # Apenas a tool válida
-    
-    @patch('src.application.services.http_tool_factory_service.Toolkit')
-    def test_create_agno_tool_with_minimal_config(self, mock_toolkit):
-        """Testa criação de tool com configuração mínima."""
-        # Arrange
-        tool = Tool(
-            id="test_tool",
-            name="Test Tool",
-            description="Test description",
-            route="http://example.com/api/test",
-            http_method=HttpMethod.GET,
-            parameters=[]
+        assert url == "http://example.com/api/123"
+        assert "param" not in remaining
+
+    def test_non_dict_value(self):
+        url, remaining = _resolve_url(
+            "http://example.com/api",
+            {"key": "simple_value"},
         )
-        
-        mock_toolkit_instance = Mock()
-        mock_toolkit.return_value = mock_toolkit_instance
-        
-        # Act
-        result = self.factory._create_agno_tool(tool)
-        
-        # Assert
-        assert result == mock_toolkit_instance
-        mock_toolkit.assert_called_once()
-    
-    @patch('src.application.services.http_tool_factory_service.Toolkit')
-    def test_create_agno_tool_with_post_method(self, mock_toolkit):
-        """Testa criação de tool com método POST."""
-        # Arrange
-        param = ToolParameter(
-            name="data",
-            description="Request data",
-            type=ParameterType.OBJECT,
-            required=True
+        assert url == "http://example.com/api"
+        assert remaining == {"key": "simple_value"}
+
+    def test_invalid_literal(self):
+        url, remaining = _resolve_url(
+            "http://example.com/api",
+            {"key": "not a dict {bad}"},
         )
-        
-        tool = Tool(
-            id="post_tool",
-            name="POST Tool",
-            description="Tool for POST requests",
-            route="http://example.com/api/create",
-            http_method=HttpMethod.POST,
-            parameters=[param],
-            headers={"Authorization": "Bearer token"}
-        )
-        
-        mock_toolkit_instance = Mock()
-        mock_toolkit.return_value = mock_toolkit_instance
-        
-        # Act
-        result = self.factory._create_agno_tool(tool)
-        
-        # Assert
-        assert result == mock_toolkit_instance
-    
-    @patch('src.application.services.http_tool_factory_service.Toolkit')
-    def test_create_agno_tool_with_put_method(self, mock_toolkit):
-        """Testa criação de tool com método PUT."""
-        # Arrange
-        tool = Tool(
-            id="put_tool",
-            name="PUT Tool",
-            description="Tool for PUT requests",
-            route="http://example.com/api/update/{id}",
-            http_method=HttpMethod.PUT,
-            parameters=[]
-        )
-        
-        mock_toolkit_instance = Mock()
-        mock_toolkit.return_value = mock_toolkit_instance
-        
-        # Act
-        result = self.factory._create_agno_tool(tool)
-        
-        # Assert
-        assert result == mock_toolkit_instance
-    
-    @patch('src.application.services.http_tool_factory_service.Toolkit')
-    def test_create_agno_tool_with_delete_method(self, mock_toolkit):
-        """Testa criação de tool com método DELETE."""
-        # Arrange
-        tool = Tool(
-            id="delete_tool",
-            name="DELETE Tool",
-            description="Tool for DELETE requests",
-            route="http://example.com/api/delete/{id}",
-            http_method=HttpMethod.DELETE,
-            parameters=[]
-        )
-        
-        mock_toolkit_instance = Mock()
-        mock_toolkit.return_value = mock_toolkit_instance
-        
-        # Act
-        result = self.factory._create_agno_tool(tool)
-        
-        # Assert
-        assert result == mock_toolkit_instance
-    
-    def test_create_function_description_with_parameters(self):
-        """Testa criação de descrição de função com parâmetros."""
-        # Arrange
-        param1 = ToolParameter(
-            name="id",
-            description="User ID",
-            type=ParameterType.INTEGER,
-            required=True
-        )
-        param2 = ToolParameter(
-            name="name",
-            description="User name",
-            type=ParameterType.STRING,
-            required=False
-        )
-        
-        tool = Tool(
-            id="test_tool",
-            name="Test Tool",
-            description="Test description",
-            route="http://example.com/api/users/{id}",
-            http_method=HttpMethod.GET,
-            parameters=[param1, param2]
-        )
-        
-        # Act
-        description = self.factory._create_function_description(tool)
-        
-        # Assert
-        assert "Test description" in description
-        assert "Parâmetros disponíveis:" in description  # Texto correto em português
-        assert "id: User ID (obrigatório)" in description
-        assert "name: User name (opcional)" in description
-    
-    def test_create_function_description_without_parameters(self):
-        """Testa criação de descrição de função sem parâmetros."""
-        # Arrange
-        tool = Tool(
-            id="test_tool",
-            name="Test Tool",
-            description="Test description",
-            route="http://example.com/api/test",
-            http_method=HttpMethod.GET,
-            parameters=[]
-        )
-        
-        # Act
-        description = self.factory._create_function_description(tool)
-        
-        # Assert
-        assert "Test description" in description
-        assert "Rota: GET http://example.com/api/test" in description  # O método adiciona informações da rota
-    
-    def test_create_parameters_schema_with_various_types(self):
-        """Testa criação de schema de parâmetros com vários tipos."""
-        # Arrange
-        tool = Tool(
-            id="test_tool",
-            name="Test Tool",
-            description="Test description",
-            route="http://example.com/api/test",
-            http_method=HttpMethod.POST,
-            parameters=[
-                ToolParameter(name="id", description="ID", type=ParameterType.INTEGER, required=True),
-                ToolParameter(name="name", description="Name", type=ParameterType.STRING, required=False),
-                ToolParameter(name="active", description="Active", type=ParameterType.BOOLEAN, required=True),
-                ToolParameter(name="score", description="Score", type=ParameterType.FLOAT, required=False),
-                ToolParameter(name="tags", description="Tags", type=ParameterType.ARRAY, required=False),
-                ToolParameter(name="metadata", description="Metadata", type=ParameterType.OBJECT, required=False)
-            ]
-        )
-        
-        # Act
-        schema = self.factory._create_parameters_schema(tool)
-        
-        # Assert
-        assert schema["type"] == "object"
-        assert "properties" in schema
-        assert "required" in schema
-        
-        # Verificar tipos mapeados corretamente
-        assert schema["properties"]["id"]["type"] == "integer"
-        assert schema["properties"]["name"]["type"] == "string"
-        assert schema["properties"]["active"]["type"] == "boolean"
-        assert schema["properties"]["score"]["type"] == "number"
-        assert schema["properties"]["tags"]["type"] == "array"
-        assert schema["properties"]["metadata"]["type"] == "object"
-        
-        # Verificar campos obrigatórios
-        assert "id" in schema["required"]
-        assert "active" in schema["required"]
-        assert "name" not in schema["required"]
-    
-    def test_map_parameter_types(self):
-        """Testa mapeamento de tipos de parâmetros."""
-        # Act & Assert
-        assert self.factory._map_parameter_type("string") == "string"
-        assert self.factory._map_parameter_type("integer") == "integer"
-        assert self.factory._map_parameter_type("float") == "number"
-        assert self.factory._map_parameter_type("boolean") == "boolean"
-        assert self.factory._map_parameter_type("array") == "array"
-        assert self.factory._map_parameter_type("object") == "object"
-        assert self.factory._map_parameter_type("unknown") == "string"
-        assert self.factory._map_parameter_type("") == "string"
+        assert url == "http://example.com/api"
+
+
+# ── _serialize ──────────────────────────────────────────────────────
+
+
+class TestSerialize:
+    def test_json_response(self):
+        resp = MagicMock(spec=httpx.Response)
+        resp.json.return_value = {"status": "ok"}
+        result = _serialize(resp)
+        assert "ok" in result
+
+    def test_text_fallback(self):
+        resp = MagicMock(spec=httpx.Response)
+        resp.json.side_effect = ValueError("not json")
+        resp.text = "plain text"
+        result = _serialize(resp)
+        assert result == "plain text"
+
+
+# ── _build_description ──────────────────────────────────────────────
+
+
+class TestBuildDescription:
+    def test_basic_description(self, factory):
+        tool = _make_tool()
+        desc = factory._build_description(tool)
+        assert "Ferramenta de teste" in desc
+        assert "GET" in desc
+
+    def test_with_instructions(self, factory):
+        tool = _make_tool(instructions="Use com cuidado")
+        desc = factory._build_description(tool)
+        assert "Use com cuidado" in desc
+        assert "Instruções" in desc
+
+    def test_with_parameters(self, factory):
+        params = [
+            ToolParameter(name="query", type="string", description="Search query", required=True),
+            ToolParameter(name="limit", type="integer", description="Max results", required=False),
+        ]
+        tool = _make_tool(parameters=params)
+        desc = factory._build_description(tool)
+        assert "query" in desc
+        assert "(obrigatório)" in desc
+        assert "limit" in desc
+        assert "(opcional)" in desc
+
+
+# ── http_function execution ─────────────────────────────────────────
+
+
+class TestHttpFunction:
+    async def _get_entrypoint(self, factory, tool):
+        """Helper: cria toolkit e retorna o entrypoint da função registrada."""
+        toolkits = await factory.create_tools_from_configs([tool])
+        fn_obj = toolkits[0].async_functions.get("test-tool")
+        assert fn_obj is not None
+        return fn_obj.entrypoint
+
+    async def test_get_request_success(self, factory):
+        tool = _make_tool(http_method=HttpMethod.GET)
+        fn = await self._get_entrypoint(factory, tool)
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"result": "ok"}
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.request = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_cls.return_value = mock_client
+
+            result = await fn(q="test")
+            assert "ok" in result
+
+    async def test_post_request_success(self, factory):
+        tool = _make_tool(http_method=HttpMethod.POST)
+        fn = await self._get_entrypoint(factory, tool)
+
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json.return_value = {"created": True}
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.request = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_cls.return_value = mock_client
+
+            result = await fn(data="payload")
+            assert "created" in result
+
+    async def test_http_status_error(self, factory):
+        tool = _make_tool(http_method=HttpMethod.GET)
+        fn = await self._get_entrypoint(factory, tool)
+
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+        mock_response.text = "Not Found"
+        error = httpx.HTTPStatusError("404", request=MagicMock(), response=mock_response)
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.request = AsyncMock(side_effect=error)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_cls.return_value = mock_client
+
+            result = await fn()
+            assert "Erro HTTP 404" in result
+
+    async def test_request_error(self, factory):
+        tool = _make_tool(http_method=HttpMethod.GET)
+        fn = await self._get_entrypoint(factory, tool)
+
+        error = httpx.RequestError("timeout", request=MagicMock())
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.request = AsyncMock(side_effect=error)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_cls.return_value = mock_client
+
+            result = await fn()
+            assert "Erro na requisição" in result
+
+    async def test_unexpected_error(self, factory):
+        tool = _make_tool(http_method=HttpMethod.GET)
+        fn = await self._get_entrypoint(factory, tool)
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.request = AsyncMock(side_effect=RuntimeError("unexpected"))
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_cls.return_value = mock_client
+
+            result = await fn()
+            assert "Erro inesperado" in result
+
+    async def test_delete_uses_params(self, factory):
+        tool = _make_tool(http_method=HttpMethod.DELETE)
+        fn = await self._get_entrypoint(factory, tool)
+
+        mock_response = MagicMock()
+        mock_response.status_code = 204
+        mock_response.json.return_value = {"deleted": True}
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.request = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_cls.return_value = mock_client
+
+            result = await fn(id="123")
+            assert "deleted" in result
