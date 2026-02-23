@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,7 +9,6 @@ from httpx import ASGITransport, AsyncClient
 
 from src.infrastructure.web.app_factory import (
     AppFactory,
-    _PlaygroundPrefixMiddleware,
     _AGENT_SESSION_RE,
     create_app,
 )

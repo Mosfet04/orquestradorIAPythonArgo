@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
@@ -39,7 +38,7 @@ class TestTeamCacheEntry:
         result = entry.access()
         assert result == teams
         assert entry.hit_count == 1
-        result2 = entry.access()
+        entry.access()
         assert entry.hit_count == 2
 
     def test_not_expired_within_ttl(self):

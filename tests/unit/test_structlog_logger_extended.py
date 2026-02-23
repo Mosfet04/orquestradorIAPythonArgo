@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import os
-from unittest.mock import patch, MagicMock
-
-import pytest
+from unittest.mock import MagicMock
 
 from src.infrastructure.logging.structlog_logger import (
     DataSanitizer,
