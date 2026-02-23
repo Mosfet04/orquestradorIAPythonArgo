@@ -49,13 +49,13 @@ docker-compose up -d
 ```mermaid
 graph TB
     subgraph "🎯 Domain"
-        E["Entities<br/>(AgentConfig, Tool, RagConfig)"]
+        E["Entities<br/>(AgentConfig, TeamConfig, Tool, RagConfig)"]
         P["Ports & Repository Interfaces"]
     end
 
     subgraph "📋 Application"
         UC["Use Cases"]
-        S["Services<br/>(AgentFactory, ModelFactory)"]
+        S["Services<br/>(AgentFactory, TeamFactory, ModelFactory)"]
     end
 
     subgraph "🔧 Infrastructure"
@@ -81,13 +81,14 @@ graph TB
 
 ## ✨ Key Features
 
-- 🤖 **Multi-Agent** — Multiple AI agents with their own models, tools, and RAG
-- 🛠️ **Zero-Code Config** — Add agents and tools via MongoDB only
+- 🤖 **Multi-Agent + Teams** — AI agents and multi-agent Teams with routing, coordination, and broadcast modes
+- 🛠️ **Zero-Code Config** — Add agents, teams, and tools via MongoDB only
 - 🧠 **6 Providers** — Ollama, OpenAI, Anthropic, Gemini, Groq, Azure
 - 📚 **RAG** — Document embeddings persisted in MongoDB
 - 💾 **Smart Memory** — User long-term memory + session summaries
+- 📡 **OpenTelemetry Tracing** — Automatic spans & traces for agents and teams (stored in MongoDB)
 - 🌐 **AgentOS + AG-UI** — Web UI via [os.agno.com](https://os.agno.com) with SSE streaming
-- 🧪 **89 Tests** — Comprehensive unit test coverage
+- 🧪 **179 Tests** — Comprehensive unit test coverage (~88%)
 - 🏗️ **Onion Architecture** — Clean separation with SOLID principles
 
 ## 📚 Documentation
@@ -103,7 +104,7 @@ Choose your language for the complete guide (architecture, configuration, databa
 ## 🤝 Contributing
 
 1. Fork → Branch → Commit (conventional) → PR
-2. Run `pytest` (89 tests must pass)
+2. Run `pytest` (179 tests must pass)
 3. Follow Onion Architecture — no infrastructure imports in domain
 
 ## 📄 License
