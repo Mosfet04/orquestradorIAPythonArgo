@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
 from src.infrastructure.logging.structlog_logger import (
     DataSanitizer,
     LogContext,
