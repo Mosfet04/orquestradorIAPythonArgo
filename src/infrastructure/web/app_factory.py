@@ -147,25 +147,41 @@ class AppFactory:
         )
         return agents
 
-    def _mount_agent_os(self, app: FastAPI, agents: list) -> None:
+    async def _load_teams(self):
+        """Carrega teams ativos (dependem dos agentes em cache)."""
+        controller = self._container.get_orquestrador_controller()
+        teams = await controller.get_teams()
+        self._logger.info(
+            "Lifespan: teams carregados",
+            team_count=len(teams) if teams else 0,
+            team_ids=[t.id for t in teams] if teams else [],
+        )
+        return teams
+
+    def _mount_agent_os(self, app: FastAPI, agents: list, teams: list) -> None:
         """Cria interfaces AG-UI e monta o AgentOS no app base."""
-        interfaces = [AGUI(agent=agent) for agent in agents]
+        agent_interfaces = [AGUI(agent=agent) for agent in agents]
+        team_interfaces = [AGUI(team=team) for team in teams]
+        interfaces = agent_interfaces + team_interfaces
         self._logger.info(
             "Lifespan: montando AgentOS com interfaces AG-UI",
             interface_count=len(interfaces),
         )
         agent_os = AgentOS(
             agents=agents,
+            teams=teams or None,
             interfaces=interfaces,
             cors_allowed_origins=self._ALLOWED_ORIGINS,
             base_app=app,
             on_route_conflict="preserve_base_app",
+            tracing=True
         )
         agent_os.get_app()
         app.openapi_schema = None
         self._logger.info(
             "AgentOS montado com sucesso",
             agent_count=len(agents),
+            team_count=len(teams),
             total_routes=len(app.routes),
         )
 
@@ -176,10 +192,11 @@ class AppFactory:
             self._logger.info("Lifespan: iniciando...")
             await self._ensure_container()
             agents = await self._load_agents()
+            teams = await self._load_teams()
 
-            if agents:
+            if agents or teams:
                 try:
-                    self._mount_agent_os(app, agents)
+                    self._mount_agent_os(app, agents or [], teams or [])
                 except Exception as exc:
                     self._logger.error(
                         "Erro ao montar AgentOS — continuando sem rotas de agente",
@@ -187,7 +204,7 @@ class AppFactory:
                         error=str(exc),
                     )
             else:
-                self._logger.info("Nenhum agente ativo — rodando só endpoints admin")
+                self._logger.info("Nenhum agente ou team ativo — rodando só endpoints admin")
 
             yield
         except Exception as exc:

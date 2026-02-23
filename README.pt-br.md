@@ -6,6 +6,8 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)
 ![MongoDB](https://img.shields.io/badge/MongoDB-%234ea94b.svg?style=for-the-badge&logo=mongodb&logoColor=white)
 ![agno](https://img.shields.io/badge/agno_v2.5-AI%20Framework-purple?style=for-the-badge)
+[![Codacy Badge](https://app.codacy.com/project/badge/Grade/f3eb9c4f1d5e4960a5168e611dba7976)](https://app.codacy.com/gh/Mosfet04/orquestradorIAPythonArgo/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
+[![Codacy Badge](https://app.codacy.com/project/badge/Coverage/f3eb9c4f1d5e4960a5168e611dba7976)](https://app.codacy.com/gh/Mosfet04/orquestradorIAPythonArgo/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_coverage)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
 *Orquestrador de agentes de IA construído com arquitetura Onion (Clean Architecture), princípios SOLID e o framework **[agno v2.5](https://github.com/agno-agi/agno)***
@@ -42,13 +44,15 @@ O **Orquestrador de Agentes IA** é uma aplicação que gerencia e orquestra mú
 
 | Característica | Descrição |
 |---|---|
-| **Configuração Zero-Code** | Agentes, tools e RAG configuráveis apenas no MongoDB |
+| **Configuração Zero-Code** | Agentes, teams, tools e RAG configuráveis apenas no MongoDB |
+| **Multi-Agent Teams** | Teams multi-agente com modos route, coordinate, broadcast e tasks |
 | **Multi-Provider** | Ollama, OpenAI, Anthropic, Gemini, Groq e Azure |
 | **RAG integrado** | Retrieval-Augmented Generation com embeddings persistidos no MongoDB |
 | **Memória inteligente** | Memória de longo prazo com sumários automáticos e perfil de usuário |
+| **OpenTelemetry Tracing** | Spans e traces automáticos para agentes e teams, persistidos no MongoDB |
 | **AgentOS + AG-UI** | Interface web via [os.agno.com](https://os.agno.com) com streaming SSE |
 | **Arquitetura limpa** | Camadas Domain → Application → Infrastructure → Presentation |
-| **89 testes unitários** | Cobertura abrangente de todas as camadas |
+| **179 testes unitários** | Cobertura ~88% de todas as camadas |
 
 ---
 
@@ -116,14 +120,14 @@ A aplicação segue a **Arquitetura Onion** (também chamada Clean Architecture 
 ```mermaid
 graph TB
     subgraph "🎯 Domain - Núcleo"
-        E["Entities<br/>(AgentConfig, Tool, RagConfig)"]
+        E["Entities<br/>(AgentConfig, TeamConfig, Tool, RagConfig)"]
         RP["Ports<br/>(ILogger, IModelFactory,<br/>IEmbedderFactory, IToolFactory)"]
-        RI["Repository Interfaces<br/>(IAgentConfigRepository, IToolRepository)"]
+        RI["Repository Interfaces<br/>(IAgentConfigRepository,<br/>ITeamConfigRepository, IToolRepository)"]
     end
 
     subgraph "📋 Application"
-        UC["Use Cases<br/>(GetActiveAgentsUseCase)"]
-        AS["Services<br/>(AgentFactoryService,<br/>ModelFactory, EmbedderModelFactory)"]
+        UC["Use Cases<br/>(GetActiveAgentsUseCase,<br/>GetActiveTeamsUseCase)"]
+        AS["Services<br/>(AgentFactoryService, TeamFactoryService,<br/>ModelFactory, EmbedderModelFactory)"]
     end
 
     subgraph "🔧 Infrastructure"
@@ -185,6 +189,7 @@ orquestradorIAPythonArgo/
 │   ├── domain/                     # 🎯 CAMADA DE DOMÍNIO (sem dependências externas)
 │   │   ├── entities/
 │   │   │   ├── agent_config.py     #   Entidade: configuração de um agente
+│   │   │   ├── team_config.py      #   Entidade: configuração de um team multi-agente
 │   │   │   ├── tool.py             #   Entidade: ferramenta HTTP (Tool, ToolParameter)
 │   │   │   └── rag_config.py       #   Entidade: configuração de RAG
 │   │   ├── ports/                  #   Contratos (interfaces) para adaptadores
@@ -195,15 +200,18 @@ orquestradorIAPythonArgo/
 │   │   │   └── agent_builder_port.py #   IAgentBuilder
 │   │   └── repositories/          #   Contratos de repositórios
 │   │       ├── agent_config_repository.py  # IAgentConfigRepository
+│   │       ├── team_config_repository.py   # ITeamConfigRepository
 │   │       └── tool_repository.py          # IToolRepository
 │   │
 │   ├── application/                # 📋 CAMADA DE APLICAÇÃO (orquestração)
 │   │   ├── services/
 │   │   │   ├── agent_factory_service.py       # Cria agentes agno a partir de AgentConfig
+│   │   │   ├── team_factory_service.py        # Cria teams agno a partir de TeamConfig
 │   │   │   ├── model_factory_service.py       # Factory de modelos (Ollama, OpenAI, etc.)
 │   │   │   └── embedder_model_factory_service.py # Factory de embedders para RAG
 │   │   └── use_cases/
-│   │       └── get_active_agents_use_case.py  # Busca configs ativas e cria agentes
+│   │       ├── get_active_agents_use_case.py  # Busca configs ativas e cria agentes
+│   │       └── get_active_teams_use_case.py   # Busca configs ativas e cria teams
 │   │
 │   ├── infrastructure/             # 🔧 CAMADA DE INFRAESTRUTURA (implementações)
 │   │   ├── config/
@@ -222,6 +230,7 @@ orquestradorIAPythonArgo/
 │   │   ├── repositories/
 │   │   │   ├── mongo_base.py       #   Classe base para repos MongoDB
 │   │   │   ├── mongo_agent_config_repository.py  # IAgentConfigRepository → MongoDB
+│   │   │   ├── mongo_team_config_repository.py   # ITeamConfigRepository → MongoDB
 │   │   │   └── mongo_tool_repository.py          # IToolRepository → MongoDB
 │   │   ├── web/
 │   │   │   └── app_factory.py      #   AppFactory — cria FastAPI + AgentOS + AGUI
@@ -229,11 +238,11 @@ orquestradorIAPythonArgo/
 │   │
 │   └── presentation/               # 🌐 CAMADA DE APRESENTAÇÃO
 │       └── controllers/
-│           └── orquestrador_controller.py # Cache inteligente de agentes + warm-up
+│       └── orquestrador_controller.py # Cache inteligente de agentes/teams + warm-up
 │
 └── tests/
     ├── conftest.py                 # Fixtures compartilhadas (pytest)
-    └── unit/                       # 89 testes unitários
+    └── unit/                       # 179 testes unitários
         ├── test_agent_config.py
         ├── test_agent_factory_service.py
         ├── test_app_config.py
@@ -284,8 +293,11 @@ sequenceDiagram
     AF->>AF: embedder_factory → cria embedder RAG
     AF->>AF: Monta Agent agno v2.5
     UC-->>F: [Agent, ...]
-    F->>OS: AgentOS(agents, interfaces=[AGUI], base_app)
-    OS->>OS: Registra ~75 rotas
+    F->>MDB: teams_config.find({active: true})
+    MDB-->>F: [TeamConfig, ...]
+    F->>F: TeamFactoryService → cria Teams com agentes como membros
+    F->>OS: AgentOS(agents, teams, interfaces=[AGUI], base_app, tracing=True)
+    OS->>OS: Registra ~75 rotas + setup OpenTelemetry tracing
     Note over U,OS: Servidor pronto na porta 7777
 ```
 
@@ -296,10 +308,12 @@ sequenceDiagram
 ### Funcionalidades Principais
 
 - ✅ **Multi-Agent** — Vários agentes IA rodando simultaneamente, cada um com modelo, tools e RAG próprios
-- ✅ **Configuração Zero-Code** — Adicione agentes, tools e bases RAG apenas no MongoDB
+- ✅ **Multi-Agent Teams** — Teams com modos `route` (roteamento inteligente), `coordinate` (coordenação), `broadcast` (envio a todos) e `tasks` (tarefas atribuídas)
+- ✅ **Configuração Zero-Code** — Adicione agentes, teams, tools e bases RAG apenas no MongoDB
 - ✅ **Multi-Provider** — Ollama, OpenAI, Anthropic, Gemini, Groq e Azure OpenAI
 - ✅ **RAG (Retrieval-Augmented Generation)** — Documentos na pasta `docs/` são embedados e persistidos no MongoDB
-- ✅ **Memória Inteligente** — Memória de usuário e sumários de sessão (configurável por agente)
+- ✅ **Memória Inteligente** — Memória de usuário e sumários de sessão (configurável por agente/team)
+- ✅ **OpenTelemetry Tracing** — Spans e traces automáticos para agentes e teams, persistidos no MongoDB (`agno_traces`, `agno_spans`)
 - ✅ **Custom HTTP Tools** — Integre qualquer API HTTP como ferramenta do agente
 - ✅ **AgentOS + AG-UI** — Interface web via [os.agno.com](https://os.agno.com) com streaming SSE em tempo real
 - ✅ **Cache de Agentes** — TTL de 5 minutos com fallback para cache expirado em caso de erro
@@ -312,8 +326,9 @@ sequenceDiagram
 ```mermaid
 graph LR
     A["📝 Inserir Config<br/>no MongoDB"] --> B["🔄 POST /admin/refresh-cache<br/>ou aguardar TTL 5min"]
-    B --> C["🤖 Agente Ativo<br/>com Tools e RAG"]
+    B --> C["🤖 Agente/Team Ativo<br/>com Tools e RAG"]
     C --> D["💬 Disponível em<br/>os.agno.com"]
+    C --> E["📡 Traces no MongoDB<br/>(agno_traces, agno_spans)"]
 
     style A fill:#e1f5fe
     style C fill:#f3e5f5
@@ -381,6 +396,9 @@ Após o AgentOS montar as rotas, a aplicação expõe ~75 endpoints. Os principa
 | `GET` | `/agents` | Lista todos os agentes ativos |
 | `GET` | `/agents/{agent_id}` | Detalhes de um agente |
 | `POST` | `/agents/{agent_id}/runs` | **Executa o agente** (resposta SSE streaming) |
+| `GET` | `/teams` | Lista todos os teams ativos |
+| `GET` | `/teams/{team_id}` | Detalhes de um team |
+| `POST` | `/teams/{team_id}/runs` | **Executa o team** (resposta SSE streaming) |
 | `GET` | `/sessions` | Lista sessões |
 | `GET` | `/sessions/{session_id}` | Detalhes de uma sessão (histórico de mensagens) |
 | `GET` | `/knowledge/content` | Lista conteúdos RAG indexados |
@@ -440,10 +458,13 @@ O MongoDB é o coração da configuração. Todas as collections estão no datab
 | Collection | Gerenciada por | Descrição |
 |---|---|---|
 | `agents_config` | **Você** (manual) | Configuração de cada agente |
+| `teams_config` | **Você** (manual) | Configuração de cada team multi-agente |
 | `tools` | **Você** (manual) | Definição de ferramentas HTTP |
 | `rag` | **agno** (automático) | Chunks embedados dos documentos RAG |
-| `storage` | **agno** (automático) | Sessões, histórico de runs, métricas |
-| `user_memories` | **agno** (automático) | Memórias de longo prazo por usuário |
+| `agno_sessions` | **agno** (automático) | Sessões, histórico de runs |
+| `agno_memories` | **agno** (automático) | Memórias de longo prazo por usuário |
+| `agno_traces` | **agno** (automático) | Traces OpenTelemetry (execuções completas) |
+| `agno_spans` | **agno** (automático) | Spans OpenTelemetry (operações individuais) |
 
 ### Collection: `agents_config`
 
@@ -521,6 +542,53 @@ Cada documento define uma ferramenta HTTP que agentes podem usar:
   "active": true
 }
 ```
+
+### Collection: `teams_config`
+
+Cada documento define um team multi-agente:
+
+```json
+{
+  "id": "doubt_router",
+  "nome": "Roteador de Dúvidas",
+  "factoryIaModel": "ollama",
+  "model": "qwen3",
+  "descricao": "Team que roteia perguntas para o agente especialista mais adequado.",
+  "prompt": "Analise a pergunta do usuário e delegue para o membro mais adequado. Use member_id com hífens (ex: coding-agent).",
+  "member_ids": ["coding_agent", "general_assistant"],
+  "mode": "route",
+  "user_memory_active": true,
+  "summary_active": false,
+  "active": true
+}
+```
+
+**Campos:**
+
+| Campo | Tipo | Obrigatório | Descrição |
+|---|---|---|---|
+| `id` | string | ✅ | Identificador único do team |
+| `nome` | string | ✅ | Nome de exibição |
+| `factoryIaModel` | string | ✅ | Provider do modelo líder: `ollama`, `openai`, `gemini`, etc. |
+| `model` | string | ✅ | ID do modelo líder (ex: `qwen3`, `gpt-4`) |
+| `descricao` | string | ✅ | Descrição do team (visível no frontend) |
+| `prompt` | string | ❌ | Instruções do sistema para o líder do team |
+| `member_ids` | string[] | ✅ | IDs dos agentes membros (da collection `agents_config`) |
+| `mode` | string | ✅ | Modo de operação: `route`, `coordinate`, `broadcast`, `tasks` |
+| `user_memory_active` | bool | ❌ | Ativa memória de longo prazo |
+| `summary_active` | bool | ❌ | Ativa sumários automáticos de sessão |
+| `active` | bool | ✅ | Se `false`, o team é ignorado na inicialização |
+
+**Modos de Team:**
+
+| Modo | Descrição |
+|---|---|
+| `route` | O líder analisa a pergunta e delega para o membro mais adequado |
+| `coordinate` | O líder coordena múltiplos membros para resolver a tarefa |
+| `broadcast` | A mensagem é enviada para todos os membros simultaneamente |
+| `tasks` | Cada membro recebe uma tarefa específica definida pelo líder |
+
+> **⚠️ Nota sobre IDs**: O agno converte underscores para hífens nos IDs internamente. Se um agente tem `id: "coding_agent"`, no prompt do team use `coding-agent` ao delegar.
 
 ### Adicionando um Novo Agente (sem alterar código)
 
@@ -633,20 +701,31 @@ tests/
 ├── conftest.py                            # Fixtures compartilhadas
 └── unit/
     ├── test_agent_config.py               # Domain: validação de AgentConfig
+    ├── test_team_config.py                # Domain: validação de TeamConfig
     ├── test_tool.py                       # Domain: validação de Tool/ToolParameter
     ├── test_agent_factory_service.py      # Application: criação de agentes
+    ├── test_team_factory_service.py       # Application: criação de teams
     ├── test_model_factory_service.py      # Application: factory de modelos
+    ├── test_model_factory_extended.py     # Application: factory de modelos (extended)
     ├── test_embedder_model_factory_service.py # Application: factory de embedders
-    ├── test_get_active_agents_use_case.py # Application: use case
+    ├── test_embedder_factory_extended.py   # Application: factory de embedders (extended)
+    ├── test_get_active_agents_use_case.py # Application: use case de agentes
+    ├── test_get_active_teams_use_case.py  # Application: use case de teams
     ├── test_app_config.py                 # Infrastructure: configuração
     ├── test_app_factory.py                # Infrastructure: AppFactory
     ├── test_app_integration.py            # Infrastructure: integração FastAPI
+    ├── test_dependency_injection.py       # Infrastructure: container DI
     ├── test_http_tool_factory.py          # Infrastructure: HTTP tools
+    ├── test_http_tool_factory_extended.py  # Infrastructure: HTTP tools (extended)
     ├── test_model_cache_service.py        # Infrastructure: cache
-    ├── test_mongo_agent_config_repository.py # Infrastructure: repo MongoDB
-    ├── test_mongo_tool_repository_extended.py # Infrastructure: repo MongoDB
+    ├── test_mongo_agent_config_repository.py # Infrastructure: repo agentes
+    ├── test_mongo_team_config_repository.py  # Infrastructure: repo teams
+    ├── test_mongo_tool_repository_extended.py # Infrastructure: repo tools
+    ├── test_mongo_base.py                 # Infrastructure: repo base MongoDB
     ├── test_logging_config.py             # Infrastructure: logging
-    ├── test_logging_decorators.py         # Infrastructure: logging
+    ├── test_logging_decorators.py         # Infrastructure: logging decorators
+    ├── test_logging_decorators_extended.py # Infrastructure: logging (extended)
+    ├── test_logger_adapter.py             # Infrastructure: logger adapter
     ├── test_secure_logger.py              # Infrastructure: sanitização
     ├── test_structlog_logger.py           # Infrastructure: structlog
     └── test_orquestrador_controller.py    # Presentation: controller
@@ -664,7 +743,8 @@ tests/
 4. O `OrquestradorController.warm_up_cache()` executa o `GetActiveAgentsUseCase`, que:
    - Busca no MongoDB as configs de agentes ativos
    - Para cada config, o `AgentFactoryService` cria um `agno.Agent` com modelo, tools, knowledge e memória
-5. Os agentes criados são passados para `AgentOS(agents, interfaces=[AGUI(...)], base_app)` que registra ~75 rotas REST + SSE no FastAPI
+   - Em seguida, o `GetActiveTeamsUseCase` busca configs de teams ativos e o `TeamFactoryService` cria `agno.Team` com os agentes como membros
+5. Os agentes criados são passados junto com os teams para `AgentOS(agents, teams, interfaces=[AGUI(...)], base_app, tracing=True)` que registra ~75 rotas REST + SSE no FastAPI e configura OpenTelemetry tracing
 6. O servidor fica pronto na porta 7777
 
 ### Padrões Implementados
@@ -674,7 +754,7 @@ tests/
 | **Onion Architecture** | Toda a aplicação | Separação de responsabilidades por camadas |
 | **Dependency Injection** | `dependency_injection.py` | Composition Root — todas as dependências são criadas e injetadas em um único ponto |
 | **Repository Pattern** | `domain/repositories/` → `infrastructure/repositories/` | Abstração de acesso a dados (interface → implementação MongoDB) |
-| **Factory Pattern** | `ModelFactory`, `EmbedderModelFactory`, `AgentFactoryService` | Criação de objetos complexos sem expor a lógica de construção |
+| **Factory Pattern** | `ModelFactory`, `EmbedderModelFactory`, `AgentFactoryService`, `TeamFactoryService` | Criação de objetos complexos sem expor a lógica de construção |
 | **Strategy Pattern** | `ModelFactory._IMPORT_SPECS` | Cada provider de modelo é uma estratégia intercambiável |
 | **Ports & Adapters** | `domain/ports/` | Interfaces que a infraestrutura implementa |
 | **Cache-Aside** | `OrquestradorController` | Cache de agentes com TTL + fallback |
@@ -800,7 +880,7 @@ LOG_LEVEL=DEBUG python app.py
 ### Antes de submeter
 
 ```bash
-# Execute os testes (89 devem passar)
+# Execute os testes (179 devem passar)
 pytest
 
 # Verifique a cobertura

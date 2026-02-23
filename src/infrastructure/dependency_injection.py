@@ -10,13 +10,18 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from src.application.services.agent_factory_service import AgentFactoryService
 from src.application.services.embedder_model_factory_service import EmbedderModelFactory
 from src.application.services.model_factory_service import ModelFactory
+from src.application.services.team_factory_service import TeamFactoryService
 from src.application.use_cases.get_active_agents_use_case import GetActiveAgentsUseCase
+from src.application.use_cases.get_active_teams_use_case import GetActiveTeamsUseCase
 from src.domain.ports import ILogger
 from src.infrastructure.config.app_config import AppConfig
 from src.infrastructure.http.http_tool_factory import HttpToolFactory
 from src.infrastructure.logging.logger_adapter import StructlogLoggerAdapter
 from src.infrastructure.repositories.mongo_agent_config_repository import (
     MongoAgentConfigRepository,
+)
+from src.infrastructure.repositories.mongo_team_config_repository import (
+    MongoTeamConfigRepository,
 )
 from src.infrastructure.repositories.mongo_tool_repository import MongoToolRepository
 from src.presentation.controllers.orquestrador_controller import OrquestradorController
@@ -132,10 +137,25 @@ class DependencyContainer:
             tool_repository=tool_repo,
         )
 
-        use_case = GetActiveAgentsUseCase(agent_factory, agent_config_repo)
+        team_factory = TeamFactoryService(
+            db_url=conn,
+            db_name=db,
+            logger=self._logger,
+            model_factory=model_factory,
+        )
+
+        team_config_repo = MongoTeamConfigRepository(
+            connection_string=conn, database_name=db, logger=self._logger
+        )
+
+        agents_use_case = GetActiveAgentsUseCase(agent_factory, agent_config_repo)
+        teams_use_case = GetActiveTeamsUseCase(
+            team_factory, team_config_repo, self._logger
+        )
 
         self._controller = OrquestradorController(
-            get_active_agents_use_case=use_case,
+            get_active_agents_use_case=agents_use_case,
+            get_active_teams_use_case=teams_use_case,
             logger=self._logger,
         )
 
