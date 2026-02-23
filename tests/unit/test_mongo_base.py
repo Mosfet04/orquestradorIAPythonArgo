@@ -5,8 +5,6 @@ from __future__ import annotations
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 from src.infrastructure.repositories.mongo_base import (
     AsyncMongoRepository,
     MongoClientFactory,

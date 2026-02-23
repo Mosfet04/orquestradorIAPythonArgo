@@ -46,18 +46,7 @@ class HttpToolFactory(IToolFactory):
             headers = (tool.headers or {}).copy()
             headers.setdefault("Content-Type", "application/json")
             url, remaining = _resolve_url(tool.route, kwargs)
-
-            req_kwargs: Dict[str, Any] = {
-                "method": tool.http_method.value,
-                "url": url,
-                "headers": headers,
-                "timeout": timeout,
-            }
-
-            if tool.http_method in (HttpMethod.GET, HttpMethod.DELETE):
-                req_kwargs["params"] = remaining or None
-            else:
-                req_kwargs["json"] = remaining or None
+            req_kwargs = _build_request_kwargs(tool, url, headers, remaining, timeout)
 
             try:
                 async with httpx.AsyncClient(verify=True) as client:
@@ -70,15 +59,12 @@ class HttpToolFactory(IToolFactory):
                 )
                 return _serialize(response)
             except httpx.HTTPStatusError as exc:
-                resp = exc.response
                 logger.error(
                     "HTTP error",
                     tool_id=tool.id,
-                    status=resp.status_code if resp else None,
+                    status=getattr(exc.response, "status_code", None),
                 )
-                code = resp.status_code if resp else "?"
-                text = resp.text if resp else ""
-                return f"Erro HTTP {code}: {text}"
+                return _format_http_error(exc)
             except httpx.RequestError as exc:
                 logger.error(
                     "Request error",
@@ -114,6 +100,35 @@ class HttpToolFactory(IToolFactory):
 
 
 # ── helpers puros ───────────────────────────────────────────────────
+
+
+def _build_request_kwargs(
+    tool: Tool,
+    url: str,
+    headers: Dict[str, str],
+    remaining: Dict[str, Any],
+    timeout: float,
+) -> Dict[str, Any]:
+    """Constrói o dicionário de kwargs para ``httpx.AsyncClient.request``."""
+    req_kwargs: Dict[str, Any] = {
+        "method": tool.http_method.value,
+        "url": url,
+        "headers": headers,
+        "timeout": timeout,
+    }
+    if tool.http_method in (HttpMethod.GET, HttpMethod.DELETE):
+        req_kwargs["params"] = remaining or None
+    else:
+        req_kwargs["json"] = remaining or None
+    return req_kwargs
+
+
+def _format_http_error(exc: httpx.HTTPStatusError) -> str:
+    """Formata mensagem de erro para respostas HTTP com status de erro."""
+    resp = exc.response
+    code = resp.status_code if resp else "?"
+    text = resp.text if resp else ""
+    return f"Erro HTTP {code}: {text}"
 
 
 def _resolve_url(

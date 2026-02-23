@@ -110,25 +110,25 @@ class TestLogHttpRequest:
 class TestLogExecutionExtras:
     def test_mask_sensitive_kwargs(self):
         @log_execution(include_args=True, mask_sensitive=True)
-        def fn(password="secret", data="safe"):
+        def fn(password="FAKE_PASS_FOR_TEST", data="safe"):  # noqa: S107
             return True
 
-        assert fn(password="s3cret", data="value") is True
+        assert fn(password="s3cret_test", data="value") is True
 
     def test_no_masking(self):
         @log_execution(include_args=True, mask_sensitive=False)
-        def fn(password="secret"):
+        def fn(password="FAKE_PASS_FOR_TEST"):  # noqa: S107
             return True
 
-        assert fn(password="plain") is True
+        assert fn(password="plain_test") is True
 
     def test_with_dict_arg(self):
         @log_execution(include_args=True, mask_sensitive=True)
         def fn(config):
             return config
 
-        result = fn({"api_key": "abc123", "name": "test"})
-        assert result == {"api_key": "abc123", "name": "test"}
+        result = fn({"api_key": "FAKE_KEY_FOR_TESTING", "name": "test"})  # noqa: S106
+        assert result == {"api_key": "FAKE_KEY_FOR_TESTING", "name": "test"}
 
     def test_with_self_like_object(self):
         """Função com primeiro arg que tem __dict__ (simula self)."""

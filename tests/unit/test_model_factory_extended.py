@@ -64,4 +64,5 @@ class TestModelFactoryExtended:
     def test_instantiate_filters_api_key_from_extra(self, factory):
         mock_cls = MagicMock(return_value="model")
         result = factory._instantiate("openai", mock_cls, "gpt-4", "sk-key", {"api_key": "old", "temperature": 0.7})
+        assert result == "model"
         mock_cls.assert_called_once_with(id="gpt-4", api_key="sk-key", temperature=0.7)
