@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
 from src.application.use_cases.get_active_agents_use_case import GetActiveAgentsUseCase
 from src.domain.entities.agent_config import AgentConfig
 

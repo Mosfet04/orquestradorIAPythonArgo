@@ -22,7 +22,7 @@ class TestAppConfig:
             "MONGO_CONNECTION_STRING": "mongodb://custom:9999",
             "MONGO_DATABASE_NAME": "mydb",
             "APP_TITLE": "Custom",
-            "APP_HOST": "0.0.0.0",
+            "APP_HOST": "127.0.0.1",
             "APP_PORT": "8888",
             "LOG_LEVEL": "DEBUG",
             "OLLAMA_BASE_URL": "http://ollama:11434",

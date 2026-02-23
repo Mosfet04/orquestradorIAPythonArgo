@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
 from fastapi import FastAPI
 
 from src.infrastructure.web.app_factory import AppFactory

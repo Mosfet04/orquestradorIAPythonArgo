@@ -6,7 +6,7 @@ import re
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -119,64 +119,67 @@ class AppFactory:
 
     # ── lifespan ────────────────────────────────────────────────────
 
+    async def _ensure_container(self) -> None:
+        """Garante que o DependencyContainer esteja inicializado."""
+        if self._container:
+            return
+        self._logger.info("Lifespan: carregando AppConfig...")
+        config = AppConfig.load()
+        self._logger.info(
+            "Lifespan: criando DependencyContainer...",
+            mongo_db=config.mongo_database_name,
+        )
+        self._container = await DependencyContainer.create_async(config)
+        self._logger.info("Lifespan: container criado com sucesso")
+
+    async def _load_agents(self):
+        """Aquece cache e retorna lista de agentes ativos."""
+        controller = self._container.get_orquestrador_controller()
+        self._logger.info("Lifespan: warm up cache...")
+        await controller.warm_up_cache()
+
+        self._logger.info("Lifespan: carregando agentes...")
+        agents = await controller.get_agents()
+        self._logger.info(
+            "Lifespan: agentes carregados",
+            agent_count=len(agents) if agents else 0,
+            agent_ids=[a.id for a in agents] if agents else [],
+        )
+        return agents
+
+    def _mount_agent_os(self, app: FastAPI, agents: list) -> None:
+        """Cria interfaces AG-UI e monta o AgentOS no app base."""
+        interfaces = [AGUI(agent=agent) for agent in agents]
+        self._logger.info(
+            "Lifespan: montando AgentOS com interfaces AG-UI",
+            interface_count=len(interfaces),
+        )
+        agent_os = AgentOS(
+            agents=agents,
+            interfaces=interfaces,
+            cors_allowed_origins=self._ALLOWED_ORIGINS,
+            base_app=app,
+            on_route_conflict="preserve_base_app",
+        )
+        agent_os.get_app()
+        app.openapi_schema = None
+        self._logger.info(
+            "AgentOS montado com sucesso",
+            agent_count=len(agents),
+            total_routes=len(app.routes),
+        )
+
     @asynccontextmanager
     async def _lifespan(self, app: FastAPI):
         """Inicializa DI + agentes e, se houver agentes, monta AgentOS."""
         try:
             self._logger.info("Lifespan: iniciando...")
-
-            if not self._container:
-                self._logger.info("Lifespan: carregando AppConfig...")
-                config = AppConfig.load()
-                self._logger.info(
-                    "Lifespan: criando DependencyContainer...",
-                    mongo_db=config.mongo_database_name,
-                )
-                self._container = await DependencyContainer.create_async(config)
-                self._logger.info("Lifespan: container criado com sucesso")
-
-            controller = self._container.get_orquestrador_controller()
-            self._logger.info("Lifespan: warm up cache...")
-            await controller.warm_up_cache()
-
-            # Montar rotas AgentOS sobre o base_app já em execução
-            self._logger.info("Lifespan: carregando agentes...")
-            agents = await controller.get_agents()
-            self._logger.info(
-                "Lifespan: agentes carregados",
-                agent_count=len(agents) if agents else 0,
-                agent_ids=[a.id for a in agents] if agents else [],
-            )
+            await self._ensure_container()
+            agents = await self._load_agents()
 
             if agents:
                 try:
-
-
-                    # Criar interface AG-UI para cada agente
-                    # (protocolo SSE usado pelo os.agno.com)
-                    interfaces = [AGUI(agent=agent) for agent in agents]
-
-                    self._logger.info(
-                        "Lifespan: montando AgentOS com interfaces AG-UI",
-                        interface_count=len(interfaces),
-                    )
-                    agent_os = AgentOS(
-                        agents=agents,
-                        interfaces=interfaces,
-                        cors_allowed_origins=self._ALLOWED_ORIGINS,
-                        base_app=app,
-                        on_route_conflict="preserve_base_app",
-                    )
-                    # get_app() é o que efetivamente registra as rotas no base_app
-                    agent_os.get_app()
-                    # Forçar regeneração do schema OpenAPI com as rotas do AgentOS
-                    app.openapi_schema = None
-                    route_count = len(app.routes)
-                    self._logger.info(
-                        "AgentOS montado com sucesso",
-                        agent_count=len(agents),
-                        total_routes=route_count,
-                    )
+                    self._mount_agent_os(app, agents)
                 except Exception as exc:
                     self._logger.error(
                         "Erro ao montar AgentOS — continuando sem rotas de agente",

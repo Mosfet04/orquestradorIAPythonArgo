@@ -8,7 +8,6 @@ from typing import Any, List, Optional
 from agno.agent import Agent
 from agno.db.mongo import MongoDb as MongoAgentDb
 from agno.knowledge import Knowledge
-from agno.tools import Toolkit
 from agno.vectordb.mongodb import MongoDb as MongoVectorDb
 
 from src.domain.entities.agent_config import AgentConfig
