@@ -182,8 +182,12 @@ def add_otel_trace_context(logger, method_name, event_dict):
         if ctx and ctx.trace_id:
             event_dict["trace_id"] = format(ctx.trace_id, "032x")
             event_dict["span_id"] = format(ctx.span_id, "016x")
-    except Exception:
-        pass  # OTel não disponível — sem impacto no logging
+    except Exception as exc:
+        # Registrar a exceção em debug para facilitar troubleshooting sem
+        # poluir logs de produção em níveis superiores.
+        logging.getLogger(__name__).debug(
+            "Falha ao injetar contexto OTel nos logs: %s", exc, exc_info=True
+        )
     return event_dict
 
 

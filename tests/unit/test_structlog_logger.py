@@ -1,3 +1,84 @@
+import logging
+from types import SimpleNamespace
+
+import structlog
+import pytest
+
+from src.infrastructure.logging.structlog_logger import (
+    DataSanitizer,
+    add_correlation_id,
+    add_otel_trace_context,
+    sanitize_log_data,
+    setup_structlog,
+    LoggerFactory,
+)
+
+
+def test_data_sanitizer_masks_api_key():
+    s = "user=alice api_key=abcdEFGHijklMNOPqrstUVWX"
+    out = DataSanitizer.sanitize_data(s)
+    assert "API_KEY_MASKED" in out.upper()
+
+
+def test_add_correlation_id_creates_short_id():
+    ev = {}
+    res = add_correlation_id(None, None, ev)
+    assert "correlation_id" in res
+    assert len(res["correlation_id"]) == 8
+
+
+def test_add_otel_trace_context_with_span(monkeypatch):
+    # Simula um span com contexto contendo trace_id/span_id
+    class DummySpan:
+        def get_span_context(self):
+            return SimpleNamespace(trace_id=1, span_id=2)
+
+    class TraceMod:
+        @staticmethod
+        def get_current_span():
+            return DummySpan()
+
+    # Injetar um módulo trace fake
+    monkeypatch.setitem(__import__("sys").modules, "opentelemetry", SimpleNamespace())
+    monkeypatch.setitem(__import__("sys").modules, "opentelemetry.trace", TraceMod)
+
+    ev = {}
+    res = add_otel_trace_context(None, "info", ev)
+    assert "trace_id" in res and "span_id" in res
+    assert len(res["trace_id"]) == 32
+    assert len(res["span_id"]) == 16
+
+
+def test_add_otel_trace_context_logs_on_exception(monkeypatch, caplog):
+    # Faz get_current_span levantar exceção
+    class TraceMod:
+        @staticmethod
+        def get_current_span():
+            raise RuntimeError("no otel")
+
+    monkeypatch.setitem(__import__("sys").modules, "opentelemetry", SimpleNamespace())
+    monkeypatch.setitem(__import__("sys").modules, "opentelemetry.trace", TraceMod)
+
+    caplog.set_level(logging.DEBUG)
+    ev = {}
+    res = add_otel_trace_context(None, "info", ev)
+    assert res == ev
+    # Deve ter logado em DEBUG
+    assert any("Falha ao injetar contexto OTel" in r.message or "Falha ao injetar" in r.message for r in caplog.records)
+
+
+def test_sanitize_log_data_masks_password():
+    ev = {"password": "secret", "timestamp": "ts"}
+    out = sanitize_log_data(None, None, ev.copy())
+    assert out["password"].startswith("***MASKED***")
+    assert out["timestamp"] == "ts"
+
+
+def test_setup_structlog_and_logger_factory():
+    # Não deve levantar
+    setup_structlog()
+    logger = LoggerFactory.get_logger("unit-test")
+    assert logger is not None
 from src.infrastructure.logging.structlog_logger import LoggerFactory, StructlogLogger, DataSanitizer
 
 

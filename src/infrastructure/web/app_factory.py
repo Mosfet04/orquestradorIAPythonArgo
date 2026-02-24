@@ -159,8 +159,7 @@ class AppFactory:
         )
         return teams
 
-    @staticmethod
-    def _instrument_fastapi(app: FastAPI) -> None:
+    def _instrument_fastapi(self, app: FastAPI) -> None:
         """Aplica auto-instrumentação OpenTelemetry no FastAPI."""
         try:
             from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -170,7 +169,7 @@ class AppFactory:
                 excluded_urls="admin/health,metrics/cache",
             )
         except Exception:
-            pass  # Telemetria é best-effort, não bloqueia a app
+            self._logger.info("OpenTelemetry FastAPI instrumentation não disponível — ignorando")
 
     def _mount_agent_os(self, app: FastAPI, agents: list, teams: list) -> None:
         """Cria interfaces AG-UI e monta o AgentOS no app base."""
