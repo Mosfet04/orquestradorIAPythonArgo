@@ -233,16 +233,21 @@ class TestMountAgentOS:
 
 
 class TestLifespan:
+    @patch("src.infrastructure.web.app_factory.shutdown_telemetry")
+    @patch("src.infrastructure.web.app_factory.setup_telemetry")
     @patch("src.infrastructure.web.app_factory.AgentOS")
     @patch("src.infrastructure.web.app_factory.AGUI")
     @patch("src.infrastructure.web.app_factory.DependencyContainer")
     @patch("src.infrastructure.web.app_factory.AppConfig")
-    async def test_lifespan_happy_path(self, mock_config_cls, mock_dc_cls, mock_agui, mock_os_cls):
+    async def test_lifespan_happy_path(self, mock_config_cls, mock_dc_cls, mock_agui, mock_os_cls, mock_setup_tel, mock_shutdown_tel):
         """Lifespan completo: container + agents + teams + mount."""
         factory = AppFactory()
 
         mock_config = MagicMock()
         mock_config.mongo_database_name = "db"
+        mock_config.otel_enabled = True
+        mock_config.otel_exporter_endpoint = "http://localhost:4317"
+        mock_config.otel_service_name = "test"
         mock_config_cls.load.return_value = mock_config
 
         controller = MagicMock()
@@ -252,6 +257,7 @@ class TestLifespan:
         controller.get_agents = AsyncMock(return_value=[agent])
         controller.get_teams = AsyncMock(return_value=[])
         container = MagicMock()
+        container.config = mock_config
         container.get_orquestrador_controller.return_value = controller
         container.cleanup = AsyncMock()
         mock_dc_cls.create_async = AsyncMock(return_value=container)
@@ -269,14 +275,19 @@ class TestLifespan:
 
         container.cleanup.assert_awaited_once()
 
+    @patch("src.infrastructure.web.app_factory.shutdown_telemetry")
+    @patch("src.infrastructure.web.app_factory.setup_telemetry")
     @patch("src.infrastructure.web.app_factory.DependencyContainer")
     @patch("src.infrastructure.web.app_factory.AppConfig")
-    async def test_lifespan_no_agents_no_teams(self, mock_config_cls, mock_dc_cls):
+    async def test_lifespan_no_agents_no_teams(self, mock_config_cls, mock_dc_cls, mock_setup_tel, mock_shutdown_tel):
         """Lifespan sem agentes nem teams — não monta AgentOS."""
         factory = AppFactory()
 
         mock_config = MagicMock()
         mock_config.mongo_database_name = "db"
+        mock_config.otel_enabled = True
+        mock_config.otel_exporter_endpoint = "http://localhost:4317"
+        mock_config.otel_service_name = "test"
         mock_config_cls.load.return_value = mock_config
 
         controller = MagicMock()
@@ -284,6 +295,7 @@ class TestLifespan:
         controller.get_agents = AsyncMock(return_value=[])
         controller.get_teams = AsyncMock(return_value=[])
         container = MagicMock()
+        container.config = mock_config
         container.get_orquestrador_controller.return_value = controller
         container.cleanup = AsyncMock()
         mock_dc_cls.create_async = AsyncMock(return_value=container)
@@ -296,16 +308,21 @@ class TestLifespan:
 
         container.cleanup.assert_awaited_once()
 
+    @patch("src.infrastructure.web.app_factory.shutdown_telemetry")
+    @patch("src.infrastructure.web.app_factory.setup_telemetry")
     @patch("src.infrastructure.web.app_factory.AgentOS", side_effect=RuntimeError("mount fail"))
     @patch("src.infrastructure.web.app_factory.AGUI")
     @patch("src.infrastructure.web.app_factory.DependencyContainer")
     @patch("src.infrastructure.web.app_factory.AppConfig")
-    async def test_lifespan_mount_error_continues(self, mock_config_cls, mock_dc_cls, mock_agui, mock_os_cls):
+    async def test_lifespan_mount_error_continues(self, mock_config_cls, mock_dc_cls, mock_agui, mock_os_cls, mock_setup_tel, mock_shutdown_tel):
         """Se AgentOS falhar, lifespan continua sem raise."""
         factory = AppFactory()
 
         mock_config = MagicMock()
         mock_config.mongo_database_name = "db"
+        mock_config.otel_enabled = True
+        mock_config.otel_exporter_endpoint = "http://localhost:4317"
+        mock_config.otel_service_name = "test"
         mock_config_cls.load.return_value = mock_config
 
         controller = MagicMock()
@@ -315,6 +332,7 @@ class TestLifespan:
         controller.get_agents = AsyncMock(return_value=[agent])
         controller.get_teams = AsyncMock(return_value=[])
         container = MagicMock()
+        container.config = mock_config
         container.get_orquestrador_controller.return_value = controller
         container.cleanup = AsyncMock()
         mock_dc_cls.create_async = AsyncMock(return_value=container)

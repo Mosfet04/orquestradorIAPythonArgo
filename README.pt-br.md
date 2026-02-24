@@ -49,7 +49,7 @@ O **Orquestrador de Agentes IA** é uma aplicação que gerencia e orquestra mú
 | **Multi-Provider** | Ollama, OpenAI, Anthropic, Gemini, Groq e Azure |
 | **RAG integrado** | Retrieval-Augmented Generation com embeddings persistidos no MongoDB |
 | **Memória inteligente** | Memória de longo prazo com sumários automáticos e perfil de usuário |
-| **OpenTelemetry Tracing** | Spans e traces automáticos para agentes e teams, persistidos no MongoDB |
+| **Observabilidade via Grafana LGTM** | Traces, métricas e logs agora são enviados ao Grafana (Tempo, Loki, Prometheus) usando OpenTelemetry. O MongoDB não é mais utilizado para observabilidade.|
 | **AgentOS + AG-UI** | Interface web via [os.agno.com](https://os.agno.com) com streaming SSE |
 | **Arquitetura limpa** | Camadas Domain → Application → Infrastructure → Presentation |
 | **179 testes unitários** | Cobertura ~88% de todas as camadas |
@@ -110,6 +110,20 @@ Após iniciar, acesse:
 | http://localhost:7777/docs | Documentação OpenAPI / Swagger |
 | http://localhost:7777/config | Configuração do AgentOS (agentes, databases) |
 | http://localhost:7777/agents | Lista de agentes ativos |
+
+---
+
+
+## 📊 Observabilidade (Grafana LGTM)
+
+Toda a observabilidade (traces, métricas, logs) agora é feita pela stack Grafana LGTM:
+
+- **Grafana Tempo**: Traces
+- **Grafana Loki**: Logs
+- **Prometheus/Mimir**: Métricas
+- **Grafana**: Dashboards (inclui Datadog-style)
+
+O SDK OpenTelemetry é usado para exportar todos os dados de telemetria. O MongoDB não é mais utilizado para armazenar traces ou logs.
 
 ---
 

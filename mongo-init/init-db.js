@@ -176,25 +176,9 @@ db.agno_memories.createIndex({ "agent_id": 1 });
 db.agno_memories.createIndex({ "created_at": -1 });
 
 // ============================================================
-// 6. agno_traces — Execution traces
-// ============================================================
-db.createCollection("agno_traces");
-db.agno_traces.createIndex({ "trace_id": 1 }, { unique: true });
-db.agno_traces.createIndex({ "session_id": 1 });
-db.agno_traces.createIndex({ "agent_id": 1 });
-db.agno_traces.createIndex({ "team_id": 1 });
-db.agno_traces.createIndex({ "created_at": -1 });
-
-// ============================================================
-// 7. agno_spans — Execution spans (sub-traces)
-// ============================================================
-db.createCollection("agno_spans");
-db.agno_spans.createIndex({ "span_id": 1 }, { unique: true });
-db.agno_spans.createIndex({ "trace_id": 1 });
-db.agno_spans.createIndex({ "created_at": -1 });
-
-// ============================================================
-// 8. rag — Vector DB collection for RAG embeddings
+// 6. rag — Vector DB collection for RAG embeddings
+//    (traces/spans removidos — agora exportados via OTLP
+//     para Grafana Tempo)
 // ============================================================
 db.createCollection("rag");
 db.rag.createIndex({ "name": 1 });
@@ -207,4 +191,5 @@ print("Database initialized with sample data!");
 print("Created agents:", db.agents_config.countDocuments({}));
 print("Created tools:", db.tools.countDocuments({}));
 print("Created teams:", db.teams_config.countDocuments({}));
-print("Pre-created agno runtime collections: agno_sessions, agno_memories, agno_traces, agno_spans, rag");
+print("Pre-created agno runtime collections: agno_sessions, agno_memories, rag");
+print("Traces/spans are now exported via OTLP to Grafana Tempo");

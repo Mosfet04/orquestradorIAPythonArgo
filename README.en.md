@@ -113,6 +113,20 @@ After starting, access:
 
 ---
 
+
+## 📊 Observability (Grafana LGTM)
+
+All observability (traces, metrics, logs) is now handled by the Grafana LGTM stack:
+
+- **Grafana Tempo**: Traces
+- **Grafana Loki**: Logs
+- **Prometheus/Mimir**: Metrics
+- **Grafana**: Dashboards (Datadog-style included)
+
+OpenTelemetry SDK is used for exporting all telemetry data. MongoDB is no longer used for storing traces or logs.
+
+---
+
 ## 🏗️ Architecture
 
 The application follows **Onion Architecture** (also known as Clean Architecture / Hexagonal). The golden rule: **dependencies point inward** — outer layers depend on inner layers, never the reverse.
@@ -163,7 +177,7 @@ graph TB
     WEB --> AGNO
 
     style E fill:#e1f5fe
-    style RP fill:#e1f5fe
+ | **Observability via Grafana LGTM** | Traces, metrics, and logs are now sent to Grafana (Tempo, Loki, Prometheus) using OpenTelemetry. MongoDB is no longer used for observability. |
     style RI fill:#e1f5fe
     style UC fill:#f3e5f5
     style AS fill:#f3e5f5

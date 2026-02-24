@@ -13,6 +13,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from src.infrastructure.config.app_config import AppConfig
 from src.infrastructure.dependency_injection import DependencyContainer
 from src.infrastructure.logging.logger_adapter import StructlogLoggerAdapter
+from src.infrastructure.telemetry import setup_telemetry, shutdown_telemetry, TelemetryMetrics
 from agno.os import AgentOS
 from agno.os.interfaces.agui import AGUI
 # Regex: /agents/{agent_id}/sessions/… → /sessions/…
@@ -158,6 +159,19 @@ class AppFactory:
         )
         return teams
 
+    @staticmethod
+    def _instrument_fastapi(app: FastAPI) -> None:
+        """Aplica auto-instrumentação OpenTelemetry no FastAPI."""
+        try:
+            from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
+            FastAPIInstrumentor.instrument_app(
+                app,
+                excluded_urls="admin/health,metrics/cache",
+            )
+        except Exception:
+            pass  # Telemetria é best-effort, não bloqueia a app
+
     def _mount_agent_os(self, app: FastAPI, agents: list, teams: list) -> None:
         """Cria interfaces AG-UI e monta o AgentOS no app base."""
         agent_interfaces = [AGUI(agent=agent) for agent in agents]
@@ -174,7 +188,7 @@ class AppFactory:
             cors_allowed_origins=self._ALLOWED_ORIGINS,
             base_app=app,
             on_route_conflict="preserve_base_app",
-            tracing=True
+            tracing=False,
         )
         agent_os.get_app()
         app.openapi_schema = None
@@ -188,9 +202,18 @@ class AppFactory:
     @asynccontextmanager
     async def _lifespan(self, app: FastAPI):
         """Inicializa DI + agentes e, se houver agentes, monta AgentOS."""
+        import time as _time
+
+        startup_start = _time.perf_counter()
         try:
             self._logger.info("Lifespan: iniciando...")
             await self._ensure_container()
+
+            # ── Telemetria (antes de agentes, para capturar spans) ──
+            config = self._container.config
+            setup_telemetry(config)
+            self._instrument_fastapi(app)
+
             agents = await self._load_agents()
             teams = await self._load_teams()
 
@@ -206,6 +229,16 @@ class AppFactory:
             else:
                 self._logger.info("Nenhum agente ou team ativo — rodando só endpoints admin")
 
+            # ── Métricas de startup ─────────────────────────────────
+            startup_elapsed = _time.perf_counter() - startup_start
+            TelemetryMetrics.record_startup_duration(startup_elapsed)
+            TelemetryMetrics.record_agents_loaded(len(agents) if agents else 0)
+            TelemetryMetrics.record_teams_loaded(len(teams) if teams else 0)
+            self._logger.info(
+                "Startup completo",
+                startup_duration_s=round(startup_elapsed, 3),
+            )
+
             yield
         except Exception as exc:
             self._logger.error(
@@ -215,6 +248,7 @@ class AppFactory:
             )
             raise
         finally:
+            shutdown_telemetry()
             if self._container:
                 await self._container.cleanup()
 

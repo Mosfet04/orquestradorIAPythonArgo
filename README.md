@@ -86,13 +86,24 @@ graph TB
 - 🧠 **6 Providers** — Ollama, OpenAI, Anthropic, Gemini, Groq, Azure
 - 📚 **RAG** — Document embeddings persisted in MongoDB
 - 💾 **Smart Memory** — User long-term memory + session summaries
-- 📡 **OpenTelemetry Tracing** — Automatic spans & traces for agents and teams (stored in MongoDB)
+📡 **Observability via Grafana LGTM** — Traces, metrics, and logs are now sent to Grafana (Tempo, Loki, Prometheus) using OpenTelemetry. MongoDB is no longer used for observability.
 - 🌐 **AgentOS + AG-UI** — Web UI via [os.agno.com](https://os.agno.com) with SSE streaming
 - 🧪 **179 Tests** — Comprehensive unit test coverage (~88%)
 - 🏗️ **Onion Architecture** — Clean separation with SOLID principles
+## 📊 Observability (Grafana LGTM)
+
+All observability (traces, metrics, logs) is now handled by the Grafana LGTM stack:
+
+- **Grafana Tempo**: Traces
+- **Grafana Loki**: Logs
+- **Prometheus/Mimir**: Metrics
+- **Grafana**: Dashboards (Datadog-style included)
+
+OpenTelemetry SDK is used for exporting all telemetry data. MongoDB is no longer used for storing traces or logs.
+
+---
 
 ## 📚 Documentation
-
 Choose your language for the complete guide (architecture, configuration, database schemas, developer guide, troubleshooting):
 
 ### 🇧🇷 Português

@@ -32,7 +32,7 @@ services:
     # Optional: Pull models on startup
     # command: /bin/bash -c "ollama serve & sleep 10 && ollama pull llama3.2 && wait"
 
-  # AI Agents Orchestrator Application
+    # AI Agents Orchestrator Application
   app:
     build:
       context: .
@@ -45,24 +45,29 @@ services:
       # Database Configuration
       MONGO_CONNECTION_STRING: mongodb://admin:password123@mongodb:27017/agno?authSource=admin
       MONGO_DATABASE_NAME: agno
-      
+
       # Application Configuration
       APP_TITLE: "AI Agents Orchestrator"
       APP_HOST: 0.0.0.0
       APP_PORT: 7777
-      
+
       # Logging Configuration
       LOG_LEVEL: INFO
       LOG_FORMAT: json
-      
+
       # AI Models Configuration
       OLLAMA_BASE_URL: http://ollama:11434
       # OPENAI_API_KEY: your-openai-key-here
-      
+
       # Memory Configuration
       MEMORY_ENABLED: "true"
       MEMORY_PROVIDER: mongodb
-      
+
+      # OpenTelemetry → Grafana LGTM
+      OTEL_ENABLED: "true"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://host.docker.internal:4317
+      OTEL_SERVICE_NAME: orquestrador-ia
+
     depends_on:
       - mongodb
       - ollama

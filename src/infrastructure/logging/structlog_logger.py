@@ -168,6 +168,25 @@ def add_correlation_id(logger, method_name, event_dict):
     return event_dict
 
 
+def add_otel_trace_context(logger, method_name, event_dict):
+    """Injeta trace_id e span_id do OpenTelemetry no log para correlação.
+
+    Permite navegar do Grafana Loki (logs) → Grafana Tempo (traces)
+    clicando no trace_id.
+    """
+    try:
+        from opentelemetry import trace as otel_trace
+
+        span = otel_trace.get_current_span()
+        ctx = span.get_span_context()
+        if ctx and ctx.trace_id:
+            event_dict["trace_id"] = format(ctx.trace_id, "032x")
+            event_dict["span_id"] = format(ctx.span_id, "016x")
+    except Exception:
+        pass  # OTel não disponível — sem impacto no logging
+    return event_dict
+
+
 def add_timestamp(logger, method_name, event_dict):
     """Adiciona timestamp ISO para compatibilidade cloud."""
     event_dict['timestamp'] = datetime.now(timezone.utc).isoformat()
@@ -246,6 +265,7 @@ def setup_structlog():
     dev_processors = [
         structlog.contextvars.merge_contextvars,
         add_correlation_id,
+        add_otel_trace_context,
         add_timestamp,
         add_service_metadata,
         sanitize_log_data,
@@ -258,6 +278,7 @@ def setup_structlog():
     prod_processors = [
         structlog.contextvars.merge_contextvars,
         add_correlation_id,
+        add_otel_trace_context,
         add_timestamp,
         add_service_metadata,
         sanitize_log_data,
