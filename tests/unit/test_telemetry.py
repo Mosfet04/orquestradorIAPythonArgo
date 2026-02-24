@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from unittest.mock import MagicMock, patch
 
 from src.infrastructure.telemetry.metrics import TelemetryMetrics
@@ -95,6 +97,32 @@ class TestShutdownTelemetry:
 
 
 class TestTelemetryMetrics:
+    @pytest.fixture(autouse=True)
+    def _patch_instruments(self, monkeypatch):
+        # replace all global instruments with simple mocks to avoid OTel complexity
+        from src.infrastructure.telemetry import metrics as _metrics
+
+        names = [
+            "agent_requests_total",
+            "agent_response_duration",
+            "team_requests_total",
+            "agents_loaded",
+            "teams_loaded",
+            "cache_hits_total",
+            "cache_misses_total",
+            "tool_calls_total",
+            "tool_call_duration",
+            "tool_call_errors_total",
+            "startup_duration",
+        ]
+        for n in names:
+            m = MagicMock()
+            # instrument may be counter or histogram; ensure both methods exist
+            m.add = MagicMock()
+            m.record = MagicMock()
+            monkeypatch.setattr(_metrics, n, m)
+        yield
+
     def test_record_agent_request_no_error(self):
         """Registrar requisição de agente não deve lançar exceção."""
         TelemetryMetrics.record_agent_request("agent-1", "success")
