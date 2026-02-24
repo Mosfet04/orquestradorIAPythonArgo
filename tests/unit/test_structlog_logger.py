@@ -33,11 +33,8 @@ def test_add_otel_trace_context_with_span(monkeypatch):
         def get_span_context(self):
             return SimpleNamespace(trace_id=1, span_id=2)
 
-    class TraceMod(types.ModuleType):
-        pass
-
     trace_mod = types.ModuleType("opentelemetry.trace")
-    trace_mod.get_current_span = staticmethod(lambda: DummySpan())
+    trace_mod.get_current_span = staticmethod(DummySpan)
     pkg = types.ModuleType("opentelemetry")
     pkg.trace = trace_mod
 
@@ -55,8 +52,10 @@ def test_add_otel_trace_context_with_span(monkeypatch):
 def test_add_otel_trace_context_logs_on_exception(monkeypatch, caplog):
     # Faz get_current_span levantar exceção
     trace_mod = types.ModuleType("opentelemetry.trace")
+
     def bad_span():
         raise RuntimeError("no otel")
+    
     trace_mod.get_current_span = staticmethod(bad_span)
     pkg = types.ModuleType("opentelemetry")
     pkg.trace = trace_mod
