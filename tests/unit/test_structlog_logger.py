@@ -1,8 +1,8 @@
 import logging
+import sys
+import types
 from types import SimpleNamespace
 
-import structlog
-import pytest
 
 from src.infrastructure.logging.structlog_logger import (
     DataSanitizer,
@@ -33,14 +33,17 @@ def test_add_otel_trace_context_with_span(monkeypatch):
         def get_span_context(self):
             return SimpleNamespace(trace_id=1, span_id=2)
 
-    class TraceMod:
-        @staticmethod
-        def get_current_span():
-            return DummySpan()
+    class TraceMod(types.ModuleType):
+        pass
 
-    # Injetar um módulo trace fake
-    monkeypatch.setitem(__import__("sys").modules, "opentelemetry", SimpleNamespace())
-    monkeypatch.setitem(__import__("sys").modules, "opentelemetry.trace", TraceMod)
+    trace_mod = types.ModuleType("opentelemetry.trace")
+    trace_mod.get_current_span = staticmethod(lambda: DummySpan())
+    pkg = types.ModuleType("opentelemetry")
+    pkg.trace = trace_mod
+
+    # Injetar módulos fake no sys.modules
+    monkeypatch.setitem(sys.modules, "opentelemetry", pkg)
+    monkeypatch.setitem(sys.modules, "opentelemetry.trace", trace_mod)
 
     ev = {}
     res = add_otel_trace_context(None, "info", ev)
@@ -51,13 +54,14 @@ def test_add_otel_trace_context_with_span(monkeypatch):
 
 def test_add_otel_trace_context_logs_on_exception(monkeypatch, caplog):
     # Faz get_current_span levantar exceção
-    class TraceMod:
-        @staticmethod
-        def get_current_span():
-            raise RuntimeError("no otel")
-
-    monkeypatch.setitem(__import__("sys").modules, "opentelemetry", SimpleNamespace())
-    monkeypatch.setitem(__import__("sys").modules, "opentelemetry.trace", TraceMod)
+    trace_mod = types.ModuleType("opentelemetry.trace")
+    def bad_span():
+        raise RuntimeError("no otel")
+    trace_mod.get_current_span = staticmethod(bad_span)
+    pkg = types.ModuleType("opentelemetry")
+    pkg.trace = trace_mod
+    monkeypatch.setitem(sys.modules, "opentelemetry", pkg)
+    monkeypatch.setitem(sys.modules, "opentelemetry.trace", trace_mod)
 
     caplog.set_level(logging.DEBUG)
     ev = {}

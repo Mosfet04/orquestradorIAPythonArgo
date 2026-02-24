@@ -1,5 +1,3 @@
-import types
-
 from src.infrastructure.telemetry import otel_setup
 
 
