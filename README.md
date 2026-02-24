@@ -3,9 +3,10 @@
 <div align="center">
 
 ![Python](https://img.shields.io/badge/python-v3.11+-blue.svg)
-![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)
-![MongoDB](https://img.shields.io/badge/MongoDB-%234ea94b.svg?style=for-the-badge&logo=mongodb&logoColor=white)
-![agno](https://img.shields.io/badge/agno_v2.5-AI%20Framework-purple?style=for-the-badge)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat&logo=FastAPI&labelColor=555&logoColor=white)
+![MongoDB](https://img.shields.io/badge/-MongoDB-4DB33D?style=flat&logo=mongodb&logoColor=FFFFFF)
+![agno](https://img.shields.io/badge/agno_v2.5-AI_Framework-purple)
+![Grafana](https://img.shields.io/badge/-Grafana-000?&logo=Grafana)
 [![Codacy Badge](https://app.codacy.com/project/badge/Grade/f3eb9c4f1d5e4960a5168e611dba7976)](https://app.codacy.com/gh/Mosfet04/orquestradorIAPythonArgo/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
 [![Codacy Badge](https://app.codacy.com/project/badge/Coverage/f3eb9c4f1d5e4960a5168e611dba7976)](https://app.codacy.com/gh/Mosfet04/orquestradorIAPythonArgo/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_coverage)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
@@ -86,13 +87,24 @@ graph TB
 - 🧠 **6 Providers** — Ollama, OpenAI, Anthropic, Gemini, Groq, Azure
 - 📚 **RAG** — Document embeddings persisted in MongoDB
 - 💾 **Smart Memory** — User long-term memory + session summaries
-- 📡 **OpenTelemetry Tracing** — Automatic spans & traces for agents and teams (stored in MongoDB)
+📡 **Observability via Grafana LGTM** — Traces, metrics, and logs are now sent to Grafana (Tempo, Loki, Prometheus) using OpenTelemetry. MongoDB is no longer used for observability.
 - 🌐 **AgentOS + AG-UI** — Web UI via [os.agno.com](https://os.agno.com) with SSE streaming
 - 🧪 **179 Tests** — Comprehensive unit test coverage (~88%)
 - 🏗️ **Onion Architecture** — Clean separation with SOLID principles
+## 📊 Observability (Grafana LGTM)
+
+All observability (traces, metrics, logs) is now handled by the Grafana LGTM stack:
+
+- **Grafana Tempo**: Traces
+- **Grafana Loki**: Logs
+- **Prometheus/Mimir**: Metrics
+- **Grafana**: Dashboards (Datadog-style included)
+
+OpenTelemetry SDK is used for exporting all telemetry data. MongoDB is no longer used for storing traces or logs.
+
+---
 
 ## 📚 Documentation
-
 Choose your language for the complete guide (architecture, configuration, database schemas, developer guide, troubleshooting):
 
 ### 🇧🇷 Português

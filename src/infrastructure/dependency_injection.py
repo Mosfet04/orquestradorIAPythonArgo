@@ -38,6 +38,7 @@ class HealthService:
         checks = await asyncio.gather(
             self._check_mongodb(),
             self._check_memory(),
+            self._check_otlp(),
             return_exceptions=True,
         )
         elapsed = asyncio.get_event_loop().time() - start
@@ -53,6 +54,7 @@ class HealthService:
             "checks": {
                 "mongodb": checks[0] if not isinstance(checks[0], Exception) else {"status": "error", "error": str(checks[0])},
                 "memory": checks[1] if not isinstance(checks[1], Exception) else {"status": "error", "error": str(checks[1])},
+                "otlp": checks[2] if not isinstance(checks[2], Exception) else {"status": "error", "error": str(checks[2])},
             },
             "response_time_ms": round(elapsed * 1000, 2),
         }
@@ -77,6 +79,20 @@ class HealthService:
             }
         except ImportError:
             return {"status": "unavailable", "message": "psutil não instalado"}
+
+    @staticmethod
+    async def _check_otlp() -> dict:
+        """Verifica se o endpoint OTLP (Grafana LGTM) está acessível."""
+        try:
+            from opentelemetry import trace
+
+            provider = trace.get_tracer_provider()
+            if provider and hasattr(provider, "force_flush"):
+                provider.force_flush(timeout_millis=2000)
+                return {"status": "healthy", "provider": type(provider).__name__}
+            return {"status": "not_configured"}
+        except Exception as exc:
+            return {"status": "warning", "error": str(exc)}
 
 
 class DependencyContainer:
