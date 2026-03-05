@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
-import json
-from typing import Any, Callable
+from typing import Any
+
+from agno.tools import Toolkit
 
 from src.domain.ports.knowledge_search_port import IKnowledgeSearchStrategy
 
@@ -13,11 +13,12 @@ def create_hierarchical_search_tool(
     strategy: IKnowledgeSearchStrategy,
     *,
     top_k: int = 5,
-) -> Callable[..., str]:
-    """Cria uma função callable que agentes agno podem usar como tool.
+) -> Toolkit:
+    """Cria um ``Toolkit`` agno com função async de busca hierárquica.
 
-    A função retornada encapsula a estratégia hierárquica e retorna
-    os chunks mais relevantes como texto formatado.
+    Usa o mesmo padrão do ``HttpToolFactory``: registra uma função
+    ``async def`` no ``Toolkit`` para que o agente a execute dentro
+    do event-loop corrente — sem necessidade de bridging sync→async.
 
     Parameters
     ----------
@@ -28,11 +29,11 @@ def create_hierarchical_search_tool(
 
     Returns
     -------
-    Callable
-        Função ``search_knowledge(query: str) -> str``.
+    Toolkit
+        Toolkit agno com a tool ``search_knowledge``.
     """
 
-    def search_knowledge(query: str) -> str:
+    async def search_knowledge(query: str) -> str:
         """Busca informações relevantes no knowledge base hierárquico.
 
         Args:
@@ -42,17 +43,9 @@ def create_hierarchical_search_tool(
             Trechos relevantes encontrados no knowledge base.
         """
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    results = pool.submit(
-                        asyncio.run, strategy.search(query, top_k=top_k)
-                    ).result()
-            else:
-                results = asyncio.run(strategy.search(query, top_k=top_k))
-        except Exception:
-            results = []
+            results = await strategy.search(query, top_k=top_k)
+        except Exception as exc:
+            return f"Erro ao buscar no knowledge base: {exc}"
 
         if not results:
             return "Nenhuma informação relevante encontrada no knowledge base."
@@ -64,4 +57,9 @@ def create_hierarchical_search_tool(
 
         return "\n\n---\n\n".join(parts)
 
-    return search_knowledge
+    toolkit = Toolkit(
+        name="hierarchical_search",
+        instructions="Busca informações no knowledge base hierárquico do agente.",
+    )
+    toolkit.register(function=search_knowledge, name="search_knowledge")
+    return toolkit

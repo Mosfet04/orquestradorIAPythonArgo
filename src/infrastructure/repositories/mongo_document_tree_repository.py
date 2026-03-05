@@ -52,7 +52,7 @@ class MongoDocumentTreeRepository(AsyncMongoRepository, IDocumentTreeRepository)
         """Persiste nós em lote (insert_many)."""
         if not nodes:
             return
-        docs = [self._to_document(node) for node in nodes]
+        docs = [self._to_document(node, order=i) for i, node in enumerate(nodes)]
         try:
             await self._collection.insert_many(docs, ordered=False)
             self._logger.info("Nós salvos", count=len(docs))
@@ -62,16 +62,14 @@ class MongoDocumentTreeRepository(AsyncMongoRepository, IDocumentTreeRepository)
 
     async def get_root_nodes(self, doc_name: str) -> List[DocumentNode]:
         """Retorna nós raiz (level 0) de um documento."""
-        cursor = self._collection.find(
-            {"doc_name": doc_name, "level": 0}
-        ).sort("_order", 1)
+        cursor = self._collection.find({"doc_name": doc_name, "level": 0}).sort(
+            "_order", 1
+        )
         return [self._to_entity(doc) async for doc in cursor]
 
     async def get_children(self, parent_id: str) -> List[DocumentNode]:
         """Retorna filhos diretos de um nó."""
-        cursor = self._collection.find(
-            {"parent_id": parent_id}
-        ).sort("_order", 1)
+        cursor = self._collection.find({"parent_id": parent_id}).sort("_order", 1)
         return [self._to_entity(doc) async for doc in cursor]
 
     async def get_node(self, node_id: str) -> Optional[DocumentNode]:
@@ -81,15 +79,13 @@ class MongoDocumentTreeRepository(AsyncMongoRepository, IDocumentTreeRepository)
 
     async def exists(self, doc_name: str) -> bool:
         """Verifica se o documento já está indexado."""
-        count = await self._collection.count_documents(
-            {"doc_name": doc_name}, limit=1
-        )
+        count = await self._collection.count_documents({"doc_name": doc_name}, limit=1)
         return count > 0
 
     # ── mappers ─────────────────────────────────────────────────────
 
     @staticmethod
-    def _to_document(node: DocumentNode) -> dict:
+    def _to_document(node: DocumentNode, order: int = 0) -> dict:
         return {
             "id": node.id,
             "doc_name": node.doc_name,
@@ -100,6 +96,7 @@ class MongoDocumentTreeRepository(AsyncMongoRepository, IDocumentTreeRepository)
             "summary": node.summary,
             "embedding": node.embedding,
             "children_ids": node.children_ids,
+            "_order": order,
         }
 
     @staticmethod
