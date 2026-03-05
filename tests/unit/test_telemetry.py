@@ -105,6 +105,8 @@ class TestTelemetryMetrics:
         names = [
             "agent_requests_total",
             "agent_response_duration",
+            "agent_errors_total",
+            "agents_active",
             "team_requests_total",
             "agents_loaded",
             "teams_loaded",
@@ -158,3 +160,19 @@ class TestTelemetryMetrics:
         """Context manager deve medir duração sem erro."""
         with TelemetryMetrics.measure_duration("agent-1"):
             pass  # simula operação
+
+    def test_record_agent_error(self):
+        """Registrar erro de agente não deve lançar exceção."""
+        TelemetryMetrics.record_agent_error("agent-1")
+
+    def test_record_agent_active_increment(self):
+        """Incrementar gauge de agentes ativos não deve lançar exceção."""
+        TelemetryMetrics.record_agent_active(1, "agent-1")
+
+    def test_record_agent_active_decrement(self):
+        """Decrementar gauge de agentes ativos não deve lançar exceção."""
+        TelemetryMetrics.record_agent_active(-1, "agent-1")
+
+    def test_record_agent_active_without_id(self):
+        """Gauge de agentes ativos sem agent_id não deve lançar exceção."""
+        TelemetryMetrics.record_agent_active(1)

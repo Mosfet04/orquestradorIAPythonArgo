@@ -50,7 +50,7 @@ The **AI Agents Orchestrator** manages and orchestrates multiple AI agents. Each
 | **Multi-Provider** | Ollama, OpenAI, Anthropic, Gemini, Groq, and Azure |
 | **Built-in RAG** | Retrieval-Augmented Generation with embeddings persisted in MongoDB |
 | **Smart Memory** | Long-term user memory with automatic session summaries |
-| **OpenTelemetry Tracing** | Automatic spans & traces for agents and teams, stored in MongoDB |
+| **Observability via Grafana LGTM** | Traces, metrics, and logs exported to Grafana (Tempo, Loki, Prometheus) via OpenTelemetry. MongoDB is no longer used for observability. |
 | **AgentOS + AG-UI** | Web interface via [os.agno.com](https://os.agno.com) with SSE streaming |
 | **Clean Architecture** | Domain → Application → Infrastructure → Presentation layers |
 | **179 Unit Tests** | ~88% coverage across all layers |
@@ -99,7 +99,7 @@ cd orquestradorIAPythonArgo
 docker-compose up -d
 ```
 
-This brings up **MongoDB** (port 27017), **Ollama** (port 11434), and the **application** (port 7777).
+This brings up **MongoDB** (port 27017), **Ollama** (port 11434), **Grafana LGTM** (port 3000), and the **application** (port 7777).
 
 ### Verification
 
@@ -111,6 +111,7 @@ After starting, access:
 | http://localhost:7777/docs | OpenAPI / Swagger documentation |
 | http://localhost:7777/config | AgentOS configuration (agents, databases) |
 | http://localhost:7777/agents | Active agents list |
+| http://localhost:3000 | Grafana UI (dashboards, traces, metrics, logs) |
 
 ---
 
@@ -192,7 +193,7 @@ graph TB
 orquestradorIAPythonArgo/
 ├── app.py                          # Entry point — creates the FastAPI app
 ├── requirements.txt                # Python dependencies
-├── docker-compose.yml              # MongoDB + Ollama + App
+├── docker-compose.yml              # MongoDB + Ollama + Grafana LGTM + App
 ├── Dockerfile                      # Docker image build
 ├── .env                            # Environment variables (NOT committed)
 ├── docs/                           # RAG documents (e.g., basic-prog.txt)
@@ -328,13 +329,13 @@ sequenceDiagram
 - ✅ **Multi-Provider** — Ollama, OpenAI, Anthropic, Gemini, Groq, and Azure OpenAI
 - ✅ **RAG (Retrieval-Augmented Generation)** — Documents in `docs/` are embedded and persisted in MongoDB
 - ✅ **Smart Memory** — User long-term memory and automatic session summaries (per-agent/team configurable)
-- ✅ **OpenTelemetry Tracing** — Automatic spans & traces for agents and teams, stored in MongoDB (`agno_traces`, `agno_spans`)
+- ✅ **Observability via Grafana LGTM** — Traces, metrics, and logs exported to Grafana (Tempo, Loki, Prometheus) via OpenTelemetry
 - ✅ **Custom HTTP Tools** — Integrate any HTTP API as an agent tool
 - ✅ **AgentOS + AG-UI** — Web interface via [os.agno.com](https://os.agno.com) with real-time SSE streaming
 - ✅ **Agent Cache** — 5-minute TTL with stale-cache fallback on errors
 - ✅ **Detailed Health Check** — MongoDB connectivity, system memory, response time
 - ✅ **Structured Logging** — Structlog with sensitive data sanitization
-- ✅ **Docker Compose** — MongoDB + Ollama + App in one command
+- ✅ **Docker Compose** — MongoDB + Ollama + Grafana LGTM + App in one command
 
 ---
 
@@ -375,7 +376,10 @@ OLLAMA_BASE_URL=http://localhost:11434
 # AZURE_ENDPOINT=https://xxx.openai.azure.com/
 # AZURE_VERSION=2024-02-01
 
-# ═══ agno Telemetry (optional) ═══
+# ═══ OpenTelemetry (optional) ═══
+OTEL_ENABLED=true
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317   # Docker: http://grafana-lgtm:4317
+OTEL_SERVICE_NAME=orquestrador-ia
 # AGNO_TELEMETRY=false
 ```
 
@@ -464,8 +468,8 @@ MongoDB is the configuration heart. All collections are in the database defined 
 | `rag` | **agno** (automatic) | Embedded document chunks for RAG |
 | `agno_sessions` | **agno** (automatic) | Sessions, run history |
 | `agno_memories` | **agno** (automatic) | Long-term memories per user |
-| `agno_traces` | **agno** (automatic) | OpenTelemetry traces (complete executions) |
-| `agno_spans` | **agno** (automatic) | OpenTelemetry spans (individual operations) |
+| `agno_traces` | **agno** (automatic) | Agent execution traces (agno internal, not OTel) |
+| `agno_spans` | **agno** (automatic) | Agent operation spans (agno internal, not OTel) |
 
 ### Collection: `agents_config`
 

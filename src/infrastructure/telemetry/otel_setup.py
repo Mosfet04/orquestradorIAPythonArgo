@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import logging
 import os
+import socket
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 
 from opentelemetry import trace, metrics
 from opentelemetry.sdk.resources import Resource, SERVICE_NAME, SERVICE_VERSION
@@ -28,6 +30,9 @@ if TYPE_CHECKING:
     from src.infrastructure.config.app_config import AppConfig
 
 logger = logging.getLogger(__name__)
+
+_OTLP_DEFAULT_GRPC_PORT = 4317
+_CONNECTIVITY_TIMEOUT_S = 3
 
 # ── Globals para shutdown controlado ────────────────────────────────
 _tracer_provider: TracerProvider | None = None
@@ -121,9 +126,7 @@ def _setup_log_export(resource: Resource, endpoint: str) -> None:
 
         log_exporter = OTLPLogExporter(endpoint=endpoint, insecure=True)
         log_provider = LoggerProvider(resource=resource)
-        log_provider.add_log_record_processor(
-            BatchLogRecordProcessor(log_exporter)
-        )
+        log_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
         set_logger_provider(log_provider)
 
         # Adiciona handler ao root logger — captura tudo do stdlib/structlog
@@ -135,6 +138,23 @@ def _setup_log_export(resource: Resource, endpoint: str) -> None:
         logger.info("Log export OTLP configurado com sucesso")
     except Exception as exc:
         logger.warning("Falha ao configurar log export OTLP: %s", exc)
+
+
+def _check_otlp_connectivity(endpoint: str) -> bool:
+    """Verifica se o endpoint OTLP gRPC está acessível via TCP.
+
+    Teste rápido e não-bloqueante para diagnóstico no startup.
+    Não impede a inicialização — apenas emite warning se falhar.
+    """
+    try:
+        parsed = urlparse(endpoint)
+        host = parsed.hostname or "localhost"
+        port = parsed.port or _OTLP_DEFAULT_GRPC_PORT
+        sock = socket.create_connection((host, port), timeout=_CONNECTIVITY_TIMEOUT_S)
+        sock.close()
+        return True
+    except OSError:
+        return False
 
 
 def setup_telemetry(config: AppConfig) -> None:
@@ -154,6 +174,14 @@ def setup_telemetry(config: AppConfig) -> None:
 
     endpoint = config.otel_exporter_endpoint
     logger.info("Inicializando OpenTelemetry → endpoint=%s", endpoint)
+
+    if not _check_otlp_connectivity(endpoint):
+        logger.warning(
+            "Endpoint OTLP %s não está acessível. "
+            "Traces/métricas/logs NÃO serão exportados. "
+            "Verifique se o Grafana LGTM está rodando (docker compose up grafana-lgtm).",
+            endpoint,
+        )
 
     resource = _build_resource(config)
 

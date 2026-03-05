@@ -29,6 +29,18 @@ agent_response_duration = _meter.create_histogram(
     unit="s",
 )
 
+agent_errors_total = _meter.create_counter(
+    name="agent_errors_total",
+    description="Total de erros em requisições de agentes",
+    unit="1",
+)
+
+agents_active = _meter.create_up_down_counter(
+    name="agents_active",
+    description="Número de requisições de agentes em andamento",
+    unit="1",
+)
+
 team_requests_total = _meter.create_counter(
     name="team_requests_total",
     description="Total de requisições processadas por teams",
@@ -99,11 +111,25 @@ class TelemetryMetrics:
         agent_requests_total.add(1, {"agent_id": agent_id, "status": status})
 
     @staticmethod
+    def record_agent_error(agent_id: str) -> None:
+        """Registra um erro em requisição de agente."""
+        agent_errors_total.add(1, {"agent_id": agent_id})
+
+    @staticmethod
+    def record_agent_active(delta: int, agent_id: str = "") -> None:
+        """Incrementa/decrementa o gauge de requests em andamento.
+
+        Args:
+            delta: +1 ao iniciar request, -1 ao finalizar.
+            agent_id: Identificador do agente.
+        """
+        attrs = {"agent_id": agent_id} if agent_id else {}
+        agents_active.add(delta, attrs)
+
+    @staticmethod
     def record_agent_duration(agent_id: str, duration_s: float) -> None:
         """Registra a duração de uma resposta de agente."""
-        agent_response_duration.record(
-            duration_s, {"agent_id": agent_id}
-        )
+        agent_response_duration.record(duration_s, {"agent_id": agent_id})
 
     @staticmethod
     def record_team_request(team_id: str, status: str = "success") -> None:
