@@ -12,6 +12,7 @@ from agno.team import Team
 from src.application.use_cases.get_active_agents_use_case import GetActiveAgentsUseCase
 from src.application.use_cases.get_active_teams_use_case import GetActiveTeamsUseCase
 from src.domain.ports import ILogger
+from src.infrastructure.telemetry.metrics import TelemetryMetrics
 
 
 class AgentCacheEntry:
@@ -72,14 +73,18 @@ class OrquestradorController:
         """Retorna agentes com cache inteligente."""
         async with self._lock:
             if self._cache and not self._cache.is_expired():
+                TelemetryMetrics.record_cache_hit("agents")
                 return self._cache.access()
+        TelemetryMetrics.record_cache_miss("agents")
         return await self._load_agents()
 
     async def get_teams(self) -> List[Team]:
         """Retorna teams com cache inteligente."""
         async with self._lock:
             if self._team_cache and not self._team_cache.is_expired():
+                TelemetryMetrics.record_cache_hit("teams")
                 return self._team_cache.access()
+        TelemetryMetrics.record_cache_miss("teams")
         # Teams dependem de agents — garante que agents existam
         agents = await self.get_agents()
         return await self._load_teams(agents)

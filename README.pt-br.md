@@ -99,7 +99,7 @@ cd orquestradorIAPythonArgo
 docker-compose up -d
 ```
 
-Isso sobe: **MongoDB** (porta 27017), **Ollama** (porta 11434), e a **aplicação** (porta 7777).
+Isso sobe: **MongoDB** (porta 27017), **Ollama** (porta 11434), **Grafana LGTM** (porta 3000), e a **aplicação** (porta 7777).
 
 ### Verificação
 
@@ -111,6 +111,7 @@ Após iniciar, acesse:
 | http://localhost:7777/docs | Documentação OpenAPI / Swagger |
 | http://localhost:7777/config | Configuração do AgentOS (agentes, databases) |
 | http://localhost:7777/agents | Lista de agentes ativos |
+| http://localhost:3000 | UI Grafana (dashboards, traces, métricas, logs) |
 
 ---
 
@@ -192,7 +193,7 @@ graph TB
 orquestradorIAPythonArgo/
 ├── app.py                          # Ponto de entrada — cria o FastAPI app
 ├── requirements.txt                # Dependências Python
-├── docker-compose.yml              # MongoDB + Ollama + App
+├── docker-compose.yml              # MongoDB + Ollama + Grafana LGTM + App
 ├── Dockerfile                      # Build da imagem Docker
 ├── .env                            # Variáveis de ambiente (NÃO commitado)
 ├── docs/                           # Documentos para RAG (ex: basic-prog.txt)
@@ -328,13 +329,13 @@ sequenceDiagram
 - ✅ **Multi-Provider** — Ollama, OpenAI, Anthropic, Gemini, Groq e Azure OpenAI
 - ✅ **RAG (Retrieval-Augmented Generation)** — Documentos na pasta `docs/` são embedados e persistidos no MongoDB
 - ✅ **Memória Inteligente** — Memória de usuário e sumários de sessão (configurável por agente/team)
-- ✅ **OpenTelemetry Tracing** — Spans e traces automáticos para agentes e teams, persistidos no MongoDB (`agno_traces`, `agno_spans`)
+- ✅ **Observabilidade via Grafana LGTM** — Traces, métricas e logs exportados ao Grafana (Tempo, Loki, Prometheus) via OpenTelemetry
 - ✅ **Custom HTTP Tools** — Integre qualquer API HTTP como ferramenta do agente
 - ✅ **AgentOS + AG-UI** — Interface web via [os.agno.com](https://os.agno.com) com streaming SSE em tempo real
 - ✅ **Cache de Agentes** — TTL de 5 minutos com fallback para cache expirado em caso de erro
 - ✅ **Health Check Detalhado** — Verifica MongoDB, memória do sistema, tempo de resposta
 - ✅ **Logging Estruturado** — Structlog com sanitização de dados sensíveis
-- ✅ **Docker Compose** — MongoDB + Ollama + App em um comando
+- ✅ **Docker Compose** — MongoDB + Ollama + Grafana LGTM + App em um comando
 
 ### Capacidades Dinâmicas
 
@@ -343,7 +344,7 @@ graph LR
     A["📝 Inserir Config<br/>no MongoDB"] --> B["🔄 POST /admin/refresh-cache<br/>ou aguardar TTL 5min"]
     B --> C["🤖 Agente/Team Ativo<br/>com Tools e RAG"]
     C --> D["💬 Disponível em<br/>os.agno.com"]
-    C --> E["📡 Traces no MongoDB<br/>(agno_traces, agno_spans)"]
+    C --> E["📡 Traces & Métricas<br/>no Grafana LGTM"]
 
     style A fill:#e1f5fe
     style C fill:#f3e5f5
@@ -389,7 +390,10 @@ OLLAMA_BASE_URL=http://localhost:11434
 # AZURE_ENDPOINT=https://xxx.openai.azure.com/
 # AZURE_VERSION=2024-02-01
 
-# ═══ Telemetria agno (opcional) ═══
+# ═══ OpenTelemetry (opcional) ═══
+OTEL_ENABLED=true
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317   # Docker: http://grafana-lgtm:4317
+OTEL_SERVICE_NAME=orquestrador-ia
 # AGNO_TELEMETRY=false
 ```
 
@@ -478,8 +482,8 @@ O MongoDB é o coração da configuração. Todas as collections estão no datab
 | `rag` | **agno** (automático) | Chunks embedados dos documentos RAG |
 | `agno_sessions` | **agno** (automático) | Sessões, histórico de runs |
 | `agno_memories` | **agno** (automático) | Memórias de longo prazo por usuário |
-| `agno_traces` | **agno** (automático) | Traces OpenTelemetry (execuções completas) |
-| `agno_spans` | **agno** (automático) | Spans OpenTelemetry (operações individuais) |
+| `agno_traces` | **agno** (automático) | Traces de execução do agente (interno agno, não OTel) |
+| `agno_spans` | **agno** (automático) | Spans de operações do agente (interno agno, não OTel) |
 
 ### Collection: `agents_config`
 
