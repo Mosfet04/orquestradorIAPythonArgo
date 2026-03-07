@@ -55,7 +55,7 @@ def test_add_otel_trace_context_logs_on_exception(monkeypatch, caplog):
 
     def bad_span():
         raise RuntimeError("no otel")
-    
+
     trace_mod.get_current_span = staticmethod(bad_span)
     pkg = types.ModuleType("opentelemetry")
     pkg.trace = trace_mod

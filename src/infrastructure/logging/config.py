@@ -132,10 +132,10 @@ def setup_logging():
 
     # Ajustar nível baseado em variável de ambiente
     log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
-    
+
     # Aplicar nível aos handlers de console
     LOGGING_CONFIG['handlers']['console']['level'] = log_level
-    
+
     # Configurar logging
     logging.config.dictConfig(LOGGING_CONFIG)
 

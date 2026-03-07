@@ -8,14 +8,14 @@ from typing import Any, Callable, Dict
 from .structlog_logger import LoggerFactory
 
 
-def log_execution(logger_name: str = "execution", 
+def log_execution(logger_name: str = "execution",
                  level: str = "INFO",
                  include_args: bool = False,
                  include_result: bool = False,
                  mask_sensitive: bool = True):
     """
     Decorador para logging automático de execução de métodos.
-    
+
     Args:
         logger_name: Nome do logger a ser usado
         level: Nível de log (ignorado no structlog)
@@ -109,25 +109,25 @@ def log_execution(logger_name: str = "execution",
     return decorator
 
 
-def log_performance(threshold_seconds: float = 1.0, 
+def log_performance(threshold_seconds: float = 1.0,
                    logger_name: str = "performance"):
     """
     Decorador para logging de performance.
     Só registra se a execução demorar mais que o threshold.
-    
+
     Args:
         threshold_seconds: Tempo mínimo para registrar log
         logger_name: Nome do logger
     """
     def decorator(func: Callable) -> Callable:
         logger = LoggerFactory.get_logger(logger_name)
-        
+
         @functools.wraps(func)
         def wrapper(*args, **kwargs) -> Any:
             start_time = time.time()
             result = func(*args, **kwargs)
             execution_time = time.time() - start_time
-            
+
             if execution_time >= threshold_seconds:
                 func_name = f"{func.__module__}.{func.__qualname__}"
                 performance_data: Dict[str, Any] = {
@@ -136,11 +136,11 @@ def log_performance(threshold_seconds: float = 1.0,
                     "threshold_seconds": threshold_seconds,
                     "slow_execution": True
                 }
-                
+
                 logger.performance(f"Execução lenta detectada: {func_name}", **performance_data)
-            
+
             return result
-        
+
         return wrapper
     return decorator
 

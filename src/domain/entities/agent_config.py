@@ -6,7 +6,7 @@ from src.domain.entities.rag_config import RagConfig
 @dataclass
 class AgentConfig:
     """Entidade que representa a configuração de um agente."""
-    
+
     id: str
     nome: str
     factory_ia_model: str
@@ -18,7 +18,7 @@ class AgentConfig:
     user_memory_active: bool = False
     summary_active: bool = False
     active: bool = True
-    
+
     def __post_init__(self):
         if not self.id:
             raise ValueError("ID do agente não pode estar vazio")
