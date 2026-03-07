@@ -171,7 +171,9 @@ function Start-Application {
     Write-Output ""
     Write-Information "Press Ctrl+C to stop the application" -InformationAction Continue
 
-    python app.py
+    if ($PSCmdlet.ShouldProcess("AI Agents Orchestrator", "Start")) {
+        python app.py
+    }
 }
 
 # Main execution
