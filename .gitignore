@@ -79,3 +79,9 @@ build/
 
 #Ignore vscode AI rules
 .github\instructions\*
+
+
+#Ignore vscode AI rules
+.github/instructions/codacy.instructions.md
+
+codacy.yaml
