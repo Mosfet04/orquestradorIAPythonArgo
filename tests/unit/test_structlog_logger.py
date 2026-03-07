@@ -82,7 +82,9 @@ def test_setup_structlog_and_logger_factory():
     setup_structlog()
     logger = LoggerFactory.get_logger("unit-test")
     assert logger is not None
-from src.infrastructure.logging.structlog_logger import LoggerFactory, StructlogLogger, DataSanitizer
+
+
+from src.infrastructure.logging.structlog_logger import StructlogLogger
 
 
 def test_structlog_logger_basic_flow(monkeypatch):

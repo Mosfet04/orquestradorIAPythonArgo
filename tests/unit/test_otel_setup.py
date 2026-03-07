@@ -1,12 +1,11 @@
 import sys
 import types
 import logging
-import pytest
+
+from src.infrastructure.telemetry import otel_setup
 
 
 def test__build_resource_fields():
-    from src.infrastructure.telemetry import otel_setup
-
     class DummyCfg:
         otel_service_name = "svc"
 
@@ -18,8 +17,6 @@ def test__build_resource_fields():
 
 
 def test__setup_tracing_and_metrics(monkeypatch):
-    from src.infrastructure.telemetry import otel_setup
-
     class DummyExporter:
         def __init__(self, **kwargs):
             pass
@@ -57,8 +54,6 @@ def test__setup_tracing_and_metrics(monkeypatch):
 
 
 def test__instrument_frameworks_all_fail(monkeypatch, caplog):
-    from src.infrastructure.telemetry import otel_setup
-
     monkeypatch.setitem(
         sys.modules, "opentelemetry.instrumentation.httpx", types.ModuleType("fail")
     )
@@ -72,11 +67,6 @@ def test__instrument_frameworks_all_fail(monkeypatch, caplog):
 
 
 def test__setup_log_export_handles_exception(monkeypatch, caplog):
-    from src.infrastructure.telemetry import otel_setup
-
-    def fail(*a, **k):
-        raise RuntimeError("fail")
-
     monkeypatch.setattr(otel_setup, "logging", logging)
     monkeypatch.setitem(
         sys.modules, "opentelemetry.sdk._logs", types.ModuleType("fail")
@@ -85,9 +75,6 @@ def test__setup_log_export_handles_exception(monkeypatch, caplog):
     otel_setup._setup_log_export(object(), "http://x")
     msgs = [r.message for r in caplog.records]
     assert any("Falha ao configurar log export OTLP" in m for m in msgs)
-
-
-from src.infrastructure.telemetry import otel_setup
 
 
 class DummyConfig:
