@@ -30,7 +30,7 @@ class ToolParameter:
     description: str
     required: bool = False
     default_value: Optional[Any] = None
-    
+
     def __post_init__(self):
         if not self.name:
             raise ValueError("Nome do parâmetro não pode estar vazio")
@@ -41,7 +41,7 @@ class ToolParameter:
 @dataclass
 class Tool:
     """Entidade que representa uma ferramenta HTTP."""
-    
+
     id: str
     name: str
     description: str
@@ -51,7 +51,7 @@ class Tool:
     instructions: Optional[str] = None
     headers: Optional[Dict[str, str]] = None
     active: bool = True
-    
+
     def __post_init__(self):
         if not self.id:
             raise ValueError("ID da tool não pode estar vazio")

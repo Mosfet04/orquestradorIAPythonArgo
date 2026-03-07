@@ -29,7 +29,7 @@ function Write-Error {
     Write-Information "[ERROR] $Message" -InformationAction Continue
 }
 
-function Check-Requirements {
+function Test-Requirements {
     Write-Step "Checking system requirements..."
     
     # Check Python
@@ -62,7 +62,7 @@ function Check-Requirements {
     Write-Success "All requirements met!"
 }
 
-function Setup-VirtualEnvironment {
+function Initialize-VirtualEnvironment {
     Write-Step "Setting up virtual environment..."
     
     if (!(Test-Path "venv")) {
@@ -91,7 +91,7 @@ function Install-Dependencies {
     }
 }
 
-function Setup-Environment {
+function Initialize-Environment {
     Write-Step "Setting up environment configuration..."
     
     if (!(Test-Path ".env")) {
@@ -109,7 +109,7 @@ function Setup-Environment {
     }
 }
 
-function Setup-Database {
+function Initialize-Database {
     Write-Step "Setting up MongoDB..."
     
     # Check if MongoDB is running
@@ -143,7 +143,7 @@ function Setup-Database {
     }
 }
 
-function Run-Tests {
+function Invoke-Tests {
     Write-Step "Running tests..."
     
     try {
@@ -159,6 +159,8 @@ function Run-Tests {
 }
 
 function Start-Application {
+    [CmdletBinding(SupportsShouldProcess)]
+    param()
     Write-Step "Starting the application..."
 
     Write-Information "Starting AI Agents Orchestrator..." -InformationAction Continue
@@ -169,27 +171,29 @@ function Start-Application {
     Write-Output ""
     Write-Information "Press Ctrl+C to stop the application" -InformationAction Continue
 
-    python app.py
+    if ($PSCmdlet.ShouldProcess("AI Agents Orchestrator", "Start")) {
+        python app.py
+    }
 }
 
 # Main execution
 Write-Header
 
 switch ($Command) {
-    "requirements" { Check-Requirements }
-    "venv" { Setup-VirtualEnvironment }
+    "requirements" { Test-Requirements }
+    "venv" { Initialize-VirtualEnvironment }
     "install" { Install-Dependencies }
-    "env" { Setup-Environment }
-    "db" { Setup-Database }
-    "test" { Run-Tests }
+    "env" { Initialize-Environment }
+    "db" { Initialize-Database }
+    "test" { Invoke-Tests }
     "start" { Start-Application }
     "all" {
-        Check-Requirements
-        Setup-VirtualEnvironment
+        Test-Requirements
+        Initialize-VirtualEnvironment
         Install-Dependencies
-        Setup-Environment
-        Setup-Database
-        Run-Tests
+        Initialize-Environment
+        Initialize-Database
+        Invoke-Tests
         Write-Output ""
         Write-Success "Setup completed successfully!"
         Write-Output ""

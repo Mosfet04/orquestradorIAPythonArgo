@@ -20,6 +20,11 @@ class AppConfig:
     ollama_base_url: str
     openai_api_key: Optional[str] = None
 
+    # ── OpenTelemetry / Observabilidade ──────────────────────────────
+    otel_enabled: bool = True
+    otel_exporter_endpoint: str = "http://localhost:4317"
+    otel_service_name: str = "orquestrador-ia"
+
     @classmethod
     def load(cls) -> AppConfig:
         """Carrega e valida configurações a partir de variáveis de ambiente."""
@@ -35,6 +40,11 @@ class AppConfig:
             log_level=os.getenv("LOG_LEVEL", "INFO"),
             ollama_base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
             openai_api_key=os.getenv("OPENAI_API_KEY"),
+            otel_enabled=os.getenv("OTEL_ENABLED", "true").lower() in ("true", "1", "yes"),
+            otel_exporter_endpoint=os.getenv(
+                "OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317"
+            ),
+            otel_service_name=os.getenv("OTEL_SERVICE_NAME", "orquestrador-ia"),
         )
         config._validate()
         return config

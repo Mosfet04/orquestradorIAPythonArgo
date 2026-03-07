@@ -44,7 +44,7 @@ class LogContext:
 
 class DataSanitizer:
     """Sanitizador de dados sensíveis para logs cloud-ready."""
-    
+
     # Padrões de dados sensíveis
     SENSITIVE_PATTERNS = {
         'api_key': re.compile(r'(?i)(api[_-]?key|apikey)[\s]*[=:][\s]*["\']?([a-zA-Z0-9_-]{20,})["\']?'),
@@ -58,7 +58,7 @@ class DataSanitizer:
         'aws_access_key': re.compile(r'AKIA[0-9A-Z]{16}'),
         'aws_secret_key': re.compile(r'[0-9a-zA-Z/+]{40}'),
     }
-    
+
     # Campos que devem ser sempre sanitizados
     SENSITIVE_FIELDS = {
         'password', 'passwd', 'pwd', 'api_key', 'apikey', 'token', 'secret',
@@ -67,23 +67,23 @@ class DataSanitizer:
         'aws_access_key_id', 'aws_secret_access_key', 'database_password',
         'mongo_password', 'redis_password', 'jwt_secret', 'encryption_key'
     }
-    
+
     @classmethod
     def sanitize_data(cls, data: Any, max_depth: int = 5) -> Any:
         """
         Sanitiza dados removendo informações sensíveis.
         Otimizado para logs estruturados em cloud.
-        
+
         Args:
             data: Dados a serem sanitizados
             max_depth: Profundidade máxima para recursão
-            
+
         Returns:
             Dados sanitizados
         """
         if max_depth <= 0:
             return {"_truncated": "max_depth_reached", "_type": type(data).__name__}
-            
+
         if isinstance(data, str):
             return cls._sanitize_string(data)
         elif isinstance(data, dict):
@@ -97,39 +97,39 @@ class DataSanitizer:
         else:
             # Para outros tipos, converter para string e sanitizar
             return cls._sanitize_string(str(data))
-    
+
     @classmethod
     def _sanitize_string(cls, text: str) -> str:
         """Sanitiza uma string removendo dados sensíveis."""
         if not isinstance(text, str) or len(text) == 0:
             return text
-            
+
         # Limitar tamanho do log para performance em cloud
         if len(text) > 5000:  # Reduzido para cloud
             text = text[:5000] + "...[TRUNCATED]"
-        
+
         sanitized = text
-        
+
         # Aplicar padrões de sanitização
         for pattern_name, pattern in cls.SENSITIVE_PATTERNS.items():
             if pattern.search(sanitized):
                 sanitized = pattern.sub(
-                    lambda m: f"{m.group(1) if m.groups() else ''}=***{pattern_name.upper()}_MASKED***", 
+                    lambda m: f"{m.group(1) if m.groups() else ''}=***{pattern_name.upper()}_MASKED***",
                     sanitized
                 )
-        
+
         return sanitized
-    
+
     @classmethod
     def _sanitize_dict(cls, data: Dict[str, Any], max_depth: int) -> Dict[str, Any]:
         """Sanitiza um dicionário."""
         sanitized = {}
-        
+
         for key, value in data.items():
             # Verificar se a chave é sensível (busca mais rigorosa)
             key_lower = key.lower()
             is_sensitive = any(sensitive in key_lower for sensitive in cls.SENSITIVE_FIELDS)
-            
+
             if is_sensitive:
                 if isinstance(value, str) and len(value) > 0:
                     # Criar hash para correlação sem exposição
@@ -139,9 +139,9 @@ class DataSanitizer:
                     sanitized[key] = "***MASKED***"
             else:
                 sanitized[key] = cls.sanitize_data(value, max_depth)
-        
+
         return sanitized
-    
+
     @classmethod
     def _sanitize_list(cls, data: List[Any], max_depth: int) -> List[Any]:
         """Sanitiza uma lista."""
@@ -153,7 +153,7 @@ class DataSanitizer:
             ]
         else:
             return [cls.sanitize_data(item, max_depth) for item in data]
-    
+
     @classmethod
     def hash_sensitive_data(cls, data: str) -> str:
         """Cria hash de dados sensíveis para correlação sem exposição."""
@@ -165,6 +165,29 @@ def add_correlation_id(logger, method_name, event_dict):
     if 'correlation_id' not in event_dict:
         import uuid
         event_dict['correlation_id'] = str(uuid.uuid4())[:8]
+    return event_dict
+
+
+def add_otel_trace_context(logger, method_name, event_dict):
+    """Injeta trace_id e span_id do OpenTelemetry no log para correlação.
+
+    Permite navegar do Grafana Loki (logs) → Grafana Tempo (traces)
+    clicando no trace_id.
+    """
+    try:
+        from opentelemetry import trace as otel_trace
+
+        span = otel_trace.get_current_span()
+        ctx = span.get_span_context()
+        if ctx and ctx.trace_id:
+            event_dict["trace_id"] = format(ctx.trace_id, "032x")
+            event_dict["span_id"] = format(ctx.span_id, "016x")
+    except Exception as exc:
+        # Registrar a exceção em debug para facilitar troubleshooting sem
+        # poluir logs de produção em níveis superiores.
+        logging.getLogger(__name__).debug(
+            "Falha ao injetar contexto OTel nos logs: %s", exc, exc_info=True
+        )
     return event_dict
 
 
@@ -197,7 +220,7 @@ def sanitize_log_data(logger, method_name, event_dict):
         'records_processed', 'duration_seconds', 'error_type', 'error_message',
         'action', 'kubernetes_pod', 'trace_id'
     }
-    
+
     # Campos sensíveis definidos
     sensitive_fields = {
         'password', 'passwd', 'pwd', 'api_key', 'apikey', 'token', 'secret',
@@ -206,14 +229,14 @@ def sanitize_log_data(logger, method_name, event_dict):
         'aws_access_key_id', 'aws_secret_access_key', 'database_password',
         'mongo_password', 'redis_password', 'jwt_secret', 'encryption_key'
     }
-    
+
     # Sanitizar campos específicos
     for key, value in list(event_dict.items()):
         if key not in protected_fields:
             # Verificar se o campo é sensível
             key_lower = key.lower()
             is_sensitive = any(sensitive in key_lower for sensitive in sensitive_fields)
-            
+
             if is_sensitive:
                 if isinstance(value, str) and len(value) > 0:
                     # Criar hash para correlação sem exposição
@@ -224,28 +247,29 @@ def sanitize_log_data(logger, method_name, event_dict):
             else:
                 # Para campos não sensíveis, aplicar sanitização geral
                 event_dict[key] = DataSanitizer.sanitize_data(value)
-    
+
     return event_dict
 
 
 def setup_structlog():
     """Configura structlog para ambiente cloud-ready."""
-    
+
     # Criar diretório de logs se não existir
     log_dir = Path("logs")
     log_dir.mkdir(exist_ok=True)
-    
+
     # Configurar logging padrão
     logging.basicConfig(
         format="%(message)s",
         stream=sys.stdout,
         level=logging.INFO,
     )
-    
+
     # Procesadores para desenvolvimento
     dev_processors = [
         structlog.contextvars.merge_contextvars,
         add_correlation_id,
+        add_otel_trace_context,
         add_timestamp,
         add_service_metadata,
         sanitize_log_data,
@@ -253,11 +277,12 @@ def setup_structlog():
         structlog.processors.StackInfoRenderer(),
         structlog.dev.ConsoleRenderer(colors=True)
     ]
-    
+
     # Procesadores para produção (cloud)
     prod_processors = [
         structlog.contextvars.merge_contextvars,
         add_correlation_id,
+        add_otel_trace_context,
         add_timestamp,
         add_service_metadata,
         sanitize_log_data,
@@ -266,11 +291,11 @@ def setup_structlog():
         structlog.processors.dict_tracebacks,
         structlog.processors.JSONRenderer()
     ]
-    
+
     # Escolher processadores baseado no ambiente
     environment = os.getenv('ENVIRONMENT', 'development').lower()
     processors = prod_processors if environment == 'production' else dev_processors
-    
+
     # Configurar structlog
     structlog.configure(
         processors=processors,
@@ -283,47 +308,47 @@ def setup_structlog():
 
 class StructlogLogger:
     """Logger wrapper usando structlog com funcionalidades específicas para cloud."""
-    
+
     def __init__(self, name: str):
         self.name = name
         self.logger = structlog.get_logger(name)
         self.context = LogContext()
-    
+
     def bind(self, **kwargs) -> 'StructlogLogger':
         """Vincula contexto ao logger."""
         new_logger = StructlogLogger(self.name)
         new_logger.logger = self.logger.bind(**kwargs)
         new_logger.context = self.context
         return new_logger
-    
+
     def set_context(self, **kwargs):
         """Define o contexto para os próximos logs."""
         for key, value in kwargs.items():
             if hasattr(self.context, key):
                 setattr(self.context, key, value)
-        
+
         # Aplicar contexto ao logger
         context_dict = {k: v for k, v in asdict(self.context).items() if v is not None}
         self.logger = self.logger.bind(**context_dict)
-    
+
     def clear_context(self):
         """Limpa o contexto atual."""
         self.context = LogContext()
         self.logger = structlog.get_logger(self.name)
-    
+
     # Métodos de logging padrão
     def debug(self, message: str, **kwargs):
         """Log de debug."""
         self.logger.debug(message, **kwargs)
-    
+
     def info(self, message: str, **kwargs):
         """Log de informação."""
         self.logger.info(message, **kwargs)
-    
+
     def warning(self, message: str, **kwargs):
         """Log de aviso."""
         self.logger.warning(message, **kwargs)
-    
+
     def error(self, message: str, exception: Optional[Exception] = None, **kwargs):
         """Log de erro."""
         if exception:
@@ -331,7 +356,7 @@ class StructlogLogger:
             kwargs['exception_message'] = str(exception)
             kwargs['exception_traceback'] = traceback.format_exc()
         self.logger.error(message, **kwargs)
-    
+
     def critical(self, message: str, exception: Optional[Exception] = None, **kwargs):
         """Log crítico."""
         if exception:
@@ -339,29 +364,29 @@ class StructlogLogger:
             kwargs['exception_message'] = str(exception)
             kwargs['exception_traceback'] = traceback.format_exc()
         self.logger.critical(message, **kwargs)
-    
+
     # Métodos específicos para cloud
     def security(self, message: str, **kwargs):
         """Log de evento de segurança."""
         kwargs['log_type'] = 'security_event'
         kwargs['severity'] = 'high'
         self.logger.warning(message, **kwargs)
-    
+
     def performance(self, message: str, **kwargs):
         """Log de performance."""
         kwargs['log_type'] = 'performance_metric'
         self.logger.info(message, **kwargs)
-    
+
     def ai_request(self, message: str, **kwargs):
         """Log específico para requisições de IA."""
         kwargs['log_type'] = 'ai_interaction'
         self.logger.info(message, **kwargs)
-    
+
     def business_event(self, message: str, **kwargs):
         """Log para eventos de negócio importantes."""
         kwargs['log_type'] = 'business_event'
         self.logger.info(message, **kwargs)
-    
+
     def audit(self, message: str, **kwargs):
         """Log de auditoria."""
         kwargs['log_type'] = 'audit_log'
@@ -371,22 +396,22 @@ class StructlogLogger:
 
 class LoggerFactory:
     """Factory para criar instâncias de logger structlog."""
-    
+
     _loggers: Dict[str, StructlogLogger] = {}
     _initialized = False
-    
+
     @classmethod
     def _ensure_initialized(cls):
         """Garante que o structlog foi inicializado."""
         if not cls._initialized:
             setup_structlog()
             cls._initialized = True
-    
+
     @classmethod
     def get_logger(cls, name: str) -> StructlogLogger:
         """Obtém ou cria um logger."""
         cls._ensure_initialized()
-        
+
         if name not in cls._loggers:
             cls._loggers[name] = StructlogLogger(name)
         return cls._loggers[name]

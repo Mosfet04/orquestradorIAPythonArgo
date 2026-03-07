@@ -13,8 +13,15 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from src.infrastructure.config.app_config import AppConfig
 from src.infrastructure.dependency_injection import DependencyContainer
 from src.infrastructure.logging.logger_adapter import StructlogLoggerAdapter
+from src.infrastructure.telemetry import (
+    setup_telemetry,
+    shutdown_telemetry,
+    TelemetryMetrics,
+)
+from src.infrastructure.web.metrics_middleware import MetricsMiddleware
 from agno.os import AgentOS
 from agno.os.interfaces.agui import AGUI
+
 # Regex: /agents/{agent_id}/sessions/… → /sessions/…
 _AGENT_SESSION_RE = re.compile(r"^/agents/[^/]+(/sessions/.*)$")
 
@@ -31,7 +38,7 @@ class _PlaygroundPrefixMiddleware(BaseHTTPMiddleware):
         path: str = request.scope.get("path", "")
         # 1) Strip /playground prefix
         if path.startswith("/playground/"):
-            path = path[len("/playground"):]
+            path = path[len("/playground") :]
             request.scope["path"] = path
         # 2) Rewrite /agents/{id}/sessions/… → /sessions/…
         m = _AGENT_SESSION_RE.match(path)
@@ -53,7 +60,7 @@ class AppFactory:
         "https://www.agno.com",
         "http://localhost:3000",
         "http://localhost:7777",
-        "https://os.agno.com"
+        "https://os.agno.com",
     ]
 
     def __init__(self) -> None:
@@ -70,9 +77,10 @@ class AppFactory:
         )
 
         self._add_cors(base_app)
-        #self._add_playground_rewrite(base_app)
+        # self._add_playground_rewrite(base_app)
+        self._add_metrics_middleware(base_app)
         self._add_admin_endpoints(base_app)
-        #self._add_playground_compat_endpoints(base_app)
+        # self._add_playground_compat_endpoints(base_app)
         return base_app
 
     # ── middleware ───────────────────────────────────────────────────
@@ -81,6 +89,11 @@ class AppFactory:
     def _add_playground_rewrite(app: FastAPI) -> None:
         """Reescreve /playground/* → /* (compatibilidade app.agno.com)."""
         app.add_middleware(_PlaygroundPrefixMiddleware)
+
+    @staticmethod
+    def _add_metrics_middleware(app: FastAPI) -> None:
+        """Adiciona middleware de métricas de negócio (agents/teams)."""
+        app.add_middleware(MetricsMiddleware)
 
     @classmethod
     def _add_cors(cls, app: FastAPI) -> None:
@@ -158,6 +171,20 @@ class AppFactory:
         )
         return teams
 
+    def _instrument_fastapi(self, app: FastAPI) -> None:
+        """Aplica auto-instrumentação OpenTelemetry no FastAPI."""
+        try:
+            from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
+            FastAPIInstrumentor.instrument_app(
+                app,
+                excluded_urls="admin/health,metrics/cache",
+            )
+        except Exception:
+            self._logger.info(
+                "OpenTelemetry FastAPI instrumentation não disponível — ignorando"
+            )
+
     def _mount_agent_os(self, app: FastAPI, agents: list, teams: list) -> None:
         """Cria interfaces AG-UI e monta o AgentOS no app base."""
         agent_interfaces = [AGUI(agent=agent) for agent in agents]
@@ -174,7 +201,7 @@ class AppFactory:
             cors_allowed_origins=self._ALLOWED_ORIGINS,
             base_app=app,
             on_route_conflict="preserve_base_app",
-            tracing=True
+            tracing=False,
         )
         agent_os.get_app()
         app.openapi_schema = None
@@ -188,24 +215,21 @@ class AppFactory:
     @asynccontextmanager
     async def _lifespan(self, app: FastAPI):
         """Inicializa DI + agentes e, se houver agentes, monta AgentOS."""
+        import time as _time
+
+        startup_start = _time.perf_counter()
         try:
             self._logger.info("Lifespan: iniciando...")
             await self._ensure_container()
-            agents = await self._load_agents()
-            teams = await self._load_teams()
 
-            if agents or teams:
-                try:
-                    self._mount_agent_os(app, agents or [], teams or [])
-                except Exception as exc:
-                    self._logger.error(
-                        "Erro ao montar AgentOS — continuando sem rotas de agente",
-                        error_type=exc.__class__.__name__,
-                        error=str(exc),
-                    )
-            else:
-                self._logger.info("Nenhum agente ou team ativo — rodando só endpoints admin")
+            config = self._container.config
+            setup_telemetry(config)
+            self._instrument_fastapi(app)
 
+            agents, teams = await self._load_all_entities()
+            self._try_mount_agent_os(app, agents, teams)
+
+            self._record_startup_metrics(startup_start, agents, teams)
             yield
         except Exception as exc:
             self._logger.error(
@@ -215,8 +239,44 @@ class AppFactory:
             )
             raise
         finally:
+            shutdown_telemetry()
             if self._container:
                 await self._container.cleanup()
+
+    async def _load_all_entities(self):
+        """Carrega agentes e teams ativos."""
+        agents = await self._load_agents()
+        teams = await self._load_teams()
+        return agents, teams
+
+    def _try_mount_agent_os(self, app: FastAPI, agents, teams):
+        """Tenta montar AgentOS se houver agentes ou teams."""
+        if not agents and not teams:
+            self._logger.info(
+                "Nenhum agente ou team ativo — rodando só endpoints admin"
+            )
+            return
+
+        try:
+            self._mount_agent_os(app, agents or [], teams or [])
+        except Exception as exc:
+            self._logger.error(
+                "Erro ao montar AgentOS — continuando sem rotas de agente",
+                error_type=exc.__class__.__name__,
+                error=str(exc),
+            )
+
+    def _record_startup_metrics(self, startup_start, agents, teams):
+        """Registra métricas de startup."""
+        import time as _time
+        startup_elapsed = _time.perf_counter() - startup_start
+        TelemetryMetrics.record_startup_duration(startup_elapsed)
+        TelemetryMetrics.record_agents_loaded(len(agents) if agents else 0)
+        TelemetryMetrics.record_teams_loaded(len(teams) if teams else 0)
+        self._logger.info(
+            "Startup completo",
+            startup_duration_s=round(startup_elapsed, 3),
+        )
 
 
 # ── module-level factory ────────────────────────────────────────────
