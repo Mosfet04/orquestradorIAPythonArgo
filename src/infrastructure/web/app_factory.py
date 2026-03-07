@@ -222,38 +222,14 @@ class AppFactory:
             self._logger.info("Lifespan: iniciando...")
             await self._ensure_container()
 
-            # ── Telemetria (antes de agentes, para capturar spans) ──
             config = self._container.config
             setup_telemetry(config)
             self._instrument_fastapi(app)
 
-            agents = await self._load_agents()
-            teams = await self._load_teams()
+            agents, teams = await self._load_all_entities()
+            self._try_mount_agent_os(app, agents, teams)
 
-            if agents or teams:
-                try:
-                    self._mount_agent_os(app, agents or [], teams or [])
-                except Exception as exc:
-                    self._logger.error(
-                        "Erro ao montar AgentOS — continuando sem rotas de agente",
-                        error_type=exc.__class__.__name__,
-                        error=str(exc),
-                    )
-            else:
-                self._logger.info(
-                    "Nenhum agente ou team ativo — rodando só endpoints admin"
-                )
-
-            # ── Métricas de startup ─────────────────────────────────
-            startup_elapsed = _time.perf_counter() - startup_start
-            TelemetryMetrics.record_startup_duration(startup_elapsed)
-            TelemetryMetrics.record_agents_loaded(len(agents) if agents else 0)
-            TelemetryMetrics.record_teams_loaded(len(teams) if teams else 0)
-            self._logger.info(
-                "Startup completo",
-                startup_duration_s=round(startup_elapsed, 3),
-            )
-
+            self._record_startup_metrics(startup_start, agents, teams)
             yield
         except Exception as exc:
             self._logger.error(
@@ -266,6 +242,41 @@ class AppFactory:
             shutdown_telemetry()
             if self._container:
                 await self._container.cleanup()
+
+    async def _load_all_entities(self):
+        """Carrega agentes e teams ativos."""
+        agents = await self._load_agents()
+        teams = await self._load_teams()
+        return agents, teams
+
+    def _try_mount_agent_os(self, app: FastAPI, agents, teams):
+        """Tenta montar AgentOS se houver agentes ou teams."""
+        if not agents and not teams:
+            self._logger.info(
+                "Nenhum agente ou team ativo — rodando só endpoints admin"
+            )
+            return
+
+        try:
+            self._mount_agent_os(app, agents or [], teams or [])
+        except Exception as exc:
+            self._logger.error(
+                "Erro ao montar AgentOS — continuando sem rotas de agente",
+                error_type=exc.__class__.__name__,
+                error=str(exc),
+            )
+
+    def _record_startup_metrics(self, startup_start, agents, teams):
+        """Registra métricas de startup."""
+        import time as _time
+        startup_elapsed = _time.perf_counter() - startup_start
+        TelemetryMetrics.record_startup_duration(startup_elapsed)
+        TelemetryMetrics.record_agents_loaded(len(agents) if agents else 0)
+        TelemetryMetrics.record_teams_loaded(len(teams) if teams else 0)
+        self._logger.info(
+            "Startup completo",
+            startup_duration_s=round(startup_elapsed, 3),
+        )
 
 
 # ── module-level factory ────────────────────────────────────────────
