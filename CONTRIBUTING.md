@@ -177,6 +177,7 @@ mypy src/
 ### Python Standards
 
 #### Naming Conventions
+
 ```python
 # ✅ Good
 class AgentFactoryService:
@@ -190,6 +191,7 @@ class agentFactory:
 ```
 
 #### Type Hints
+
 ```python
 # ✅ Good
 def get_agents(self, active_only: bool = True) -> List[AgentConfig]:
@@ -201,6 +203,7 @@ def get_agents(self, active_only=True):
 ```
 
 #### Error Handling
+
 ```python
 # ✅ Good
 class AgentNotFoundError(Exception):
@@ -236,6 +239,7 @@ tests/
 ### Writing Tests
 
 #### Unit Tests
+
 ```python
 # tests/unit/domain/test_agent_config.py
 import pytest
@@ -266,6 +270,7 @@ def test_agent_config_validation():
 ```
 
 #### Integration Tests
+
 ```python
 # tests/integration/test_agent_repository.py
 import pytest

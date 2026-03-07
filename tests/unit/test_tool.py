@@ -4,7 +4,7 @@ from src.domain.entities.tool import Tool, ToolParameter, HttpMethod, ParameterT
 
 class TestTool:
     """Testes unitários para a entidade Tool."""
-    
+
     def test_create_tool_with_valid_data(self):
         """Testa criação de Tool com dados válidos."""
         # Arrange
@@ -23,7 +23,7 @@ class TestTool:
                 default_value=10
             )
         ]
-        
+
         # Act
         tool = Tool(
             id="get-user-info",
@@ -35,7 +35,7 @@ class TestTool:
             instructions="Use esta ferramenta para buscar dados do usuário",
             headers={"Authorization": "Bearer token"}
         )
-        
+
         # Assert
         assert tool.id == "get-user-info"
         assert tool.name == "Get User Info"
@@ -46,7 +46,7 @@ class TestTool:
         assert tool.instructions == "Use esta ferramenta para buscar dados do usuário"
         assert tool.headers["Authorization"] == "Bearer token"
         assert tool.active is True
-    
+
     def test_create_tool_without_parameters(self):
         """Testa criação de Tool sem parâmetros."""
         # Act
@@ -58,11 +58,11 @@ class TestTool:
             http_method=HttpMethod.GET,
             parameters=[]
         )
-        
+
         # Assert
         assert tool.id == "health-check"
         assert len(tool.parameters) == 0
-    
+
     def test_tool_with_empty_id_raises_error(self):
         """Testa se ID vazio levanta ValueError."""
         with pytest.raises(ValueError, match="ID da tool não pode estar vazio"):
@@ -74,7 +74,7 @@ class TestTool:
                 http_method=HttpMethod.GET,
                 parameters=[]
             )
-    
+
     def test_tool_with_empty_name_raises_error(self):
         """Testa se nome vazio levanta ValueError."""
         with pytest.raises(ValueError, match="Nome da tool não pode estar vazio"):
@@ -86,7 +86,7 @@ class TestTool:
                 http_method=HttpMethod.GET,
                 parameters=[]
             )
-    
+
     def test_tool_with_empty_description_raises_error(self):
         """Testa se descrição vazia levanta ValueError."""
         with pytest.raises(ValueError, match="Descrição da tool não pode estar vazia"):
@@ -98,7 +98,7 @@ class TestTool:
                 http_method=HttpMethod.GET,
                 parameters=[]
             )
-    
+
     def test_tool_with_empty_route_raises_error(self):
         """Testa se rota vazia levanta ValueError."""
         with pytest.raises(ValueError, match="Rota da tool não pode estar vazia"):
@@ -114,7 +114,7 @@ class TestTool:
 
 class TestToolParameter:
     """Testes unitários para a entidade ToolParameter."""
-    
+
     def test_create_parameter_with_valid_data(self):
         """Testa criação de ToolParameter com dados válidos."""
         # Act
@@ -125,14 +125,14 @@ class TestToolParameter:
             required=True,
             default_value="guest"
         )
-        
+
         # Assert
         assert param.name == "user_id"
         assert param.type == ParameterType.STRING
         assert param.description == "ID do usuário"
         assert param.required is True
         assert param.default_value == "guest"
-    
+
     def test_create_parameter_with_defaults(self):
         """Testa criação de ToolParameter com valores padrão."""
         # Act
@@ -141,11 +141,11 @@ class TestToolParameter:
             type=ParameterType.INTEGER,
             description="Limite de resultados"
         )
-        
+
         # Assert
         assert param.required is False
         assert param.default_value is None
-    
+
     def test_parameter_with_empty_name_raises_error(self):
         """Testa se nome vazio levanta ValueError."""
         with pytest.raises(ValueError, match="Nome do parâmetro não pode estar vazio"):
@@ -154,7 +154,7 @@ class TestToolParameter:
                 type=ParameterType.STRING,
                 description="Descrição"
             )
-    
+
     def test_parameter_with_empty_description_raises_error(self):
         """Testa se descrição vazia levanta ValueError."""
         with pytest.raises(ValueError, match="Descrição do parâmetro não pode estar vazia"):

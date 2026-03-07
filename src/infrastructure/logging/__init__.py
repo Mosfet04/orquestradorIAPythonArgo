@@ -3,10 +3,10 @@ Módulo de logging seguro para o Orquestrador IA usando structlog.
 """
 
 from .structlog_logger import (
-    StructlogLogger, 
-    LoggerFactory, 
-    DataSanitizer, 
-    LogLevel, 
+    StructlogLogger,
+    LoggerFactory,
+    DataSanitizer,
+    LogLevel,
     LogContext,
     app_logger,
     setup_structlog
@@ -25,7 +25,7 @@ SecureLogger = StructlogLogger
 __all__ = [
     'StructlogLogger',
     'SecureLogger',  # Alias para compatibilidade
-    'LoggerFactory', 
+    'LoggerFactory',
     'DataSanitizer',
     'LogLevel',
     'LogContext',

@@ -39,7 +39,7 @@ class LogContext:
 
 class DataSanitizer:
     """Sanitizador de dados sensíveis para logs."""
-    
+
     # Padrões de dados sensíveis
     SENSITIVE_PATTERNS = {
         'api_key': re.compile(r'(?i)(api[_-]?key|apikey)[\s]*[=:][\s]*["\']?([a-zA-Z0-9_-]{20,})["\']?'),
@@ -51,29 +51,29 @@ class DataSanitizer:
         'cpf': re.compile(r'\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b'),
         'cnpj': re.compile(r'\b\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}\b'),
     }
-    
+
     # Campos que devem ser sempre sanitizados
     SENSITIVE_FIELDS = {
         'password', 'passwd', 'pwd', 'senha', 'api_key', 'apikey', 'token', 'secret',
         'authorization', 'auth', 'credential', 'private_key', 'access_token',
         'refresh_token', 'session_id', 'connection_string', 'database_url'
     }
-    
+
     @classmethod
     def sanitize_data(cls, data: Any, max_depth: int = 5) -> Any:
         """
         Sanitiza dados removendo informações sensíveis.
-        
+
         Args:
             data: Dados a serem sanitizados
             max_depth: Profundidade máxima para recursão
-            
+
         Returns:
             Dados sanitizados
         """
         if max_depth <= 0:
             return "[MAX_DEPTH_REACHED]"
-            
+
         if isinstance(data, str):
             return cls._sanitize_string(data)
         elif isinstance(data, dict):
@@ -82,7 +82,7 @@ class DataSanitizer:
             return cls._sanitize_list(data, max_depth - 1)
         else:
             return data
-    
+
     # Mapa auxiliar para descobrir o nome do padrão a partir do regex usado no match
     _PATTERN_TO_NAME = {pattern: name for name, pattern in SENSITIVE_PATTERNS.items()}
 
@@ -117,12 +117,12 @@ class DataSanitizer:
             sanitized = pattern.sub(cls._mask_match, sanitized)
 
         return sanitized
-    
+
     @classmethod
     def _sanitize_dict(cls, data: Dict[str, Any], max_depth: int) -> Dict[str, Any]:
         """Sanitiza um dicionário."""
         sanitized = {}
-        
+
         for key, value in data.items():
             # Verificar se a chave é sensível
             if any(sensitive in key.lower() for sensitive in cls.SENSITIVE_FIELDS):
@@ -134,9 +134,9 @@ class DataSanitizer:
                     sanitized[key] = "***MASKED***"
             else:
                 sanitized[key] = cls.sanitize_data(value, max_depth)
-        
+
         return sanitized
-    
+
     @classmethod
     def _sanitize_list(cls, data: Sequence[Any], max_depth: int) -> List[Any]:
         """Sanitiza uma lista (ou tupla), retornando uma nova lista."""
@@ -148,16 +148,16 @@ class DataSanitizer:
             sliced = list(data)
 
         return [cls.sanitize_data(item, max_depth) for item in sliced]
-    
+
     @classmethod
     def _create_masked_value(cls, value: str) -> str:
         """Cria uma versão mascarada do valor mantendo informações para debug."""
         if len(value) <= 8:
             return "***MASKED***"
-        
+
         # Mostrar primeiros 2 e últimos 2 caracteres
         return f"{value[:2]}***{value[-2:]}[len:{len(value)}]"
-    
+
     @classmethod
     def hash_sensitive_data(cls, data: str) -> str:
         """Cria hash de dados sensíveis para correlação sem exposição."""
@@ -166,50 +166,50 @@ class DataSanitizer:
 
 class SecureLogger:
     """Logger seguro com sanitização automática e estruturação."""
-    
+
     def __init__(self, name: str, level: str = "INFO"):
         self.logger = logging.getLogger(name)
         self.logger.setLevel(getattr(logging, level))
-        
+
         # Evitar duplicação de handlers
         if not self.logger.handlers:
             self._setup_handlers()
-        
+
         self.context = LogContext()
-    
+
     def _setup_handlers(self):
         """Configura os handlers de log."""
         # Handler para console (desenvolvimento)
         console_handler = logging.StreamHandler()
         console_handler.setLevel(logging.INFO)
-        
+
         # Handler para arquivo (produção)
         file_handler = logging.FileHandler('logs/app.log', encoding='utf-8')
         file_handler.setLevel(logging.DEBUG)
-        
+
         # Formatter estruturado JSON
         formatter = logging.Formatter(
             '%(asctime)s | %(name)s | %(levelname)s | %(message)s',
             datefmt='%Y-%m-%d %H:%M:%S'
         )
-        
+
         console_handler.setFormatter(formatter)
         file_handler.setFormatter(formatter)
-        
+
         self.logger.addHandler(console_handler)
         self.logger.addHandler(file_handler)
-    
+
     def set_context(self, **kwargs):
         """Define o contexto para os próximos logs."""
         for key, value in kwargs.items():
             if hasattr(self.context, key):
                 setattr(self.context, key, value)
-    
+
     def clear_context(self):
         """Limpa o contexto atual."""
         self.context = LogContext()
-    
-    def _create_log_entry(self, level: LogLevel, message: str, data: Optional[Dict] = None, 
+
+    def _create_log_entry(self, level: LogLevel, message: str, data: Optional[Dict] = None,
                          exception: Optional[Exception] = None) -> Dict[str, Any]:
         """Cria entrada de log estruturada."""
         log_entry = {
@@ -219,11 +219,11 @@ class SecureLogger:
             'context': asdict(self.context),
             'logger': self.logger.name
         }
-        
+
         # Adicionar dados sanitizados
         if data:
             log_entry['data'] = DataSanitizer.sanitize_data(data)
-        
+
         # Adicionar informações de exceção
         if exception:
             log_entry['exception'] = {
@@ -231,15 +231,15 @@ class SecureLogger:
                 'message': str(exception),
                 'traceback': traceback.format_exc()
             }
-        
+
         return log_entry
-    
-    def _log(self, level: LogLevel, message: str, data: Optional[Dict] = None, 
+
+    def _log(self, level: LogLevel, message: str, data: Optional[Dict] = None,
              exception: Optional[Exception] = None):
         """Método interno para logging."""
         log_entry = self._create_log_entry(level, message, data, exception)
         log_message = json.dumps(log_entry, ensure_ascii=False, separators=(',', ':'))
-        
+
         # Mapear para níveis padrão do logging
         level_mapping = {
             LogLevel.DEBUG: logging.DEBUG,
@@ -251,38 +251,38 @@ class SecureLogger:
             LogLevel.PERFORMANCE: logging.INFO,
             LogLevel.AI_REQUEST: logging.INFO
         }
-        
+
         self.logger.log(level_mapping[level], log_message)
-    
+
     # Métodos públicos de logging
     def debug(self, message: str, data: Optional[Dict] = None):
         """Log de debug."""
         self._log(LogLevel.DEBUG, message, data)
-    
+
     def info(self, message: str, data: Optional[Dict] = None):
         """Log de informação."""
         self._log(LogLevel.INFO, message, data)
-    
+
     def warning(self, message: str, data: Optional[Dict] = None):
         """Log de aviso."""
         self._log(LogLevel.WARNING, message, data)
-    
+
     def error(self, message: str, data: Optional[Dict] = None, exception: Optional[Exception] = None):
         """Log de erro."""
         self._log(LogLevel.ERROR, message, data, exception)
-    
+
     def critical(self, message: str, data: Optional[Dict] = None, exception: Optional[Exception] = None):
         """Log crítico."""
         self._log(LogLevel.CRITICAL, message, data, exception)
-    
+
     def security(self, message: str, data: Optional[Dict] = None):
         """Log de evento de segurança."""
         self._log(LogLevel.SECURITY, message, data)
-    
+
     def performance(self, message: str, data: Optional[Dict] = None):
         """Log de performance."""
         self._log(LogLevel.PERFORMANCE, message, data)
-    
+
     def ai_request(self, message: str, data: Optional[Dict] = None):
         """Log específico para requisições de IA."""
         self._log(LogLevel.AI_REQUEST, message, data)
@@ -291,9 +291,9 @@ class SecureLogger:
 # Factory para criar loggers
 class LoggerFactory:
     """Factory para criar instâncias de logger."""
-    
+
     _loggers: Dict[str, SecureLogger] = {}
-    
+
     @classmethod
     def get_logger(cls, name: str, level: str = "INFO") -> SecureLogger:
         """Obtém ou cria um logger."""

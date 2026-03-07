@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
-from starlette.requests import Request
-from starlette.responses import Response
 from starlette.testclient import TestClient
 from fastapi import FastAPI
 

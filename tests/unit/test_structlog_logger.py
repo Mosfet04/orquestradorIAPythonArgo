@@ -55,7 +55,7 @@ def test_add_otel_trace_context_logs_on_exception(monkeypatch, caplog):
 
     def bad_span():
         raise RuntimeError("no otel")
-    
+
     trace_mod.get_current_span = staticmethod(bad_span)
     pkg = types.ModuleType("opentelemetry")
     pkg.trace = trace_mod
@@ -82,7 +82,9 @@ def test_setup_structlog_and_logger_factory():
     setup_structlog()
     logger = LoggerFactory.get_logger("unit-test")
     assert logger is not None
-from src.infrastructure.logging.structlog_logger import LoggerFactory, StructlogLogger, DataSanitizer
+
+
+from src.infrastructure.logging.structlog_logger import StructlogLogger
 
 
 def test_structlog_logger_basic_flow(monkeypatch):
