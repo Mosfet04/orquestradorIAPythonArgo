@@ -1,8 +1,8 @@
 # Contributing to AI Agents Orchestrator
 
-🎉 Thank you for your interest in contributing to the AI Agents Orchestrator! This document provides guidelines and information for contributors.
+Thank you for your interest in contributing to the AI Agents Orchestrator! This document provides guidelines and information for contributors.
 
-## 📋 Table of Contents
+## Table of Contents
 
 - [Code of Conduct](#code-of-conduct)
 - [Getting Started](#getting-started)
@@ -14,7 +14,7 @@
 - [Pull Request Process](#pull-request-process)
 - [Issue Reporting](#issue-reporting)
 
-## 📜 Code of Conduct
+## Code of Conduct
 
 This project adheres to a code of conduct. By participating, you are expected to uphold this code. Please report unacceptable behavior to the project maintainers.
 
@@ -25,7 +25,7 @@ This project adheres to a code of conduct. By participating, you are expected to
 - Focus on what is best for the community
 - Show empathy towards other community members
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 
@@ -56,7 +56,7 @@ This project adheres to a code of conduct. By participating, you are expected to
    git checkout -b feature/your-feature-name
    ```
 
-## 🛠️ Development Setup
+## Development Setup
 
 ### Manual Setup
 
@@ -102,7 +102,7 @@ docker-compose logs -f app
 docker-compose down
 ```
 
-## 📝 Contributing Guidelines
+## Contributing Guidelines
 
 ### Types of Contributions
 
@@ -124,7 +124,7 @@ We welcome contributions in these areas:
 5. **Follow code standards** (see below)
 6. **Submit a pull request**
 
-## 🎯 Code Standards
+## Code Standards
 
 ### Architecture Principles
 
@@ -223,7 +223,7 @@ raise Exception("Agent not found")
 4. **Meaningful Names**: Use intention-revealing names
 5. **Small Functions**: Keep functions small and focused
 
-## 🧪 Testing
+## Testing
 
 ### Testing Strategy
 
@@ -310,7 +310,7 @@ pytest tests/unit/domain/test_agent_config.py -v
 - **Isolated**: Tests should not depend on each other
 - **Descriptive**: Test names should describe what they test
 
-## 📚 Documentation
+## Documentation
 
 ### Documentation Types
 
@@ -347,7 +347,7 @@ def create_agent(self, config: AgentConfig) -> Agent:
 
 All API endpoints are automatically documented using FastAPI's OpenAPI integration. Ensure your endpoint functions have proper docstrings and type hints.
 
-## 🔄 Pull Request Process
+## Pull Request Process
 
 ### Before Submitting
 
@@ -393,7 +393,7 @@ Add screenshots for UI changes.
 3. **Manual testing** for significant changes
 4. **Documentation review** if docs are updated
 
-## 🐛 Issue Reporting
+## Issue Reporting
 
 ### Bug Reports
 
@@ -425,7 +425,7 @@ We use these labels:
 - `help wanted`: Extra attention is needed
 - `priority-high`: High priority issue
 
-## 🏆 Recognition
+## Recognition
 
 Contributors will be:
 
@@ -433,13 +433,13 @@ Contributors will be:
 - **Mentioned in release notes**
 - **Given credit in documentation**
 
-## 📞 Getting Help
+## Getting Help
 
 - **Discord**: [Join our Discord server](discord-link)
 - **Discussions**: Use GitHub Discussions for questions
-- **Email**: Contact maintainers at email@example.com
+- **Email**: Contact maintainers at <email@example.com>
 
-## 📄 License
+## License
 
 By contributing, you agree that your contributions will be licensed under the same license as the project (MIT License).
 
