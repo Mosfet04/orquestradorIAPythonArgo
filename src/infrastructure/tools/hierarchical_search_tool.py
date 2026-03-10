@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from agno.tools import Toolkit
 
 from src.domain.ports.knowledge_search_port import IKnowledgeSearchStrategy

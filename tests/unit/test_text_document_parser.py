@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from src.infrastructure.parsers.text_document_parser import TextDocumentParser
 
 
@@ -85,10 +83,7 @@ class TestTextDocumentParser:
         assert nodes[2].id in parent.children_ids
 
     def test_preamble_before_first_heading(self):
-        content = (
-            "Este é um preâmbulo.\n\n"
-            "# Título\n\nConteúdo do título.\n"
-        )
+        content = "Este é um preâmbulo.\n\n" "# Título\n\nConteúdo do título.\n"
         nodes = self.parser.parse(content, "preamble.md")
 
         assert len(nodes) == 2
@@ -137,10 +132,7 @@ class TestTextDocumentParser:
             assert node.doc_name == "myfile.md"
 
     def test_leaf_nodes_have_no_children(self):
-        content = (
-            "# Parent\n\nParent.\n\n"
-            "## Leaf\n\nLeaf content.\n"
-        )
+        content = "# Parent\n\nParent.\n\n" "## Leaf\n\nLeaf content.\n"
         nodes = self.parser.parse(content, "leaf.md")
         leaf = nodes[1]
         assert leaf.is_leaf

@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
+from unittest.mock import AsyncMock, MagicMock
 
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.rag_config import RagConfig, SearchStrategy

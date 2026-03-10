@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-import uuid
 from typing import Dict, List, Optional
 
 from src.domain.entities.document_node import DocumentNode
@@ -56,9 +55,7 @@ class TextDocumentParser(IDocumentParser):
             )
             nodes.append(node)
 
-            parent_stack = [
-                (lvl, nid) for lvl, nid in parent_stack if lvl < level
-            ]
+            parent_stack = [(lvl, nid) for lvl, nid in parent_stack if lvl < level]
             parent_stack.append((level, node_id))
 
         self._link_children(nodes)
@@ -66,9 +63,7 @@ class TextDocumentParser(IDocumentParser):
 
     # ── extração de seções ──────────────────────────────────────────
 
-    def _extract_sections(
-        self, content: str
-    ) -> List[tuple[int, str, str]]:
+    def _extract_sections(self, content: str) -> List[tuple[int, str, str]]:
         """Extrai (level, title, body) de cada heading encontrado."""
         matches = list(_HEADING_RE.finditer(content))
         if not matches:
@@ -91,9 +86,7 @@ class TextDocumentParser(IDocumentParser):
 
         return sections
 
-    def _chunk_flat(
-        self, content: str, doc_name: str
-    ) -> List[DocumentNode]:
+    def _chunk_flat(self, content: str, doc_name: str) -> List[DocumentNode]:
         """Divide conteúdo sem headings em chunks por tamanho."""
         chunks = self._split_by_size(content, self._max_chunk_chars)
         nodes: List[DocumentNode] = []

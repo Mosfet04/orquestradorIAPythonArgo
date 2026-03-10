@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -81,11 +80,12 @@ class TestHierarchicalSearchStrategy:
     @pytest.mark.asyncio
     async def test_search_traverses_tree(self):
         """Busca desce de pai para filhos."""
-        parent = _make_node(
-            "parent", embedding=[1.0, 0.0], children_ids=["child1"]
-        )
+        parent = _make_node("parent", embedding=[1.0, 0.0], children_ids=["child1"])
         child = _make_node(
-            "child1", level=1, embedding=[1.0, 0.0], content="deep content",
+            "child1",
+            level=1,
+            embedding=[1.0, 0.0],
+            content="deep content",
             parent_id="parent",
         )
 

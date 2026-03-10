@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -107,8 +107,10 @@ class TestDocumentIndexingService:
         self.mock_embedder_factory.create_model.return_value = mock_embedder
 
         rag = RagConfig(
-            active=True, doc_name="test.txt",
-            model="m", factory_ia_model="ollama",
+            active=True,
+            doc_name="test.txt",
+            model="m",
+            factory_ia_model="ollama",
         )
         result = await self.service.index_document("test.txt", "content", rag)
 
@@ -121,8 +123,7 @@ class TestDocumentIndexingService:
         self.mock_tree_repo.exists.return_value = False
         nodes = [
             DocumentNode(
-                id="n0", doc_name="t.txt", level=0,
-                title="T", content="Content"
+                id="n0", doc_name="t.txt", level=0, title="T", content="Content"
             ),
         ]
         self.mock_parser.parse.return_value = nodes
