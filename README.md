@@ -50,19 +50,21 @@ docker-compose up -d
 ```mermaid
 graph TB
     subgraph "🎯 Domain"
-        E["Entities<br/>(AgentConfig, TeamConfig, Tool, RagConfig)"]
+        E["Entities<br/>(AgentConfig, TeamConfig, Tool,<br/>RagConfig, DocumentNode, SearchResult)"]
         P["Ports & Repository Interfaces"]
     end
 
     subgraph "📋 Application"
         UC["Use Cases"]
-        S["Services<br/>(AgentFactory, TeamFactory, ModelFactory)"]
+        S["Services<br/>(AgentFactory, TeamFactory, ModelFactory,<br/>KnowledgeSearchFactory, DocumentIndexing)"]
+        SS["Search Strategies<br/>(Semantic, Hierarchical)"]
     end
 
     subgraph "🔧 Infrastructure"
         DB["MongoDB Repositories"]
         WEB["AppFactory + AgentOS"]
         DI["DependencyContainer"]
+        TL["Tools & Parsers"]
     end
 
     subgraph "🌐 Presentation"
@@ -70,14 +72,17 @@ graph TB
     end
 
     CTRL --> UC --> S --> E
+    S --> SS
     S --> P
     DB -.->|implements| P
-    DI --> CTRL & S & DB
+    TL -.->|implements| P
+    DI --> CTRL & S & DB & TL
     WEB --> DI
 
     style E fill:#e1f5fe
     style UC fill:#f3e5f5
     style CTRL fill:#e8f5e9
+    style SS fill:#fff3e0
 ```
 
 ## ✨ Key Features
@@ -86,10 +91,11 @@ graph TB
 - 🛠️ **Zero-Code Config** — Add agents, teams, and tools via MongoDB only
 - 🧠 **6 Providers** — Ollama, OpenAI, Anthropic, Gemini, Groq, Azure
 - 📚 **RAG** — Document embeddings persisted in MongoDB
+- 🌳 **Hierarchical RAG** — Document tree with semantic + hierarchical search (Strategy Pattern)
 - 💾 **Smart Memory** — User long-term memory + session summaries
 📡 **Observability via Grafana LGTM** — Traces, metrics, and logs are now sent to Grafana (Tempo, Loki, Prometheus) using OpenTelemetry. MongoDB is no longer used for observability.
 - 🌐 **AgentOS + AG-UI** — Web UI via [os.agno.com](https://os.agno.com) with SSE streaming
-- 🧪 **179 Tests** — Comprehensive unit test coverage (~88%)
+- 🧪 **345 Tests** — Comprehensive unit test coverage (~88%)
 - 🏗️ **Onion Architecture** — Clean separation with SOLID principles
 ## 📊 Observability (Grafana LGTM)
 
@@ -116,7 +122,7 @@ Choose your language for the complete guide (architecture, configuration, databa
 ## 🤝 Contributing
 
 1. Fork → Branch → Commit (conventional) → PR
-2. Run `pytest` (179 tests must pass)
+2. Run `pytest` (345 tests must pass)
 3. Follow Onion Architecture — no infrastructure imports in domain
 
 ## 📄 License

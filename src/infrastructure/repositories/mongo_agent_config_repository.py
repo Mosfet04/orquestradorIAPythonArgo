@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import List
 
 from src.domain.entities.agent_config import AgentConfig
-from src.domain.entities.rag_config import RagConfig
+from src.domain.entities.rag_config import RagConfig, SearchStrategy
 from src.domain.ports import ILogger
 from src.domain.repositories.agent_config_repository import IAgentConfigRepository
 from src.infrastructure.repositories.mongo_base import AsyncMongoRepository
@@ -60,6 +60,9 @@ class MongoAgentConfigRepository(AsyncMongoRepository, IAgentConfigRepository):
                 factory_ia_model=rag_data.get(
                     "factory_ia_model",
                     rag_data.get("factoryIaModel", "ollama"),
+                ),
+                search_strategy=SearchStrategy(
+                    rag_data.get("search_strategy", "semantic")
                 ),
             )
             if rag_data

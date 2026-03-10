@@ -3,6 +3,7 @@
 from dotenv import load_dotenv
 import asyncio
 import sys
+import uvloop
 load_dotenv()  # carrega .env antes de qualquer acesso a os.getenv()
 
 from src.infrastructure.logging import setup_structlog
@@ -32,7 +33,7 @@ if __name__ == "__main__":
     }
 
     try:
-        import uvloop  # noqa: F401
+        asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
         uvicorn_config["loop"] = "uvloop"
     except ImportError:
         app_logger.info("uvloop não disponível, usando loop padrão")

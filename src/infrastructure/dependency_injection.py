@@ -8,7 +8,9 @@ from typing import Any, Optional
 from motor.motor_asyncio import AsyncIOMotorClient
 
 from src.application.services.agent_factory_service import AgentFactoryService
+from src.application.services.document_indexing_service import DocumentIndexingService
 from src.application.services.embedder_model_factory_service import EmbedderModelFactory
+from src.application.services.knowledge_search_factory import KnowledgeSearchFactory
 from src.application.services.model_factory_service import ModelFactory
 from src.application.services.team_factory_service import TeamFactoryService
 from src.application.use_cases.get_active_agents_use_case import GetActiveAgentsUseCase
@@ -17,13 +19,18 @@ from src.domain.ports import ILogger
 from src.infrastructure.config.app_config import AppConfig
 from src.infrastructure.http.http_tool_factory import HttpToolFactory
 from src.infrastructure.logging.logger_adapter import StructlogLoggerAdapter
+from src.infrastructure.parsers.text_document_parser import TextDocumentParser
 from src.infrastructure.repositories.mongo_agent_config_repository import (
     MongoAgentConfigRepository,
+)
+from src.infrastructure.repositories.mongo_document_tree_repository import (
+    MongoDocumentTreeRepository,
 )
 from src.infrastructure.repositories.mongo_team_config_repository import (
     MongoTeamConfigRepository,
 )
 from src.infrastructure.repositories.mongo_tool_repository import MongoToolRepository
+from src.infrastructure.services.llm_summary_generator import LLMSummaryGenerator
 from src.presentation.controllers.orquestrador_controller import OrquestradorController
 
 
@@ -143,6 +150,33 @@ class DependencyContainer:
             connection_string=conn, database_name=db, logger=self._logger
         )
 
+        # ── Hierárquica: parser, tree repo, summary gen, factories ──
+        doc_parser = TextDocumentParser()
+        tree_repo = MongoDocumentTreeRepository(
+            connection_string=conn, database_name=db, logger=self._logger
+        )
+        try:
+            await tree_repo.ensure_indexes()
+        except Exception as exc:
+            self._logger.warning(
+                "Não foi possível criar índices da árvore de documentos",
+                error=str(exc),
+            )
+
+        summary_generator = LLMSummaryGenerator(
+            model_factory=model_factory, logger=self._logger
+        )
+        indexing_service = DocumentIndexingService(
+            parser=doc_parser,
+            tree_repository=tree_repo,
+            summary_generator=summary_generator,
+            embedder_factory=embedder_factory,
+            logger=self._logger,
+        )
+        search_factory = KnowledgeSearchFactory(
+            tree_repository=tree_repo, logger=self._logger
+        )
+
         agent_factory = AgentFactoryService(
             db_url=conn,
             db_name=db,
@@ -151,6 +185,8 @@ class DependencyContainer:
             embedder_factory=embedder_factory,
             tool_factory=tool_factory,
             tool_repository=tool_repo,
+            indexing_service=indexing_service,
+            search_factory=search_factory,
         )
 
         team_factory = TeamFactoryService(

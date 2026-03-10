@@ -11,8 +11,14 @@ from agno.knowledge import Knowledge
 from agno.vectordb.mongodb import MongoDb as MongoVectorDb
 
 from src.domain.entities.agent_config import AgentConfig
+from src.domain.entities.rag_config import SearchStrategy
 from src.domain.ports import ILogger, IModelFactory, IEmbedderFactory, IToolFactory
 from src.domain.repositories.tool_repository import IToolRepository
+from src.application.services.document_indexing_service import DocumentIndexingService
+from src.application.services.knowledge_search_factory import KnowledgeSearchFactory
+from src.infrastructure.tools.hierarchical_search_tool import (
+    create_hierarchical_search_tool,
+)
 
 
 class AgentFactoryService:
@@ -28,6 +34,8 @@ class AgentFactoryService:
         embedder_factory: IEmbedderFactory,
         tool_factory: IToolFactory,
         tool_repository: IToolRepository,
+        indexing_service: Optional[DocumentIndexingService] = None,
+        search_factory: Optional[KnowledgeSearchFactory] = None,
     ) -> None:
         self._db_url = db_url
         self._db_name = db_name
@@ -36,6 +44,8 @@ class AgentFactoryService:
         self._embedder_factory = embedder_factory
         self._tool_factory = tool_factory
         self._tool_repository = tool_repository
+        self._indexing_service = indexing_service
+        self._search_factory = search_factory
 
     # ── public ──────────────────────────────────────────────────────
 
@@ -49,6 +59,12 @@ class AgentFactoryService:
             )
             tools = await self._build_tools(config)
             knowledge = self._build_knowledge(config)
+
+            # ── Estratégia hierárquica ──
+            hierarchical_tool = await self._build_hierarchical_tool(config)
+            if hierarchical_tool:
+                tools.append(hierarchical_tool)
+
             db = self._build_db()
             agent = self._assemble_agent(config, model, db, tools, knowledge)
             elapsed = (datetime.now(timezone.utc) - start).total_seconds()
@@ -102,6 +118,10 @@ class AgentFactoryService:
         if not rag or not rag.active:
             return None
 
+        # Estratégia hierárquica não usa Knowledge do agno
+        if rag.search_strategy == SearchStrategy.HIERARCHICAL:
+            return None
+
         if not rag.factory_ia_model or not rag.model:
             self._logger.warning(
                 "RAG ativo sem factory_ia_model ou model — ignorando"
@@ -124,6 +144,52 @@ class AgentFactoryService:
             return knowledge
         except Exception as exc:
             self._logger.warning("Erro ao criar RAG", error=str(exc))
+            return None
+
+    async def _build_hierarchical_tool(self, config: AgentConfig) -> Optional[Any]:
+        """Cria tool de busca hierárquica se a estratégia for HIERARCHICAL."""
+        rag = config.rag_config
+        if not rag or not rag.active:
+            return None
+        if rag.search_strategy != SearchStrategy.HIERARCHICAL:
+            return None
+        if not self._indexing_service or not self._search_factory:
+            self._logger.warning(
+                "Indexing service ou search factory não disponíveis "
+                "para estratégia HIERARCHICAL"
+            )
+            return None
+        if not rag.doc_name:
+            self._logger.warning("doc_name obrigatório para HIERARCHICAL")
+            return None
+
+        try:
+            # Indexar documento (idempotente)
+            doc_path = f"docs/{rag.doc_name}"
+            try:
+                with open(doc_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+            except FileNotFoundError:
+                self._logger.warning("Documento não encontrado", path=doc_path)
+                return None
+
+            await self._indexing_service.index_document(
+                rag.doc_name, content, rag
+            )
+
+            # Criar embedder e estratégia
+            embedder = self._embedder_factory.create_model(
+                rag.factory_ia_model or "ollama",
+                rag.model or "nomic-embed-text:latest",
+            )
+            strategy = self._search_factory.create_strategy(
+                rag, embedder=embedder
+            )
+            return create_hierarchical_search_tool(strategy)
+        except Exception as exc:
+            self._logger.warning(
+                "Erro ao criar tool hierárquica", error=str(exc)
+            )
             return None
 
     def _load_document(
