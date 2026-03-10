@@ -49,11 +49,12 @@ O **Orquestrador de Agentes IA** é uma aplicação que gerencia e orquestra mú
 | **Multi-Agent Teams** | Teams multi-agente com modos route, coordinate, broadcast e tasks |
 | **Multi-Provider** | Ollama, OpenAI, Anthropic, Gemini, Groq e Azure |
 | **RAG integrado** | Retrieval-Augmented Generation com embeddings persistidos no MongoDB |
+| **RAG Hierárquico** | Árvore de documentos com busca semântica + hierárquica (Strategy Pattern) |
 | **Memória inteligente** | Memória de longo prazo com sumários automáticos e perfil de usuário |
 | **Observabilidade via Grafana LGTM** | Traces, métricas e logs agora são enviados ao Grafana (Tempo, Loki, Prometheus) usando OpenTelemetry. O MongoDB não é mais utilizado para observabilidade.|
 | **AgentOS + AG-UI** | Interface web via [os.agno.com](https://os.agno.com) com streaming SSE |
 | **Arquitetura limpa** | Camadas Domain → Application → Infrastructure → Presentation |
-| **179 testes unitários** | Cobertura ~88% de todas as camadas |
+| **345 testes unitários** | Cobertura ~88% de todas as camadas |
 
 ---
 
@@ -207,13 +208,18 @@ orquestradorIAPythonArgo/
 │   │   │   ├── agent_config.py     #   Entidade: configuração de um agente
 │   │   │   ├── team_config.py      #   Entidade: configuração de um team multi-agente
 │   │   │   ├── tool.py             #   Entidade: ferramenta HTTP (Tool, ToolParameter)
-│   │   │   └── rag_config.py       #   Entidade: configuração de RAG
+│   │   │   ├── rag_config.py       #   Entidade: configuração de RAG + SearchStrategy
+│   │   │   ├── document_node.py    #   Entidade: nó hierárquico (Document/Section/Chunk)
+│   │   │   └── search_result.py    #   Entidade: resultado de busca RAG
 │   │   ├── ports/                  #   Contratos (interfaces) para adaptadores
 │   │   │   ├── logger_port.py      #     ILogger
 │   │   │   ├── model_factory_port.py #   IModelFactory
 │   │   │   ├── embedder_factory_port.py # IEmbedderFactory
 │   │   │   ├── tool_factory_port.py #    IToolFactory
-│   │   │   └── agent_builder_port.py #   IAgentBuilder
+│   │   │   ├── agent_builder_port.py #   IAgentBuilder
+│   │   │   ├── document_parser_port.py # IDocumentParser
+│   │   │   ├── knowledge_search_port.py # IKnowledgeSearchStrategy
+│   │   │   └── document_tree_repository_port.py # IDocumentTreeRepository
 │   │   └── repositories/          #   Contratos de repositórios
 │   │       ├── agent_config_repository.py  # IAgentConfigRepository
 │   │       ├── team_config_repository.py   # ITeamConfigRepository
@@ -224,7 +230,12 @@ orquestradorIAPythonArgo/
 │   │   │   ├── agent_factory_service.py       # Cria agentes agno a partir de AgentConfig
 │   │   │   ├── team_factory_service.py        # Cria teams agno a partir de TeamConfig
 │   │   │   ├── model_factory_service.py       # Factory de modelos (Ollama, OpenAI, etc.)
-│   │   │   └── embedder_model_factory_service.py # Factory de embedders para RAG
+│   │   │   ├── embedder_model_factory_service.py # Factory de embedders para RAG
+│   │   │   ├── knowledge_search_factory.py    # Factory de estratégias de busca RAG
+│   │   │   ├── document_indexing_service.py   # Indexação de documentos hierárquicos
+│   │   │   └── search_strategies/             # Strategy Pattern para busca RAG
+│   │   │       ├── semantic_search_strategy.py    # Busca semântica (agno nativo)
+│   │   │       └── hierarchical_search_strategy.py # Busca hierárquica (document tree)
 │   │   └── use_cases/
 │   │       ├── get_active_agents_use_case.py  # Busca configs ativas e cria agentes
 │   │       └── get_active_teams_use_case.py   # Busca configs ativas e cria teams
@@ -247,7 +258,14 @@ orquestradorIAPythonArgo/
 │   │   │   ├── mongo_base.py       #   Classe base para repos MongoDB
 │   │   │   ├── mongo_agent_config_repository.py  # IAgentConfigRepository → MongoDB
 │   │   │   ├── mongo_team_config_repository.py   # ITeamConfigRepository → MongoDB
-│   │   │   └── mongo_tool_repository.py          # IToolRepository → MongoDB
+│   │   │   ├── mongo_tool_repository.py          # IToolRepository → MongoDB
+│   │   │   └── mongo_document_tree_repository.py # IDocumentTreeRepository → MongoDB
+│   │   ├── parsers/
+│   │   │   └── text_document_parser.py #  Parser de documentos de texto → árvore
+│   │   ├── tools/
+│   │   │   └── hierarchical_search_tool.py # Tool de busca hierárquica (agno Toolkit)
+│   │   ├── services/
+│   │   │   └── llm_summary_generator.py #  Gerador de sumários de seção via LLM
 │   │   ├── web/
 │   │   │   └── app_factory.py      #   AppFactory — cria FastAPI + AgentOS + AGUI
 │   │   └── dependency_injection.py #   DependencyContainer — Composition Root
@@ -258,24 +276,52 @@ orquestradorIAPythonArgo/
 │
 └── tests/
     ├── conftest.py                 # Fixtures compartilhadas (pytest)
-    └── unit/                       # 179 testes unitários
+    └── unit/                       # 345 testes unitários
         ├── test_agent_config.py
         ├── test_agent_factory_service.py
+        ├── test_agent_factory_extended.py
         ├── test_app_config.py
         ├── test_app_factory.py
+        ├── test_app_factory_extended.py
         ├── test_app_integration.py
+        ├── test_dependency_injection.py
+        ├── test_document_indexing_service.py
+        ├── test_document_node.py
         ├── test_embedder_model_factory_service.py
+        ├── test_embedder_factory_extended.py
         ├── test_get_active_agents_use_case.py
+        ├── test_get_active_teams_use_case.py
+        ├── test_hierarchical_integration.py
+        ├── test_hierarchical_search_strategy.py
+        ├── test_hierarchical_search_tool.py
         ├── test_http_tool_factory.py
+        ├── test_http_tool_factory_extended.py
+        ├── test_knowledge_search_factory.py
+        ├── test_logger_adapter.py
         ├── test_logging_config.py
         ├── test_logging_decorators.py
+        ├── test_logging_decorators_extended.py
+        ├── test_metrics_middleware.py
         ├── test_model_cache_service.py
         ├── test_model_factory_service.py
+        ├── test_model_factory_extended.py
         ├── test_mongo_agent_config_repository.py
+        ├── test_mongo_base.py
+        ├── test_mongo_team_config_repository.py
+        ├── test_mongo_team_config_repository_extended.py
         ├── test_mongo_tool_repository_extended.py
         ├── test_orquestrador_controller.py
+        ├── test_orquestrador_controller_extended.py
+        ├── test_otel_setup.py
+        ├── test_rag_config_strategy.py
+        ├── test_search_result.py
         ├── test_secure_logger.py
         ├── test_structlog_logger.py
+        ├── test_structlog_logger_extended.py
+        ├── test_team_config.py
+        ├── test_team_factory_service.py
+        ├── test_telemetry.py
+        ├── test_text_document_parser.py
         └── test_tool.py
 ```
 
@@ -480,6 +526,7 @@ O MongoDB é o coração da configuração. Todas as collections estão no datab
 | `teams_config` | **Você** (manual) | Configuração de cada team multi-agente |
 | `tools` | **Você** (manual) | Definição de ferramentas HTTP |
 | `rag` | **agno** (automático) | Chunks embedados dos documentos RAG |
+| `document_tree` | **Aplicação** (automático) | Árvore hierárquica de documentos para RAG hierárquico |
 | `agno_sessions` | **agno** (automático) | Sessões, histórico de runs |
 | `agno_memories` | **agno** (automático) | Memórias de longo prazo por usuário |
 | `agno_traces` | **agno** (automático) | Traces de execução do agente (interno agno, não OTel) |
@@ -504,7 +551,8 @@ Esta é a collection que você gerencia. Cada documento define um agente:
     "active": true,
     "doc_name": "basic-prog.txt",
     "model": "gemini-embedding-001",
-    "factoryIaModel": "gemini"
+    "factoryIaModel": "gemini",
+    "search_strategy": "hierarchical"
   },
   "user_memory_active": false,
   "summary_active": false,
@@ -536,6 +584,7 @@ Esta é a collection que você gerencia. Cada documento define um agente:
 | `doc_name` | Nome do arquivo na pasta `docs/` (ex: `basic-prog.txt`) |
 | `model` | Modelo de embedding (ex: `gemini-embedding-001`, `text-embedding-3-small`) |
 | `factoryIaModel` | Provider do embedder: `gemini`, `openai`, `ollama`, `azure` |
+| `search_strategy` | Estratégia de busca: `semantic` (padrão, agno nativo) ou `hierarchical` (árvore de documentos) |
 
 ### Collection: `tools`
 
@@ -640,13 +689,58 @@ O agente aparece imediatamente no frontend e na API.
 
 ### RAG (Retrieval-Augmented Generation)
 
-O RAG permite que agentes consultem uma base de conhecimento antes de responder.
+O RAG permite que agentes consultem uma base de conhecimento antes de responder. O sistema suporta duas estratégias de busca, selecionáveis via `search_strategy` no `rag_config`.
+
+#### Estratégia Semântica (padrão)
+
+Utiliza o knowledge base nativo do agno com busca vetorial direta.
 
 **Como funciona:**
 1. Coloque um arquivo de texto na pasta `docs/` (ex: `docs/basic-prog.txt`)
 2. No `agents_config`, configure `rag_config` com `active: true` e `doc_name: "basic-prog.txt"`
 3. Na inicialização, o documento é embedado e persistido na collection `rag` do MongoDB
 4. A cada mensagem, o agente busca trechos relevantes para compor a resposta
+
+#### Estratégia Hierárquica
+
+Constrói uma árvore de documentos (Document → Section → Chunk) e realiza busca em múltiplos níveis, retornando resultados com contexto hierárquico preservado.
+
+**Como funciona:**
+1. Coloque um arquivo de texto na pasta `docs/`
+2. Configure `rag_config` com `search_strategy: "hierarchical"`
+3. Na inicialização, o documento é parseado em nós hierárquicos (Document → Section → Chunk), cada nó é embedado e persistido na collection `document_tree`
+4. O agente recebe uma tool `search_knowledge` que faz busca vetorial nos chunks e retorna os resultados com o contexto da seção pai
+
+**Vantagens:**
+- Preserva a estrutura do documento (seções, subseções)
+- Resultados incluem o caminho hierárquico (ex: `Document > Introdução > Chunk 3`)
+- Melhor relevância para documentos longos e estruturados
+
+```mermaid
+graph TB
+    subgraph "Indexação"
+        DOC["📄 Documento"] --> PARSER["DocumentTreeParser"]
+        PARSER --> TREE["🌳 Árvore"]
+        TREE --> D["Document Node"]
+        D --> S1["Section 1"]
+        D --> S2["Section 2"]
+        S1 --> C1["Chunk 1.1"]
+        S1 --> C2["Chunk 1.2"]
+        S2 --> C3["Chunk 2.1"]
+    end
+
+    subgraph "Busca"
+        Q["Query do usuário"] --> EMB["Embedder"]
+        EMB --> VS["Busca Vetorial<br/>(collection document_tree)"]
+        VS --> RANK["Top-K Chunks"]
+        RANK --> CTX["Contexto Hierárquico<br/>(Section + Document)"]
+        CTX --> LLM["LLM gera resposta"]
+    end
+
+    style DOC fill:#e1f5fe
+    style Q fill:#f3e5f5
+    style LLM fill:#e8f5e9
+```
 
 **Embedders suportados:** Ollama, OpenAI, Gemini, Azure
 
@@ -722,23 +816,35 @@ tests/
     ├── test_agent_config.py               # Domain: validação de AgentConfig
     ├── test_team_config.py                # Domain: validação de TeamConfig
     ├── test_tool.py                       # Domain: validação de Tool/ToolParameter
+    ├── test_document_node.py              # Domain: DocumentNode hierárquico
+    ├── test_search_result.py              # Domain: SearchResult
+    ├── test_rag_config_strategy.py        # Domain: RagConfig + SearchStrategy enum
     ├── test_agent_factory_service.py      # Application: criação de agentes
+    ├── test_agent_factory_extended.py     # Application: criação de agentes (extended)
     ├── test_team_factory_service.py       # Application: criação de teams
     ├── test_model_factory_service.py      # Application: factory de modelos
     ├── test_model_factory_extended.py     # Application: factory de modelos (extended)
     ├── test_embedder_model_factory_service.py # Application: factory de embedders
     ├── test_embedder_factory_extended.py   # Application: factory de embedders (extended)
+    ├── test_knowledge_search_factory.py   # Application: factory de estratégias de busca
+    ├── test_document_indexing_service.py  # Application: indexação de documentos
+    ├── test_hierarchical_search_strategy.py # Application: busca hierárquica
+    ├── test_hierarchical_integration.py   # Application: integração hierárquica
     ├── test_get_active_agents_use_case.py # Application: use case de agentes
     ├── test_get_active_teams_use_case.py  # Application: use case de teams
     ├── test_app_config.py                 # Infrastructure: configuração
     ├── test_app_factory.py                # Infrastructure: AppFactory
+    ├── test_app_factory_extended.py       # Infrastructure: AppFactory (extended)
     ├── test_app_integration.py            # Infrastructure: integração FastAPI
     ├── test_dependency_injection.py       # Infrastructure: container DI
     ├── test_http_tool_factory.py          # Infrastructure: HTTP tools
     ├── test_http_tool_factory_extended.py  # Infrastructure: HTTP tools (extended)
+    ├── test_hierarchical_search_tool.py   # Infrastructure: tool de busca hierárquica
+    ├── test_text_document_parser.py       # Infrastructure: parser de documentos
     ├── test_model_cache_service.py        # Infrastructure: cache
     ├── test_mongo_agent_config_repository.py # Infrastructure: repo agentes
     ├── test_mongo_team_config_repository.py  # Infrastructure: repo teams
+    ├── test_mongo_team_config_repository_extended.py # Infrastructure: repo teams (extended)
     ├── test_mongo_tool_repository_extended.py # Infrastructure: repo tools
     ├── test_mongo_base.py                 # Infrastructure: repo base MongoDB
     ├── test_logging_config.py             # Infrastructure: logging
@@ -747,6 +853,10 @@ tests/
     ├── test_logger_adapter.py             # Infrastructure: logger adapter
     ├── test_secure_logger.py              # Infrastructure: sanitização
     ├── test_structlog_logger.py           # Infrastructure: structlog
+    ├── test_structlog_logger_extended.py   # Infrastructure: structlog (extended)
+    ├── test_metrics_middleware.py          # Infrastructure: middleware de métricas
+    ├── test_otel_setup.py                 # Infrastructure: OpenTelemetry setup
+    ├── test_telemetry.py                  # Infrastructure: telemetria
     └── test_orquestrador_controller.py    # Presentation: controller
 ```
 
@@ -774,7 +884,7 @@ tests/
 | **Dependency Injection** | `dependency_injection.py` | Composition Root — todas as dependências são criadas e injetadas em um único ponto |
 | **Repository Pattern** | `domain/repositories/` → `infrastructure/repositories/` | Abstração de acesso a dados (interface → implementação MongoDB) |
 | **Factory Pattern** | `ModelFactory`, `EmbedderModelFactory`, `AgentFactoryService`, `TeamFactoryService` | Criação de objetos complexos sem expor a lógica de construção |
-| **Strategy Pattern** | `ModelFactory._IMPORT_SPECS` | Cada provider de modelo é uma estratégia intercambiável |
+| **Strategy Pattern** | `ModelFactory._IMPORT_SPECS`, `search_strategies/` | Cada provider de modelo e cada estratégia de busca RAG é intercambiável |
 | **Ports & Adapters** | `domain/ports/` | Interfaces que a infraestrutura implementa |
 | **Cache-Aside** | `OrquestradorController` | Cache de agentes com TTL + fallback |
 
@@ -899,7 +1009,7 @@ LOG_LEVEL=DEBUG python app.py
 ### Antes de submeter
 
 ```bash
-# Execute os testes (179 devem passar)
+# Execute os testes (345 devem passar)
 pytest
 
 # Verifique a cobertura
