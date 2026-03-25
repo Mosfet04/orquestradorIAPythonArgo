@@ -84,9 +84,7 @@ class TextDocumentParser(IDocumentParser):
                 saw_heading = True
                 if current_heading is None:
                     if preamble:
-                        sections.append(
-                            (0, "Introdução", "\n".join(preamble).strip())
-                        )
+                        sections.append((0, "Introdução", "\n".join(preamble).strip()))
                 else:
                     sections.append(
                         (
@@ -179,9 +177,7 @@ class TextDocumentParser(IDocumentParser):
 
     # ── sub-chunking ────────────────────────────────────────────────
 
-    def _subdivide_large_leaves(
-        self, nodes: List[DocumentNode], doc_name: str
-    ) -> None:
+    def _subdivide_large_leaves(self, nodes: List[DocumentNode], doc_name: str) -> None:
         """Subdivide folhas com conteúdo maior que ``_max_chunk_chars``.
 
         Transforma a folha em nó interno e cria filhos com chunks

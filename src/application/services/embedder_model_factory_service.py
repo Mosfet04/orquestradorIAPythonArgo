@@ -18,16 +18,27 @@ class EmbedderModelFactory(IEmbedderFactory):
     # agno v2.5: agno.embedder.* → agno.knowledge.embedder.*
     _IMPORT_SPECS: Dict[str, tuple[str, str, str, str]] = {
         "ollama": (
-            "agno.knowledge.embedder.ollama", "OllamaEmbedder", "agno", "Ollama"
+            "agno.knowledge.embedder.ollama",
+            "OllamaEmbedder",
+            "agno",
+            "Ollama",
         ),
         "openai": (
-            "agno.knowledge.embedder.openai", "OpenAIEmbedder", "openai", "OpenAI"
+            "agno.knowledge.embedder.openai",
+            "OpenAIEmbedder",
+            "openai",
+            "OpenAI",
         ),
         "gemini": (
-            "agno.knowledge.embedder.google", "GeminiEmbedder", "google-genai", "Gemini"
+            "agno.knowledge.embedder.google",
+            "GeminiEmbedder",
+            "google-genai",
+            "Gemini",
         ),
         "azure": (
-            "agno.knowledge.embedder.azure_openai", "AzureOpenAIEmbedder", "openai",
+            "agno.knowledge.embedder.azure_openai",
+            "AzureOpenAIEmbedder",
+            "openai",
             "Azure OpenAI",
         ),
     }

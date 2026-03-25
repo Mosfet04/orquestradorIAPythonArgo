@@ -58,9 +58,7 @@ class HierarchicalSearchStrategy(IKnowledgeSearchStrategy):
 
         root_nodes = await self._tree_repo.get_root_nodes(self._doc_name)
         if not root_nodes:
-            self._logger.warning(
-                "Nenhum nó raiz encontrado", doc_name=self._doc_name
-            )
+            self._logger.warning("Nenhum nó raiz encontrado", doc_name=self._doc_name)
             return []
 
         leaf_results = await self._traverse(root_nodes, query_embedding)

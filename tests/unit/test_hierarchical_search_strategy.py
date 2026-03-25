@@ -129,9 +129,7 @@ class TestHierarchicalSearchStrategy:
     async def test_low_score_nodes_pruned(self):
         """Nós com score abaixo de _MIN_SCORE_THRESHOLD são podados."""
         # Vetor ortogonal — similaridade ~ 0
-        low_score_node = _make_node(
-            "low", embedding=[0.0, 1.0], content="irrelevant"
-        )
+        low_score_node = _make_node("low", embedding=[0.0, 1.0], content="irrelevant")
         self.mock_repo.get_root_nodes.return_value = [low_score_node]
         self.mock_embedder.get_embedding.return_value = [1.0, 0.0]
 

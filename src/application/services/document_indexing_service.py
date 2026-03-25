@@ -80,7 +80,8 @@ class DocumentIndexingService:
         factory_type = rag_config.resolved_provider
         model_id = rag_config.resolved_model
         embedder = self._embedder_factory.create_model(
-            factory_type, model_id,
+            factory_type,
+            model_id,
         )
 
         await self._generate_summaries(nodes)
@@ -123,7 +124,9 @@ class DocumentIndexingService:
             )
             node.summary = node.content[:200]
 
-    async def _compute_embeddings(self, nodes: List[DocumentNode], embedder: Any) -> None:
+    async def _compute_embeddings(
+        self, nodes: List[DocumentNode], embedder: Any
+    ) -> None:
         """Computa embeddings em paralelo usando ThreadPoolExecutor."""
         loop = asyncio.get_running_loop()
 

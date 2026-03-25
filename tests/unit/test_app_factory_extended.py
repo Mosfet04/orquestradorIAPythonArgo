@@ -66,11 +66,15 @@ class TestAdminEndpointsWithContainer:
         factory = AppFactory()
         container = MagicMock()
         controller = MagicMock()
-        controller.get_cache_stats = MagicMock(return_value={"agents": {"status": "active"}})
+        controller.get_cache_stats = MagicMock(
+            return_value={"agents": {"status": "active"}}
+        )
         controller.refresh_agents = AsyncMock()
         container.get_orquestrador_controller.return_value = controller
         container.health_service = MagicMock()
-        container.health_service.check_async = AsyncMock(return_value={"status": "ok", "db": "connected"})
+        container.health_service.check_async = AsyncMock(
+            return_value={"status": "ok", "db": "connected"}
+        )
         container.cleanup = AsyncMock()
         factory._container = container
         return factory
@@ -234,6 +238,7 @@ class TestMountAgentOS:
         mock_os_cls.return_value = mock_os_instance
 
         from fastapi import FastAPI
+
         app = FastAPI()
         agents = [MagicMock(), MagicMock()]
         teams = [MagicMock()]
@@ -252,6 +257,7 @@ class TestMountAgentOS:
         mock_os_cls.return_value = mock_os_instance
 
         from fastapi import FastAPI
+
         app = FastAPI()
         factory._mount_agent_os(app, [MagicMock()], [])
         # teams=[] → deve enviar None
@@ -269,7 +275,15 @@ class TestLifespan:
     @patch("src.infrastructure.web.app_factory.AGUI")
     @patch("src.infrastructure.web.app_factory.DependencyContainer")
     @patch("src.infrastructure.web.app_factory.AppConfig")
-    async def test_lifespan_happy_path(self, mock_config_cls, mock_dc_cls, mock_agui, mock_os_cls, mock_setup_tel, mock_shutdown_tel):
+    async def test_lifespan_happy_path(
+        self,
+        mock_config_cls,
+        mock_dc_cls,
+        mock_agui,
+        mock_os_cls,
+        mock_setup_tel,
+        mock_shutdown_tel,
+    ):
         """Lifespan completo: container + agents + teams + mount."""
         factory = AppFactory()
 
@@ -298,6 +312,7 @@ class TestLifespan:
         mock_os_cls.return_value = mock_os_instance
 
         from fastapi import FastAPI
+
         app = FastAPI()
 
         async with factory._lifespan(app):
@@ -309,7 +324,9 @@ class TestLifespan:
     @patch("src.infrastructure.web.app_factory.setup_telemetry")
     @patch("src.infrastructure.web.app_factory.DependencyContainer")
     @patch("src.infrastructure.web.app_factory.AppConfig")
-    async def test_lifespan_no_agents_no_teams(self, mock_config_cls, mock_dc_cls, mock_setup_tel, mock_shutdown_tel):
+    async def test_lifespan_no_agents_no_teams(
+        self, mock_config_cls, mock_dc_cls, mock_setup_tel, mock_shutdown_tel
+    ):
         """Lifespan sem agentes nem teams — não monta AgentOS."""
         factory = AppFactory()
 
@@ -331,6 +348,7 @@ class TestLifespan:
         mock_dc_cls.create_async = AsyncMock(return_value=container)
 
         from fastapi import FastAPI
+
         app = FastAPI()
 
         async with factory._lifespan(app):
@@ -340,11 +358,22 @@ class TestLifespan:
 
     @patch("src.infrastructure.web.app_factory.shutdown_telemetry")
     @patch("src.infrastructure.web.app_factory.setup_telemetry")
-    @patch("src.infrastructure.web.app_factory.AgentOS", side_effect=RuntimeError("mount fail"))
+    @patch(
+        "src.infrastructure.web.app_factory.AgentOS",
+        side_effect=RuntimeError("mount fail"),
+    )
     @patch("src.infrastructure.web.app_factory.AGUI")
     @patch("src.infrastructure.web.app_factory.DependencyContainer")
     @patch("src.infrastructure.web.app_factory.AppConfig")
-    async def test_lifespan_mount_error_continues(self, mock_config_cls, mock_dc_cls, mock_agui, mock_os_cls, mock_setup_tel, mock_shutdown_tel):
+    async def test_lifespan_mount_error_continues(
+        self,
+        mock_config_cls,
+        mock_dc_cls,
+        mock_agui,
+        mock_os_cls,
+        mock_setup_tel,
+        mock_shutdown_tel,
+    ):
         """Se AgentOS falhar, lifespan continua sem raise."""
         factory = AppFactory()
 
@@ -370,6 +399,7 @@ class TestLifespan:
         mock_agui.return_value = MagicMock()
 
         from fastapi import FastAPI
+
         app = FastAPI()
 
         # Não deve fazer raise
@@ -386,6 +416,7 @@ class TestLifespan:
         mock_config_cls.load.side_effect = RuntimeError("config fail")
 
         from fastapi import FastAPI
+
         app = FastAPI()
 
         with pytest.raises(RuntimeError, match="config fail"):
@@ -399,5 +430,6 @@ class TestLifespan:
 class TestCreateAppModuleLevel:
     def test_create_app_returns_fastapi(self):
         from fastapi import FastAPI
+
         app = create_app()
         assert isinstance(app, FastAPI)

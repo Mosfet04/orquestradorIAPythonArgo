@@ -68,7 +68,9 @@ class TestAgentFactoryService:
 
     @patch("src.application.services.agent_factory_service.Agent")
     @patch("src.application.services.agent_factory_service.MongoAgentDb")
-    async def test_create_agent_with_tools(self, mock_db, mock_agent, service, mock_tool_repository):
+    async def test_create_agent_with_tools(
+        self, mock_db, mock_agent, service, mock_tool_repository
+    ):
         mock_agent.return_value = MagicMock()
         mock_tool_repository.get_tools_by_ids.return_value = [MagicMock(), MagicMock()]
         service._tool_factory.create_tools_from_configs.return_value = [MagicMock()]
@@ -81,7 +83,9 @@ class TestAgentFactoryService:
     @patch("src.application.services.agent_factory_service.MongoAgentDb")
     @patch("src.application.services.agent_factory_service.Knowledge")
     @patch("src.application.services.agent_factory_service.MongoVectorDb")
-    async def test_create_agent_with_rag(self, mock_vdb, mock_knowledge, mock_db, mock_agent, service):
+    async def test_create_agent_with_rag(
+        self, mock_vdb, mock_knowledge, mock_db, mock_agent, service
+    ):
         mock_agent.return_value = MagicMock()
         service._embedder_factory.create_model.return_value = MagicMock()
         rag = RagConfig(active=True, model="m", factory_ia_model="ollama")
@@ -91,7 +95,9 @@ class TestAgentFactoryService:
 
     @patch("src.application.services.agent_factory_service.Agent")
     @patch("src.application.services.agent_factory_service.MongoAgentDb")
-    async def test_create_agent_enables_message_persistence(self, mock_db, mock_agent, service):
+    async def test_create_agent_enables_message_persistence(
+        self, mock_db, mock_agent, service
+    ):
         mock_agent.return_value = MagicMock()
         config = _make_config()
         await service.create_agent(config)

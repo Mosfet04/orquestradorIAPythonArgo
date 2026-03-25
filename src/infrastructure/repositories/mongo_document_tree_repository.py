@@ -76,9 +76,9 @@ class MongoDocumentTreeRepository(AsyncMongoRepository, IDocumentTreeRepository)
         """Retorna filhos diretos de vários nós em uma única query."""
         if not parent_ids:
             return []
-        cursor = self._collection.find(
-            {"parent_id": {"$in": parent_ids}}
-        ).sort("_order", 1)
+        cursor = self._collection.find({"parent_id": {"$in": parent_ids}}).sort(
+            "_order", 1
+        )
         return [self._to_entity(doc) async for doc in cursor]
 
     async def get_node(self, node_id: str) -> Optional[DocumentNode]:

@@ -184,7 +184,8 @@ class TestDocumentIndexingService:
         assert len(result) == 1
         assert result[0].embedding is None
         warning_calls = [
-            c for c in self.mock_logger.warning.call_args_list
+            c
+            for c in self.mock_logger.warning.call_args_list
             if "Embedding vazio" in str(c)
         ]
         assert len(warning_calls) >= 1

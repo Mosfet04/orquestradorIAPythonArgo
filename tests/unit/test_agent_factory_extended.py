@@ -52,7 +52,9 @@ class TestBuildToolsError:
 
     @patch("src.application.services.agent_factory_service.Agent")
     @patch("src.application.services.agent_factory_service.MongoAgentDb")
-    async def test_build_tools_exception_returns_empty(self, mock_db, mock_agent, service, mock_logger):
+    async def test_build_tools_exception_returns_empty(
+        self, mock_db, mock_agent, service, mock_logger
+    ):
         """Se _build_tools falhar, deve retornar lista vazia e logar warning."""
         mock_agent.return_value = MagicMock()
         # Fazer o repositório lançar exceção
@@ -70,7 +72,9 @@ class TestBuildKnowledgeEdgeCases:
 
     @patch("src.application.services.agent_factory_service.Agent")
     @patch("src.application.services.agent_factory_service.MongoAgentDb")
-    async def test_rag_without_model_uses_defaults(self, mock_db, mock_agent, service, mock_logger):
+    async def test_rag_without_model_uses_defaults(
+        self, mock_db, mock_agent, service, mock_logger
+    ):
         """RAG ativo sem factory_ia_model/model deve usar defaults (resolved_*)."""
         mock_agent.return_value = MagicMock()
         rag = RagConfig(active=True, model="", factory_ia_model="")
@@ -81,7 +85,9 @@ class TestBuildKnowledgeEdgeCases:
 
     @patch("src.application.services.agent_factory_service.Agent")
     @patch("src.application.services.agent_factory_service.MongoAgentDb")
-    async def test_rag_without_factory_ia_model(self, mock_db, mock_agent, service, mock_logger):
+    async def test_rag_without_factory_ia_model(
+        self, mock_db, mock_agent, service, mock_logger
+    ):
         """RAG ativo com model mas sem factory_ia_model deve ignorar."""
         mock_agent.return_value = MagicMock()
         rag = RagConfig(active=True, model="embed-v1", factory_ia_model="")
@@ -126,7 +132,9 @@ class TestLoadDocument:
         mock_knowledge_cls.return_value = knowledge_instance
         service._document_reader.read.side_effect = FileNotFoundError("not found")
 
-        rag = RagConfig(active=True, model="m", factory_ia_model="ollama", doc_name="test.pdf")
+        rag = RagConfig(
+            active=True, model="m", factory_ia_model="ollama", doc_name="test.pdf"
+        )
         config = _make_config(rag_config=rag)
         agent = await service.create_agent(config)
         assert agent is not None
@@ -149,7 +157,9 @@ class TestLoadDocument:
         knowledge_instance.insert.side_effect = RuntimeError("unknown error")
         mock_knowledge_cls.return_value = knowledge_instance
 
-        rag = RagConfig(active=True, model="m", factory_ia_model="ollama", doc_name="test.pdf")
+        rag = RagConfig(
+            active=True, model="m", factory_ia_model="ollama", doc_name="test.pdf"
+        )
         config = _make_config(rag_config=rag)
         agent = await service.create_agent(config)
         assert agent is not None
