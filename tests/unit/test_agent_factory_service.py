@@ -33,6 +33,7 @@ def service(mock_logger, mock_tool_repository):
     embedder_factory = MagicMock()
     tool_factory = AsyncMock()
     tool_factory.create_tools_from_configs = AsyncMock(return_value=[])
+    document_reader = MagicMock()
 
     return AgentFactoryService(
         db_url="mongodb://test:27017",
@@ -42,6 +43,7 @@ def service(mock_logger, mock_tool_repository):
         embedder_factory=embedder_factory,
         tool_factory=tool_factory,
         tool_repository=mock_tool_repository,
+        document_reader=document_reader,
     )
 
 

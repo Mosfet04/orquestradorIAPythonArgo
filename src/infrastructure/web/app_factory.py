@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -9,6 +10,7 @@ from typing import Optional
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
 
 from src.infrastructure.config.app_config import AppConfig
 from src.infrastructure.dependency_injection import DependencyContainer
@@ -55,12 +57,11 @@ class AppFactory:
     (DI, agentes, AgentOS) acontece dentro do *lifespan*.
     """
 
+    # CORS configurável via env CORS_ALLOWED_ORIGINS (separado por vírgula)
     _ALLOWED_ORIGINS = [
-        "https://app.agno.com",
-        "https://www.agno.com",
-        "http://localhost:3000",
-        "http://localhost:7777",
-        "https://os.agno.com",
+        o.strip()
+        for o in os.getenv("CORS_ALLOWED_ORIGINS", "*").split(",")
+        if o.strip()
     ]
 
     def __init__(self) -> None:
@@ -77,6 +78,7 @@ class AppFactory:
         )
 
         self._add_cors(base_app)
+        self._add_force_cors_headers(base_app)
         # self._add_playground_rewrite(base_app)
         self._add_metrics_middleware(base_app)
         self._add_admin_endpoints(base_app)
@@ -100,11 +102,50 @@ class AppFactory:
         app.add_middleware(
             CORSMiddleware,
             allow_origins=cls._ALLOWED_ORIGINS,
-            allow_credentials=True,
+            allow_credentials=False,
             allow_methods=["*"],
             allow_headers=["*"],
             expose_headers=["*"],
+            max_age=86400,
         )
+
+    @classmethod
+    def _add_force_cors_headers(cls, app: FastAPI) -> None:
+        """Força cabeçalhos CORS em todas as respostas.
+
+        Necessário porque o AgentOS monta rotas (ex: ``/health``)
+        que podem não passar pelo ``CORSMiddleware`` padrão.
+        Também intercepta preflight OPTIONS explicitamente.
+        """
+
+        @app.middleware("http")
+        async def _force_cors(request: Request, call_next):
+            request_origin = request.headers.get("origin", "")
+            if "*" in cls._ALLOWED_ORIGINS:
+                origin = "*"
+            elif request_origin in cls._ALLOWED_ORIGINS:
+                origin = request_origin
+            else:
+                origin = ""
+
+            # Preflight OPTIONS — responde imediatamente com 200
+            if request.method == "OPTIONS" and origin:
+                return Response(
+                    status_code=200,
+                    headers={
+                        "Access-Control-Allow-Origin": origin,
+                        "Access-Control-Allow-Methods": "*",
+                        "Access-Control-Allow-Headers": "*",
+                        "Access-Control-Max-Age": "86400",
+                    },
+                )
+
+            response: Response = await call_next(request)
+            if origin:
+                response.headers.setdefault("Access-Control-Allow-Origin", origin)
+                response.headers.setdefault("Access-Control-Allow-Methods", "*")
+                response.headers.setdefault("Access-Control-Allow-Headers", "*")
+            return response
 
     # ── admin endpoints ─────────────────────────────────────────────
 
@@ -269,6 +310,7 @@ class AppFactory:
     def _record_startup_metrics(self, startup_start, agents, teams):
         """Registra métricas de startup."""
         import time as _time
+
         startup_elapsed = _time.perf_counter() - startup_start
         TelemetryMetrics.record_startup_duration(startup_elapsed)
         TelemetryMetrics.record_agents_loaded(len(agents) if agents else 0)

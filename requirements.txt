@@ -18,7 +18,6 @@ google-genai>=1.0.0
 
 # === Knowledge / RAG ===
 chromadb>=1.0.0
-pypdf>=5.0.0
 
 # === HTTP Client ===
 httpx>=0.28.0
@@ -48,3 +47,5 @@ pytest-cov>=6.0.0
 
 # === AG-UI Protocol (interface AGUI para os.agno.com) ===
 ag-ui-protocol>=0.1.13
+
+pdfplumber>=0.11.0

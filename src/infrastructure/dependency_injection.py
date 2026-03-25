@@ -30,76 +30,10 @@ from src.infrastructure.repositories.mongo_team_config_repository import (
     MongoTeamConfigRepository,
 )
 from src.infrastructure.repositories.mongo_tool_repository import MongoToolRepository
+from src.infrastructure.adapters.file_document_reader import FileDocumentReader
+from src.infrastructure.services.health_service import HealthService
 from src.infrastructure.services.llm_summary_generator import LLMSummaryGenerator
 from src.presentation.controllers.orquestrador_controller import OrquestradorController
-
-
-class HealthService:
-    """Serviço de health check."""
-
-    def __init__(self, mongo_client: AsyncIOMotorClient) -> None:
-        self._mongo_client = mongo_client
-
-    async def check_async(self) -> dict:
-        start = asyncio.get_event_loop().time()
-        checks = await asyncio.gather(
-            self._check_mongodb(),
-            self._check_memory(),
-            self._check_otlp(),
-            return_exceptions=True,
-        )
-        elapsed = asyncio.get_event_loop().time() - start
-
-        def _ok(c: Any) -> bool:
-            return not isinstance(c, Exception) and c.get("status") not in (
-                "error",
-                "unhealthy",
-            )
-
-        return {
-            "status": "healthy" if all(_ok(c) for c in checks) else "unhealthy",
-            "checks": {
-                "mongodb": checks[0] if not isinstance(checks[0], Exception) else {"status": "error", "error": str(checks[0])},
-                "memory": checks[1] if not isinstance(checks[1], Exception) else {"status": "error", "error": str(checks[1])},
-                "otlp": checks[2] if not isinstance(checks[2], Exception) else {"status": "error", "error": str(checks[2])},
-            },
-            "response_time_ms": round(elapsed * 1000, 2),
-        }
-
-    async def _check_mongodb(self) -> dict:
-        try:
-            await self._mongo_client.admin.command("ping")
-            return {"status": "healthy"}
-        except Exception as exc:
-            return {"status": "unhealthy", "error": str(exc)}
-
-    @staticmethod
-    async def _check_memory() -> dict:
-        try:
-            import psutil
-
-            mem = psutil.virtual_memory()
-            return {
-                "status": "healthy" if mem.percent < 90 else "warning",
-                "usage_percent": mem.percent,
-                "available_gb": round(mem.available / (1024**3), 2),
-            }
-        except ImportError:
-            return {"status": "unavailable", "message": "psutil não instalado"}
-
-    @staticmethod
-    async def _check_otlp() -> dict:
-        """Verifica se o endpoint OTLP (Grafana LGTM) está acessível."""
-        try:
-            from opentelemetry import trace
-
-            provider = trace.get_tracer_provider()
-            if provider and hasattr(provider, "force_flush"):
-                provider.force_flush(timeout_millis=2000)
-                return {"status": "healthy", "provider": type(provider).__name__}
-            return {"status": "not_configured"}
-        except Exception as exc:
-            return {"status": "warning", "error": str(exc)}
 
 
 class DependencyContainer:
@@ -177,6 +111,8 @@ class DependencyContainer:
             tree_repository=tree_repo, logger=self._logger
         )
 
+        doc_reader = FileDocumentReader(logger=self._logger)
+
         agent_factory = AgentFactoryService(
             db_url=conn,
             db_name=db,
@@ -185,6 +121,7 @@ class DependencyContainer:
             embedder_factory=embedder_factory,
             tool_factory=tool_factory,
             tool_repository=tool_repo,
+            document_reader=doc_reader,
             indexing_service=indexing_service,
             search_factory=search_factory,
         )

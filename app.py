@@ -3,7 +3,7 @@
 from dotenv import load_dotenv
 import asyncio
 import sys
-import uvloop
+
 load_dotenv()  # carrega .env antes de qualquer acesso a os.getenv()
 
 from src.infrastructure.logging import setup_structlog
@@ -15,7 +15,16 @@ setup_structlog()
 # Criar app via factory síncrona — uvicorn recebe um objeto ASGI real
 app = create_app()
 
-if sys.platform == "win32":
+_uvloop_available = False
+if sys.platform != "win32":
+    try:
+        import uvloop
+
+        asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+        _uvloop_available = True
+    except ImportError:
+        asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
+else:
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 if __name__ == "__main__":
@@ -32,10 +41,9 @@ if __name__ == "__main__":
         "log_level": "info",
     }
 
-    try:
-        asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+    if _uvloop_available:
         uvicorn_config["loop"] = "uvloop"
-    except ImportError:
+    else:
         app_logger.info("uvloop não disponível, usando loop padrão")
 
     config = uvicorn.Config(**uvicorn_config)

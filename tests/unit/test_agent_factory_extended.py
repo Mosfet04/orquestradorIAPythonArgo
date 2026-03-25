@@ -33,6 +33,7 @@ def service(mock_logger, mock_tool_repository):
     embedder_factory = MagicMock()
     tool_factory = AsyncMock()
     tool_factory.create_tools_from_configs = AsyncMock(return_value=[])
+    document_reader = MagicMock()
 
     return AgentFactoryService(
         db_url="mongodb://test:27017",
@@ -42,6 +43,7 @@ def service(mock_logger, mock_tool_repository):
         embedder_factory=embedder_factory,
         tool_factory=tool_factory,
         tool_repository=mock_tool_repository,
+        document_reader=document_reader,
     )
 
 
@@ -68,16 +70,14 @@ class TestBuildKnowledgeEdgeCases:
 
     @patch("src.application.services.agent_factory_service.Agent")
     @patch("src.application.services.agent_factory_service.MongoAgentDb")
-    async def test_rag_without_model_returns_none(self, mock_db, mock_agent, service, mock_logger):
-        """RAG ativo sem factory_ia_model deve logar warning e ignorar."""
+    async def test_rag_without_model_uses_defaults(self, mock_db, mock_agent, service, mock_logger):
+        """RAG ativo sem factory_ia_model/model deve usar defaults (resolved_*)."""
         mock_agent.return_value = MagicMock()
         rag = RagConfig(active=True, model="", factory_ia_model="")
         config = _make_config(rag_config=rag)
         agent = await service.create_agent(config)
         assert agent is not None
-        mock_logger.warning.assert_any_call(
-            "RAG ativo sem factory_ia_model ou model — ignorando"
-        )
+        # Com defaults, o knowledge é criado normalmente (sem warning)
 
     @patch("src.application.services.agent_factory_service.Agent")
     @patch("src.application.services.agent_factory_service.MongoAgentDb")
@@ -119,19 +119,19 @@ class TestLoadDocument:
     async def test_load_document_file_not_found(
         self, mock_vdb, mock_knowledge_cls, mock_db, mock_agent, service, mock_logger
     ):
-        """FileNotFoundError deve logar warning."""
+        """FileNotFoundError no document_reader deve logar warning."""
         mock_agent.return_value = MagicMock()
         service._embedder_factory.create_model.return_value = MagicMock()
         knowledge_instance = MagicMock()
-        knowledge_instance.insert.side_effect = FileNotFoundError("not found")
         mock_knowledge_cls.return_value = knowledge_instance
+        service._document_reader.read.side_effect = FileNotFoundError("not found")
 
         rag = RagConfig(active=True, model="m", factory_ia_model="ollama", doc_name="test.pdf")
         config = _make_config(rag_config=rag)
         agent = await service.create_agent(config)
         assert agent is not None
         mock_logger.warning.assert_any_call(
-            "Documento não encontrado", path="docs/test.pdf"
+            "Documento não encontrado", doc_name="test.pdf"
         )
 
     @patch("src.application.services.agent_factory_service.Agent")
@@ -144,6 +144,7 @@ class TestLoadDocument:
         """Exceção genérica ao inserir documento deve logar error."""
         mock_agent.return_value = MagicMock()
         service._embedder_factory.create_model.return_value = MagicMock()
+        service._document_reader.read.return_value = "some content"
         knowledge_instance = MagicMock()
         knowledge_instance.insert.side_effect = RuntimeError("unknown error")
         mock_knowledge_cls.return_value = knowledge_instance
@@ -154,6 +155,6 @@ class TestLoadDocument:
         assert agent is not None
         mock_logger.error.assert_any_call(
             "Erro ao carregar documento RAG",
-            path="docs/test.pdf",
+            doc_name="test.pdf",
             error="unknown error",
         )

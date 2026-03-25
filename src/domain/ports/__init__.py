@@ -10,6 +10,7 @@ from src.domain.ports.model_factory_port import IModelFactory
 from src.domain.ports.embedder_factory_port import IEmbedderFactory
 from src.domain.ports.tool_factory_port import IToolFactory
 from src.domain.ports.agent_builder_port import IAgentBuilder
+from src.domain.ports.document_reader_port import IDocumentReader
 
 # Type alias para desacoplar o domínio do framework agno
 from typing import Any
@@ -22,5 +23,6 @@ __all__ = [
     "IEmbedderFactory",
     "IToolFactory",
     "IAgentBuilder",
+    "IDocumentReader",
     "AgentInstance",
 ]

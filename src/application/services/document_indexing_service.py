@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, List
 
 from src.domain.entities.document_node import DocumentNode
@@ -14,6 +15,8 @@ from src.domain.ports.logger_port import ILogger
 from src.domain.ports.summary_generator_port import ISummaryGenerator
 
 _SUMMARY_BATCH_SIZE = 5
+_EMBEDDING_MAX_CHARS = 1500
+_EMBEDDING_WORKERS = 4
 
 
 class DocumentIndexingService:
@@ -47,19 +50,25 @@ class DocumentIndexingService:
         doc_name: str,
         content: str,
         rag_config: RagConfig,
+        *,
+        force_reindex: bool = False,
     ) -> List[DocumentNode]:
         """Indexa documento caso ainda não exista.
+
+        Parameters
+        ----------
+        force_reindex:
+            Se True, remove nós existentes e re-indexa.
 
         Returns
         -------
         List[DocumentNode]
-            Lista de nós criados (vazia se já existia).
+            Lista de nós criados (vazia se já existia e force_reindex=False).
         """
         if await self._tree_repo.exists(doc_name):
-            self._logger.info(
-                "Documento já indexado — skip", doc_name=doc_name
-            )
-            return []
+            if not force_reindex:
+                self._logger.info("Documento já indexado — skip", doc_name=doc_name)
+                return []
 
         self._logger.info("Iniciando indexação hierárquica", doc_name=doc_name)
 
@@ -68,15 +77,20 @@ class DocumentIndexingService:
             self._logger.warning("Parser retornou zero nós", doc_name=doc_name)
             return []
 
+        factory_type = rag_config.resolved_provider
+        model_id = rag_config.resolved_model
         embedder = self._embedder_factory.create_model(
-            rag_config.factory_ia_model or "ollama",
-            rag_config.model or "nomic-embed-text:latest",
+            factory_type, model_id,
         )
 
         await self._generate_summaries(nodes)
-        self._compute_embeddings(nodes, embedder)
+        await self._compute_embeddings(nodes, embedder)
 
-        await self._tree_repo.save_nodes(nodes)
+        if force_reindex:
+            await self._tree_repo.replace_nodes(doc_name, nodes)
+        else:
+            await self._tree_repo.save_nodes(nodes)
+
         self._logger.info(
             "Indexação concluída",
             doc_name=doc_name,
@@ -94,17 +108,13 @@ class DocumentIndexingService:
 
         for i in range(0, len(internal_nodes), _SUMMARY_BATCH_SIZE):
             batch = internal_nodes[i : i + _SUMMARY_BATCH_SIZE]
-            tasks = [
-                self._safe_summarize(node) for node in batch
-            ]
+            tasks = [self._safe_summarize(node) for node in batch]
             await asyncio.gather(*tasks)
 
     async def _safe_summarize(self, node: DocumentNode) -> None:
         """Gera sumário com fallback para os primeiros 200 chars."""
         try:
-            node.summary = await self._summary_gen.generate_summary(
-                node.content
-            )
+            node.summary = await self._summary_gen.generate_summary(node.content)
         except Exception as exc:
             self._logger.warning(
                 "Fallback de sumário",
@@ -113,21 +123,53 @@ class DocumentIndexingService:
             )
             node.summary = node.content[:200]
 
-    def _compute_embeddings(
-        self, nodes: List[DocumentNode], embedder: Any
-    ) -> None:
-        """Computa embedding para cada nó usando o texto adequado."""
-        for node in nodes:
+    async def _compute_embeddings(self, nodes: List[DocumentNode], embedder: Any) -> None:
+        """Computa embeddings em paralelo usando ThreadPoolExecutor."""
+        loop = asyncio.get_running_loop()
+
+        def _embed_single(node: DocumentNode) -> None:
             text = node.searchable_text
             if not text:
-                continue
+                return
+            if len(text) > _EMBEDDING_MAX_CHARS:
+                self._logger.info(
+                    "Texto truncado para embedding",
+                    node_id=node.id,
+                    original_len=len(text),
+                    truncated_to=_EMBEDDING_MAX_CHARS,
+                )
+            text = text[:_EMBEDDING_MAX_CHARS]
             try:
                 embedding = embedder.get_embedding(text)
-                if isinstance(embedding, list):
-                    node.embedding = embedding
+                normalized = self._normalize_embedding(embedding)
+                if normalized:
+                    node.embedding = normalized
+                else:
+                    self._logger.warning("Embedding vazio retornado", node_id=node.id)
             except Exception as exc:
                 self._logger.warning(
                     "Erro ao computar embedding",
                     node_id=node.id,
                     error=str(exc),
                 )
+
+        with ThreadPoolExecutor(max_workers=_EMBEDDING_WORKERS) as pool:
+            futures = [
+                loop.run_in_executor(pool, _embed_single, node)
+                for node in nodes
+                if node.searchable_text
+            ]
+            await asyncio.gather(*futures)
+
+    @staticmethod
+    def _normalize_embedding(embedding: Any) -> List[float]:
+        """Converte embeddings retornados em qualquer formato comum para ``list``."""
+        if embedding is None:
+            return []
+        if hasattr(embedding, "tolist"):
+            embedding = embedding.tolist()
+        if isinstance(embedding, tuple):
+            embedding = list(embedding)
+        if isinstance(embedding, list):
+            return embedding
+        return []

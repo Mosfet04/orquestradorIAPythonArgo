@@ -139,3 +139,52 @@ class TestDocumentIndexingService:
         assert len(result) == 1
         assert result[0].embedding is None
         self.mock_logger.warning.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_force_reindex_deletes_and_reindexes(self):
+        """force_reindex=True deve usar replace_nodes para re-indexar atomicamente."""
+        self.mock_tree_repo.exists.return_value = True
+        self.mock_tree_repo.replace_nodes = AsyncMock()
+        nodes = _make_nodes()
+        self.mock_parser.parse.return_value = nodes
+        self.mock_summary_gen.generate_summary.return_value = "Resumo"
+
+        mock_embedder = MagicMock()
+        mock_embedder.get_embedding.return_value = [0.1, 0.2]
+        self.mock_embedder_factory.create_model.return_value = mock_embedder
+
+        rag = RagConfig(
+            active=True, doc_name="test.txt", model="m", factory_ia_model="o"
+        )
+        result = await self.service.index_document(
+            "test.txt", "content", rag, force_reindex=True
+        )
+
+        assert len(result) == 2
+        self.mock_tree_repo.replace_nodes.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_empty_embedding_logged(self):
+        """Embedding vazio retornado deve ser logado como warning."""
+        self.mock_tree_repo.exists.return_value = False
+        nodes = [
+            DocumentNode(
+                id="n0", doc_name="t.txt", level=0, title="T", content="Content"
+            ),
+        ]
+        self.mock_parser.parse.return_value = nodes
+
+        mock_embedder = MagicMock()
+        mock_embedder.get_embedding.return_value = None
+        self.mock_embedder_factory.create_model.return_value = mock_embedder
+
+        rag = RagConfig(active=True, doc_name="t.txt", model="m", factory_ia_model="o")
+        result = await self.service.index_document("t.txt", "content", rag)
+
+        assert len(result) == 1
+        assert result[0].embedding is None
+        warning_calls = [
+            c for c in self.mock_logger.warning.call_args_list
+            if "Embedding vazio" in str(c)
+        ]
+        assert len(warning_calls) >= 1

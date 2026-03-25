@@ -12,6 +12,7 @@ from src.domain.ports.knowledge_search_port import IKnowledgeSearchStrategy
 from src.domain.ports.logger_port import ILogger
 
 _HIGH_CONFIDENCE_THRESHOLD = 0.85
+_MIN_SCORE_THRESHOLD = 0.3
 _BEAM_WIDTH = 2  # nós explorados por nível
 
 
@@ -44,6 +45,7 @@ class HierarchicalSearchStrategy(IKnowledgeSearchStrategy):
         self._logger = logger
         self._beam_width = beam_width
         self._confidence_threshold = confidence_threshold
+        self._min_score_threshold = _MIN_SCORE_THRESHOLD
 
     # ── public ──────────────────────────────────────────────────────
 
@@ -77,7 +79,11 @@ class HierarchicalSearchStrategy(IKnowledgeSearchStrategy):
         best = scored[: self._beam_width]
 
         results: List[SearchResult] = []
+        expand_nodes: List[tuple[DocumentNode, float]] = []
+
         for node, score in best:
+            if score < self._min_score_threshold:
+                continue
             if node.is_leaf:
                 results.append(
                     SearchResult(
@@ -92,24 +98,23 @@ class HierarchicalSearchStrategy(IKnowledgeSearchStrategy):
                     )
                 )
             else:
-                if score >= self._confidence_threshold:
-                    children = await self._tree_repo.get_children(node.id)
-                    if children:
-                        child_results = await self._traverse(
-                            children, query_embedding
-                        )
-                        results.extend(child_results)
-                    else:
-                        results.append(self._node_to_result(node, score))
+                expand_nodes.append((node, score))
+
+        if expand_nodes:
+            parent_ids = [n.id for n, _ in expand_nodes]
+            all_children = await self._tree_repo.get_children_batch(parent_ids)
+            children_by_parent: dict[str, List[DocumentNode]] = {}
+            for child in all_children:
+                children_by_parent.setdefault(child.parent_id, []).append(child)
+
+            for node, score in expand_nodes:
+                children = children_by_parent.get(node.id, [])
+                if children:
+                    child_results = await self._traverse(children, query_embedding)
+                    results.extend(child_results)
                 else:
-                    children = await self._tree_repo.get_children(node.id)
-                    if children:
-                        child_results = await self._traverse(
-                            children, query_embedding
-                        )
-                        results.extend(child_results)
-                    else:
-                        results.append(self._node_to_result(node, score))
+                    results.append(self._node_to_result(node, score))
+
         return results
 
     # ── scoring ─────────────────────────────────────────────────────
@@ -120,24 +125,37 @@ class HierarchicalSearchStrategy(IKnowledgeSearchStrategy):
         query_embedding: List[float],
     ) -> List[tuple[DocumentNode, float]]:
         """Ordena nós por similaridade cosseno com a query."""
+        query_norm = math.sqrt(math.fsum(a * a for a in query_embedding))
+        if query_norm == 0.0:
+            return [(node, 0.0) for node in nodes]
+
         scored: List[tuple[DocumentNode, float]] = []
         for node in nodes:
             if node.embedding is None:
                 scored.append((node, 0.0))
                 continue
-            sim = self._cosine_similarity(query_embedding, node.embedding)
+            sim = self._cosine_similarity(query_embedding, node.embedding, query_norm)
             scored.append((node, sim))
         scored.sort(key=lambda x: x[1], reverse=True)
         return scored
 
     @staticmethod
-    def _cosine_similarity(vec_a: List[float], vec_b: List[float]) -> float:
-        """Similaridade cosseno entre dois vetores."""
+    def _cosine_similarity(
+        vec_a: List[float],
+        vec_b: List[float],
+        norm_a: float = 0.0,
+    ) -> float:
+        """Similaridade cosseno entre dois vetores.
+
+        Se ``norm_a`` for fornecido, evita recalculá-lo (útil quando
+        ``vec_a`` é o embedding da query, reutilizado muitas vezes).
+        """
         if len(vec_a) != len(vec_b) or not vec_a:
             return 0.0
-        dot = sum(a * b for a, b in zip(vec_a, vec_b))
-        norm_a = math.sqrt(sum(a * a for a in vec_a))
-        norm_b = math.sqrt(sum(b * b for b in vec_b))
+        dot = math.fsum(a * b for a, b in zip(vec_a, vec_b))
+        if norm_a == 0.0:
+            norm_a = math.sqrt(math.fsum(a * a for a in vec_a))
+        norm_b = math.sqrt(math.fsum(b * b for b in vec_b))
         if norm_a == 0.0 or norm_b == 0.0:
             return 0.0
         return max(0.0, min(1.0, dot / (norm_a * norm_b)))

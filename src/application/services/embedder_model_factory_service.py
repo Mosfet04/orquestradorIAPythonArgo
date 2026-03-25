@@ -6,9 +6,11 @@ import os
 from typing import Any, Dict, List, Type
 
 from src.domain.ports import ILogger
+from src.domain.ports.embedder_factory_port import IEmbedderFactory
+from src.domain.entities.rag_config import OLLAMA_EMBEDDING_DIMENSIONS
 
 
-class EmbedderModelFactory:
+class EmbedderModelFactory(IEmbedderFactory):
     """Cria instâncias de embedders para RAG baseado no tipo especificado."""
 
     _ALIASES: Dict[str, str] = {"google": "gemini", "azureopenai": "azure"}
@@ -43,6 +45,13 @@ class EmbedderModelFactory:
         api_key = kwargs.get("api_key") or os.getenv(f"{ft.upper()}_API_KEY")
 
         filtered = {k: v for k, v in kwargs.items() if k != "api_key"}
+
+        # Auto-resolve dimensões para Ollama quando não fornecido
+        if ft == "ollama" and "dimensions" not in filtered:
+            dims = OLLAMA_EMBEDDING_DIMENSIONS.get(model_id)
+            if dims:
+                filtered["dimensions"] = dims
+
         if ft == "ollama":
             return model_class(id=model_id, **filtered)
         if not api_key:

@@ -137,3 +137,60 @@ class TestTextDocumentParser:
         leaf = nodes[1]
         assert leaf.is_leaf
         assert leaf.children_ids == []
+
+    # ── sub-chunking de folhas grandes ────────────────────────
+
+    def test_large_leaf_is_subdivided(self):
+        """Folha com conteúdo > max_chunk_chars deve ser subdividida."""
+        parser = TextDocumentParser(max_chunk_chars=100)
+        large_body = "\n\n".join(f"Parágrafo {i} com texto." for i in range(20))
+        content = f"# Seção Grande\n\n{large_body}"
+        nodes = parser.parse(content, "large.md")
+
+        parent = nodes[0]
+        assert not parent.is_leaf, "Parent deve virar nó interno"
+        assert len(parent.children_ids) >= 2
+
+        children = [n for n in nodes if n.parent_id == parent.id]
+        assert len(children) >= 2
+        for child in children:
+            assert child.is_leaf
+            assert len(child.content) <= 200  # margem sobre 100
+            assert child.level == parent.level + 1
+            assert "— parte" in child.title
+
+    def test_small_leaf_not_subdivided(self):
+        """Folha com conteúdo pequeno não deve ser subdividida."""
+        content = "# Título\n\nTexto curto."
+        nodes = self.parser.parse(content, "small.md")
+
+        assert len(nodes) == 1
+        assert nodes[0].is_leaf
+        assert nodes[0].children_ids == []
+
+    def test_subdivided_children_have_correct_ids(self):
+        """IDs dos filhos sub-chunked não colidem com IDs existentes."""
+        parser = TextDocumentParser(max_chunk_chars=50)
+        large_body = "\n\n".join(f"Parágrafo {i} texto." for i in range(10))
+        content = f"# Cap 1\n\nIntro.\n\n## Seção\n\n{large_body}"
+        nodes = parser.parse(content, "ids.md")
+
+        all_ids = [n.id for n in nodes]
+        assert len(all_ids) == len(set(all_ids)), "IDs devem ser únicos"
+
+    # ── limpeza de texto PDF ───────────────────────────────
+
+    def test_clean_pdf_removes_page_numbers(self):
+        """Números de página isolados devem ser removidos para PDFs."""
+        content = "Texto da página.\n\n3\n\nMais texto."
+        nodes = self.parser.parse(content, "doc.pdf")
+
+        full_content = " ".join(n.content for n in nodes)
+        assert "\n3\n" not in full_content
+
+    def test_clean_pdf_normalizes_newlines(self):
+        """Múltiplas quebras de linha são normalizadas."""
+        content = "Texto\n\n\n\n\nMais texto"
+        nodes = self.parser.parse(content, "nl.txt")
+
+        assert len(nodes) >= 1

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import List
 
 from src.domain.entities.agent_config import AgentConfig
-from src.domain.entities.rag_config import RagConfig, SearchStrategy
+from src.domain.entities.rag_config import RagConfig, SearchStrategy, DEFAULT_EMBEDDING_MODEL
 from src.domain.ports import ILogger
 from src.domain.repositories.agent_config_repository import IAgentConfigRepository
 from src.infrastructure.repositories.mongo_base import AsyncMongoRepository
@@ -56,7 +56,7 @@ class MongoAgentConfigRepository(AsyncMongoRepository, IAgentConfigRepository):
             RagConfig(
                 active=rag_data.get("active", False),
                 doc_name=rag_data.get("doc_name"),
-                model=rag_data.get("model", "nomic-embed-text:latest"),
+                model=rag_data.get("model", DEFAULT_EMBEDDING_MODEL),
                 factory_ia_model=rag_data.get(
                     "factory_ia_model",
                     rag_data.get("factoryIaModel", "ollama"),

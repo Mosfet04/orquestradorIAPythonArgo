@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import re
-from typing import Dict, List, Optional
+from typing import List, Optional, Tuple
 
 from src.domain.entities.document_node import DocumentNode
 from src.domain.ports.document_parser_port import IDocumentParser
 
-_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
-_MAX_CHUNK_CHARS = 2000
+_MARKDOWN_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$")
+_NUMBERED_HEADING_RE = re.compile(r"^(\d+(?:\.\d+)*)(?:\.)?\s+(.+)$")
+_UNIT_HEADING_RE = re.compile(r"^Unidade\s+(\d+)\s*[-–—]\s*(.+)$", re.IGNORECASE)
+_PAGE_NUMBER_RE = re.compile(r"^\d{1,4}$")
+_MAX_CHUNK_CHARS = 1200
 
 
 class TextDocumentParser(IDocumentParser):
@@ -30,18 +33,19 @@ class TextDocumentParser(IDocumentParser):
         if not content or not content.strip():
             return []
 
+        if doc_name.lower().endswith(".pdf"):
+            content = self._clean_pdf_text(content)
+
         sections = self._extract_sections(content)
 
         if not sections:
             return self._chunk_flat(content, doc_name)
 
         nodes: List[DocumentNode] = []
-        id_by_key: Dict[str, str] = {}
         parent_stack: List[tuple[int, str]] = []  # (level, node_id)
 
         for idx, (level, title, body) in enumerate(sections):
             node_id = self._make_id(doc_name, idx)
-            id_by_key[node_id] = node_id
 
             parent_id = self._resolve_parent(parent_stack, level)
 
@@ -59,32 +63,103 @@ class TextDocumentParser(IDocumentParser):
             parent_stack.append((level, node_id))
 
         self._link_children(nodes)
+        self._subdivide_large_leaves(nodes, doc_name)
         return nodes
 
     # ── extração de seções ──────────────────────────────────────────
 
     def _extract_sections(self, content: str) -> List[tuple[int, str, str]]:
-        """Extrai (level, title, body) de cada heading encontrado."""
-        matches = list(_HEADING_RE.finditer(content))
-        if not matches:
-            return []
-
+        """Extrai (level, title, body) de headings Markdown e numerados."""
+        lines = content.splitlines()
         sections: List[tuple[int, str, str]] = []
 
-        # Conteúdo antes do primeiro heading (se houver)
-        preamble = content[: matches[0].start()].strip()
-        if preamble:
-            sections.append((0, "Introdução", preamble))
+        current_heading: Optional[Tuple[int, str]] = None
+        current_body: List[str] = []
+        preamble: List[str] = []
+        saw_heading = False
 
-        for i, match in enumerate(matches):
-            level = len(match.group(1)) - 1  # # → 0, ## → 1, ### → 2
-            title = match.group(2).strip()
-            start = match.end()
-            end = matches[i + 1].start() if i + 1 < len(matches) else len(content)
-            body = content[start:end].strip()
-            sections.append((level, title, body))
+        for line in lines:
+            heading = self._detect_heading(line)
+            if heading:
+                saw_heading = True
+                if current_heading is None:
+                    if preamble:
+                        sections.append(
+                            (0, "Introdução", "\n".join(preamble).strip())
+                        )
+                else:
+                    sections.append(
+                        (
+                            current_heading[0],
+                            current_heading[1],
+                            "\n".join(current_body).strip(),
+                        )
+                    )
 
+                current_heading = heading
+                current_body = []
+                continue
+
+            if current_heading is None and not saw_heading:
+                preamble.append(line)
+            elif current_heading is not None:
+                current_body.append(line)
+
+        if current_heading is None:
+            return []
+
+        sections.append(
+            (
+                current_heading[0],
+                current_heading[1],
+                "\n".join(current_body).strip(),
+            )
+        )
         return sections
+
+    def _detect_heading(self, line: str) -> Optional[Tuple[int, str]]:
+        """Detecta headings em Markdown, numeração e blocos de unidade."""
+        stripped = line.strip()
+        if not stripped:
+            return None
+
+        markdown_match = _MARKDOWN_HEADING_RE.match(stripped)
+        if markdown_match:
+            level = len(markdown_match.group(1)) - 1
+            return level, markdown_match.group(2).strip()
+
+        unit_match = _UNIT_HEADING_RE.match(stripped)
+        if unit_match:
+            return 0, stripped
+
+        numbered_match = _NUMBERED_HEADING_RE.match(stripped)
+        if numbered_match:
+            number = numbered_match.group(1)
+            title_text = numbered_match.group(2).strip()
+            if not self._looks_like_heading_title(number, title_text):
+                return None
+            level = max(0, number.count("."))
+            return level, stripped
+
+        return None
+
+    @staticmethod
+    def _looks_like_heading_title(number: str, title_text: str) -> bool:
+        """Evita falsos positivos de linhas numeradas que são texto corrido."""
+        if not title_text:
+            return False
+
+        char_limit = 90 if number.count(".") == 0 else 110
+        word_limit = 10 if number.count(".") == 0 else 14
+
+        if len(title_text) > char_limit:
+            return False
+        if len(title_text.split()) > word_limit:
+            return False
+        if title_text.endswith((".", ";", ":", ",")):
+            return False
+
+        return True
 
     def _chunk_flat(self, content: str, doc_name: str) -> List[DocumentNode]:
         """Divide conteúdo sem headings em chunks por tamanho."""
@@ -101,6 +176,59 @@ class TextDocumentParser(IDocumentParser):
                 )
             )
         return nodes
+
+    # ── sub-chunking ────────────────────────────────────────────────
+
+    def _subdivide_large_leaves(
+        self, nodes: List[DocumentNode], doc_name: str
+    ) -> None:
+        """Subdivide folhas com conteúdo maior que ``_max_chunk_chars``.
+
+        Transforma a folha em nó interno e cria filhos com chunks
+        menores, garantindo embeddings representativos.
+        """
+        leaves_to_split = [
+            n for n in nodes if n.is_leaf and len(n.content) > self._max_chunk_chars
+        ]
+        if not leaves_to_split:
+            return
+
+        next_index = len(nodes)
+        for leaf in leaves_to_split:
+            chunks = self._split_by_size(leaf.content, self._max_chunk_chars)
+            if len(chunks) <= 1:
+                continue
+
+            for i, chunk in enumerate(chunks):
+                child_id = self._make_id(doc_name, next_index)
+                next_index += 1
+                child = DocumentNode(
+                    id=child_id,
+                    doc_name=doc_name,
+                    level=leaf.level + 1,
+                    title=f"{leaf.title} — parte {i + 1}",
+                    content=chunk,
+                    parent_id=leaf.id,
+                )
+                nodes.append(child)
+                leaf.children_ids.append(child_id)
+
+    # ── limpeza de texto ────────────────────────────────────────────
+
+    @staticmethod
+    def _clean_pdf_text(content: str) -> str:
+        """Remove artefatos comuns de extração de PDF."""
+        lines = content.splitlines()
+        cleaned: List[str] = []
+        for line in lines:
+            stripped = line.strip()
+            if _PAGE_NUMBER_RE.match(stripped):
+                continue
+            cleaned.append(line)
+
+        text = "\n".join(cleaned)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
 
     # ── helpers ─────────────────────────────────────────────────────
 

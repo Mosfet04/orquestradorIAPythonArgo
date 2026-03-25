@@ -100,6 +100,36 @@ class TestAdminEndpointsWithContainer:
             assert resp.status_code == 200
             assert resp.json()["status"] == "cache_refreshed"
 
+    async def test_preflight_options_returns_cors_headers(self):
+        """Preflight OPTIONS deve retornar 200 com headers CORS."""
+        factory = AppFactory()
+        app = factory.create_app()
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.options(
+                "/admin/health",
+                headers={
+                    "Origin": "https://os.agno.com",
+                    "Access-Control-Request-Method": "GET",
+                },
+            )
+            assert resp.status_code == 200
+            assert resp.headers["access-control-allow-origin"] == "*"
+            assert resp.headers["access-control-allow-methods"] == "*"
+
+    async def test_get_request_has_cors_headers(self):
+        """GET normal deve conter header Access-Control-Allow-Origin."""
+        factory = AppFactory()
+        app = factory.create_app()
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get(
+                "/admin/health",
+                headers={"Origin": "https://os.agno.com"},
+            )
+            assert resp.status_code == 200
+            assert "access-control-allow-origin" in resp.headers
+
     async def test_health_no_container(self):
         """Sem container, health_check retorna healthy padrão."""
         factory = AppFactory()

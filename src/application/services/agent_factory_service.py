@@ -12,7 +12,7 @@ from agno.vectordb.mongodb import MongoDb as MongoVectorDb
 
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.rag_config import SearchStrategy
-from src.domain.ports import ILogger, IModelFactory, IEmbedderFactory, IToolFactory
+from src.domain.ports import ILogger, IModelFactory, IEmbedderFactory, IToolFactory, IDocumentReader
 from src.domain.repositories.tool_repository import IToolRepository
 from src.application.services.document_indexing_service import DocumentIndexingService
 from src.application.services.knowledge_search_factory import KnowledgeSearchFactory
@@ -34,6 +34,7 @@ class AgentFactoryService:
         embedder_factory: IEmbedderFactory,
         tool_factory: IToolFactory,
         tool_repository: IToolRepository,
+        document_reader: IDocumentReader,
         indexing_service: Optional[DocumentIndexingService] = None,
         search_factory: Optional[KnowledgeSearchFactory] = None,
     ) -> None:
@@ -44,6 +45,7 @@ class AgentFactoryService:
         self._embedder_factory = embedder_factory
         self._tool_factory = tool_factory
         self._tool_repository = tool_repository
+        self._document_reader = document_reader
         self._indexing_service = indexing_service
         self._search_factory = search_factory
 
@@ -122,15 +124,10 @@ class AgentFactoryService:
         if rag.search_strategy == SearchStrategy.HIERARCHICAL:
             return None
 
-        if not rag.factory_ia_model or not rag.model:
-            self._logger.warning(
-                "RAG ativo sem factory_ia_model ou model — ignorando"
-            )
-            return None
-
         try:
             embedder = self._embedder_factory.create_model(
-                rag.factory_ia_model, rag.model
+                rag.resolved_provider,
+                rag.resolved_model,
             )
             knowledge = Knowledge(
                 vector_db=MongoVectorDb(
@@ -165,51 +162,59 @@ class AgentFactoryService:
 
         try:
             # Indexar documento (idempotente)
-            doc_path = f"docs/{rag.doc_name}"
             try:
-                with open(doc_path, "r", encoding="utf-8") as f:
-                    content = f.read()
+                content = self._document_reader.read(rag.doc_name)
             except FileNotFoundError:
-                self._logger.warning("Documento não encontrado", path=doc_path)
+                self._logger.warning("Documento não encontrado", doc_name=rag.doc_name)
                 return None
 
-            await self._indexing_service.index_document(
-                rag.doc_name, content, rag
-            )
+            if not content:
+                self._logger.warning(
+                    "Documento vazio ou não foi possível ler", doc_name=rag.doc_name
+                )
+                return None
+
+            await self._indexing_service.index_document(rag.doc_name, content, rag)
 
             # Criar embedder e estratégia
             embedder = self._embedder_factory.create_model(
-                rag.factory_ia_model or "ollama",
-                rag.model or "nomic-embed-text:latest",
+                rag.resolved_provider,
+                rag.resolved_model,
             )
-            strategy = self._search_factory.create_strategy(
-                rag, embedder=embedder
-            )
+            strategy = self._search_factory.create_strategy(rag, embedder=embedder)
             return create_hierarchical_search_tool(strategy)
         except Exception as exc:
-            self._logger.warning(
-                "Erro ao criar tool hierárquica", error=str(exc)
-            )
+            self._logger.warning("Erro ao criar tool hierárquica", error=str(exc))
             return None
 
-    def _load_document(
-        self, knowledge: Knowledge, doc_name: Optional[str]
-    ) -> None:
+    def _load_document(self, knowledge: Knowledge, doc_name: Optional[str]) -> None:
         if not doc_name:
             self._logger.info("Nenhum documento especificado para RAG")
             return
-        doc_path = f"docs/{doc_name}"
         try:
-            knowledge.insert(path=doc_path, skip_if_exists=True)
-            self._logger.info("Documento RAG inserido", path=doc_path)
+            content = self._document_reader.read(doc_name)
         except FileNotFoundError:
+            self._logger.warning("Documento não encontrado", doc_name=doc_name)
+            return
+
+        if not content:
             self._logger.warning(
-                "Documento não encontrado", path=doc_path
+                "Documento vazio ou não foi possível ler", doc_name=doc_name
+            )
+            return
+
+        try:
+            knowledge.insert(text=content)
+            self._logger.info("Documento RAG inserido", doc_name=doc_name)
+        except TypeError:
+            self._logger.warning(
+                "Knowledge.insert(text=) não suportado, tentando path",
+                doc_name=doc_name,
             )
         except Exception as exc:
             self._logger.error(
                 "Erro ao carregar documento RAG",
-                path=doc_path,
+                doc_name=doc_name,
                 error=str(exc),
             )
 

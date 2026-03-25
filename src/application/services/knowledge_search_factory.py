@@ -64,6 +64,7 @@ class KnowledgeSearchFactory:
             self._logger.info(
                 "Criando estratégia HIERARCHICAL",
                 doc_name=rag_config.doc_name,
+                embedder_model=getattr(embedder, "id", None),
             )
             return HierarchicalSearchStrategy(
                 tree_repository=self._tree_repository,

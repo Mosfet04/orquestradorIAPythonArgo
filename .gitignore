@@ -87,3 +87,5 @@ build/
 codacy.yaml
 
 .codacy/cli.sh
+
+docs/

@@ -72,6 +72,15 @@ class MongoDocumentTreeRepository(AsyncMongoRepository, IDocumentTreeRepository)
         cursor = self._collection.find({"parent_id": parent_id}).sort("_order", 1)
         return [self._to_entity(doc) async for doc in cursor]
 
+    async def get_children_batch(self, parent_ids: List[str]) -> List[DocumentNode]:
+        """Retorna filhos diretos de vários nós em uma única query."""
+        if not parent_ids:
+            return []
+        cursor = self._collection.find(
+            {"parent_id": {"$in": parent_ids}}
+        ).sort("_order", 1)
+        return [self._to_entity(doc) async for doc in cursor]
+
     async def get_node(self, node_id: str) -> Optional[DocumentNode]:
         """Busca um nó pelo ID."""
         doc = await self._collection.find_one({"id": node_id})
@@ -81,6 +90,45 @@ class MongoDocumentTreeRepository(AsyncMongoRepository, IDocumentTreeRepository)
         """Verifica se o documento já está indexado."""
         count = await self._collection.count_documents({"doc_name": doc_name}, limit=1)
         return count > 0
+
+    async def delete_by_doc_name(self, doc_name: str) -> int:
+        """Remove todos os nós de um documento."""
+        result = await self._collection.delete_many({"doc_name": doc_name})
+        deleted = result.deleted_count
+        self._logger.info("Nós removidos", doc_name=doc_name, count=deleted)
+        return deleted
+
+    async def replace_nodes(self, doc_name: str, nodes: List[DocumentNode]) -> None:
+        """Remove nós antigos e insere novos atomicamente (com transaction).
+
+        Se o MongoDB não suportar transactions (standalone), faz
+        delete + insert sequencial como fallback.
+        """
+        docs = [self._to_document(node, order=i) for i, node in enumerate(nodes)]
+        try:
+            async with await self._client.start_session() as session:
+                async with session.start_transaction():
+                    await self._collection.delete_many(
+                        {"doc_name": doc_name}, session=session
+                    )
+                    if docs:
+                        await self._collection.insert_many(
+                            docs, ordered=False, session=session
+                        )
+            self._logger.info(
+                "Re-indexação atômica concluída", doc_name=doc_name, count=len(docs)
+            )
+        except Exception as exc:
+            if "transaction" in str(exc).lower():
+                self._logger.info(
+                    "Transactions não suportadas — fallback sequencial",
+                    doc_name=doc_name,
+                )
+                await self._collection.delete_many({"doc_name": doc_name})
+                if docs:
+                    await self._collection.insert_many(docs, ordered=False)
+            else:
+                raise
 
     # ── mappers ─────────────────────────────────────────────────────
 

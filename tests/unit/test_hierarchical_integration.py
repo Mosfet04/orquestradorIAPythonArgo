@@ -152,6 +152,7 @@ class TestAgentFactoryServiceStrategies:
             embedder_factory=self.mock_embedder_factory,
             tool_factory=self.mock_tool_factory,
             tool_repository=self.mock_tool_repo,
+            document_reader=MagicMock(),
             indexing_service=self.mock_indexing_service,
             search_factory=self.mock_search_factory,
         )
@@ -211,6 +212,7 @@ class TestAgentFactoryServiceStrategies:
             embedder_factory=self.mock_embedder_factory,
             tool_factory=self.mock_tool_factory,
             tool_repository=self.mock_tool_repo,
+            document_reader=MagicMock(),
             # sem indexing_service e search_factory
         )
         assert service._indexing_service is None

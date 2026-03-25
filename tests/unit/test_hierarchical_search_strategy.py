@@ -90,14 +90,14 @@ class TestHierarchicalSearchStrategy:
         )
 
         self.mock_repo.get_root_nodes.return_value = [parent]
-        self.mock_repo.get_children.return_value = [child]
+        self.mock_repo.get_children_batch.return_value = [child]
         self.mock_embedder.get_embedding.return_value = [1.0, 0.0]
 
         results = await self.strategy.search("query")
 
         assert len(results) == 1
         assert results[0].content == "deep content"
-        self.mock_repo.get_children.assert_called_once_with("parent")
+        self.mock_repo.get_children_batch.assert_called_once_with(["parent"])
 
     @pytest.mark.asyncio
     async def test_search_respects_top_k(self):
@@ -124,6 +124,36 @@ class TestHierarchicalSearchStrategy:
         # Nó com embedding deve ter score > 0
         scores = [r.score for r in results]
         assert max(scores) > 0.0
+
+    @pytest.mark.asyncio
+    async def test_low_score_nodes_pruned(self):
+        """Nós com score abaixo de _MIN_SCORE_THRESHOLD são podados."""
+        # Vetor ortogonal — similaridade ~ 0
+        low_score_node = _make_node(
+            "low", embedding=[0.0, 1.0], content="irrelevant"
+        )
+        self.mock_repo.get_root_nodes.return_value = [low_score_node]
+        self.mock_embedder.get_embedding.return_value = [1.0, 0.0]
+
+        results = await self.strategy.search("query")
+        assert len(results) == 0
+
+    @pytest.mark.asyncio
+    async def test_internal_node_without_children_returns_self(self):
+        """Nó interno sem filhos no repo retorna próprio conteúdo."""
+        internal = _make_node(
+            "internal",
+            embedding=[1.0, 0.0],
+            children_ids=["ghost"],
+            content="internal content",
+        )
+        self.mock_repo.get_root_nodes.return_value = [internal]
+        self.mock_repo.get_children_batch.return_value = []
+        self.mock_embedder.get_embedding.return_value = [1.0, 0.0]
+
+        results = await self.strategy.search("query")
+        assert len(results) == 1
+        assert results[0].content == "internal content"
 
 
 class TestCosineSimililarity:
