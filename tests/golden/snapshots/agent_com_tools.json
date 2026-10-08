@@ -34,60 +34,50 @@
       "telemetry": false,
       "tools": [
         {
-          "__type__": "agno.tools.toolkit.Toolkit",
-          "add_instructions": false,
-          "functions": [
-            {
-              "async": true,
-              "description": "Executa a requisição HTTP para o tool.",
-              "external_execution": false,
-              "name": "consulta-cep",
-              "parameters": {
-                "properties": {
-                  "kwargs": {
-                    "additionalProperties": false,
-                    "properties": {},
-                    "type": "object"
-                  }
-                },
-                "required": [
-                  "kwargs"
-                ],
-                "type": "object"
-              },
-              "requires_confirmation": false
-            }
-          ],
-          "instructions": "Busca endereço pelo CEP\n\nInstruções: Use quando o usuário informar um CEP.\n\nRota: GET https://api.example.invalid/cep/{cep}\n\nParâmetros:\n  - cep: CEP (obrigatório)",
-          "name": "consulta-cep"
+          "__type__": "agno.tools.function.Function",
+          "add_instructions": true,
+          "async": true,
+          "description": "Busca endereço pelo CEP",
+          "instructions": "Instruções da tool consulta-cep: Use quando o usuário informar um CEP.",
+          "name": "consulta-cep",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "cep": {
+                "description": "CEP",
+                "type": "string"
+              }
+            },
+            "required": [
+              "cep"
+            ],
+            "type": "object"
+          }
         },
         {
-          "__type__": "agno.tools.toolkit.Toolkit",
+          "__type__": "agno.tools.function.Function",
           "add_instructions": false,
-          "functions": [
-            {
-              "async": true,
-              "description": "Executa a requisição HTTP para o tool.",
-              "external_execution": false,
-              "name": "cria-pedido",
-              "parameters": {
-                "properties": {
-                  "kwargs": {
-                    "additionalProperties": false,
-                    "properties": {},
-                    "type": "object"
-                  }
-                },
-                "required": [
-                  "kwargs"
-                ],
-                "type": "object"
+          "async": true,
+          "description": "Cria um pedido",
+          "instructions": null,
+          "name": "cria-pedido",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "produto": {
+                "description": "SKU",
+                "type": "string"
               },
-              "requires_confirmation": false
-            }
-          ],
-          "instructions": "Cria um pedido\n\nRota: POST https://api.example.invalid/pedidos\n\nParâmetros:\n  - produto: SKU (obrigatório)\n  - quantidade: Quantidade (opcional)",
-          "name": "cria-pedido"
+              "quantidade": {
+                "description": "Quantidade",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "produto"
+            ],
+            "type": "object"
+          }
         }
       ],
       "user_id": "ava"
@@ -105,5 +95,8 @@
     ]
   },
   "knowledge_inserts": [],
-  "log_warnings_errors": []
+  "log_warnings_errors": [
+    "error: Tool referenciada pelo agente não encontrada (ausente, inativa ou inválida); ignorada",
+    "error: Tool referenciada pelo agente não encontrada (ausente, inativa ou inválida); ignorada"
+  ]
 }

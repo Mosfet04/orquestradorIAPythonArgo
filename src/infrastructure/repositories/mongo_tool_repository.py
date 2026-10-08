@@ -35,7 +35,20 @@ class MongoToolRepository(AsyncMongoRepository, IToolRepository):
             cursor = self._collection.find(
                 {"id": {"$in": tool_ids}, "active": True}
             )
-            return [self._map_to_entity(doc) async for doc in cursor]
+            tools: List[Tool] = []
+            async for doc in cursor:
+                try:
+                    tools.append(self._map_to_entity(doc))
+                except (ValueError, KeyError, TypeError, AttributeError) as exc:
+                    # documento inválido isola só a própria tool; quem a referencia
+                    # loga a ausência com o id do agente (AgentFactoryService)
+                    self._logger.error(
+                        "Documento de tool inválido ignorado",
+                        tool_id=doc.get("id"),
+                        error_type=type(exc).__name__,
+                        error=str(exc),
+                    )
+            return tools
         except Exception as exc:
             self._logger.error(
                 "Erro ao buscar tools por IDs", tool_ids=tool_ids, error=str(exc)

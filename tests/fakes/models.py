@@ -8,6 +8,7 @@ deixar de ser o agno (F2), estes fakes acompanham o adapter.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import math
 import struct
@@ -32,6 +33,8 @@ class FakeModelCall:
 
     messages: tuple[tuple[str, str], ...]
     tool_names: tuple[str, ...] = ()
+    tools: tuple[Any, ...] = ()
+    """Tools como o agno as entrega ao provider (``{"type": "function", "function": {...}}``)."""
 
     @property
     def last_user_message(self) -> str | None:
@@ -59,6 +62,10 @@ def _tool_name(tool: Any) -> str:
 class FakeChatModel(Model):
     """Modelo de chat roteirizado: devolve ``responses`` em ordem e registra cada chamada.
 
+    Item ``str`` vira resposta de texto do assistente; item ``ModelResponse`` é devolvido
+    como está (ex.: ``ModelResponse(role="assistant", tool_calls=[...])`` para o agno
+    executar uma tool e chamar o modelo de novo com o resultado).
+
     Aceita tanto a assinatura do agno (``invoke(messages=..., tools=...)``) quanto um
     prompt posicional (``invoke("texto")``), usado pelo ``LLMSummaryGenerator``. Toda
     chamada é registrada em ``calls`` (``messages=()`` quando não há mensagens) antes de
@@ -73,7 +80,7 @@ class FakeChatModel(Model):
     id: str = "fake-chat-model"
     name: str | None = "FakeChatModel"
     provider: str | None = "fake"
-    responses: list[str] = field(default_factory=list)
+    responses: list[str | ModelResponse] = field(default_factory=list)
     calls: list[FakeModelCall] = field(default_factory=list)
 
     @property
@@ -90,9 +97,11 @@ class FakeChatModel(Model):
             if not isinstance(args[0], list):
                 return FakeModelCall(messages=(("user", str(args[0])),))
             messages = args[0]
+        tools = tuple(copy.deepcopy(t) if isinstance(t, dict) else t for t in kwargs.get("tools") or ())
         return FakeModelCall(
             messages=tuple((str(m.role), _message_text(m)) for m in messages or ()),
-            tool_names=tuple(_tool_name(t) for t in kwargs.get("tools") or ()),
+            tool_names=tuple(_tool_name(t) for t in tools),
+            tools=tools,
         )
 
     def _next_response(self, *args: Any, **kwargs: Any) -> ModelResponse:
@@ -102,7 +111,10 @@ class FakeChatModel(Model):
             raise ScriptExhaustedError(
                 f"FakeChatModel: roteiro esgotado ({len(self.responses)} resposta(s), chamada nº {index + 1})"
             )
-        return ModelResponse(role="assistant", content=self.responses[index])
+        scripted = self.responses[index]
+        if isinstance(scripted, ModelResponse):
+            return scripted
+        return ModelResponse(role="assistant", content=scripted)
 
     # ── contrato de agno.models.base.Model ──────────────────────────
 

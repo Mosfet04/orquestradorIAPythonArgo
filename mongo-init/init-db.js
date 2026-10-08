@@ -70,63 +70,65 @@ db.agents_config.createIndex({ "factoryIaModel": 1 });
 
 // ============================================================
 // 2. tools — HTTP tool configurations
-//    NOTE: collection name is "tools", matching the repository
+//    Formato lido por MongoToolRepository (src/infrastructure/repositories/
+//    mongo_tool_repository.py): route com {param} para parâmetro de rota,
+//    http_method, parameters[{name, type, description, required}], instructions
+//    (vão para o system message) e active=true (só tools ativas são buscadas).
+//    type: string | integer | float | boolean | object | array.
+//    Segredo (API key, token) NUNCA vai como parâmetro do LLM nem em texto no
+//    documento: headers secretos por referência (env:VAR) chegam na F5-05.
+//    As tools de exemplo usam APIs públicas sem chave.
+//    O array abaixo é JSON puro (tests/unit/test_seed_tools.py o lê com json):
+//    sem comentário, new Date() ou vírgula sobrando dentro dele.
 // ============================================================
 db.tools.insertMany([
   {
     "id": "weather-tool",
     "name": "Weather Information",
-    "description": "Get current weather information for any city",
-    "http_config": {
-      "base_url": "https://api.openweathermap.org/data/2.5",
-      "method": "GET",
-      "endpoint": "/weather",
-      "headers": {
-        "Content-Type": "application/json"
+    "description": "Get current weather for a location (Open-Meteo, no API key)",
+    "route": "https://api.open-meteo.com/v1/forecast",
+    "http_method": "GET",
+    "parameters": [
+      {
+        "name": "latitude",
+        "type": "float",
+        "description": "Latitude in decimal degrees (e.g. -23.55 for São Paulo)",
+        "required": true
       },
-      "parameters": [
-        {
-          "name": "q",
-          "type": "string",
-          "description": "City name",
-          "required": true
-        },
-        {
-          "name": "appid",
-          "type": "string",
-          "description": "API key",
-          "required": true
-        },
-        {
-          "name": "units",
-          "type": "string",
-          "description": "Temperature units (metric, imperial, kelvin)",
-          "required": false,
-          "default": "metric"
-        }
-      ]
-    }
+      {
+        "name": "longitude",
+        "type": "float",
+        "description": "Longitude in decimal degrees (e.g. -46.63 for São Paulo)",
+        "required": true
+      },
+      {
+        "name": "current",
+        "type": "string",
+        "description": "Comma-separated current variables, e.g. temperature_2m,relative_humidity_2m,wind_speed_10m",
+        "required": true
+      }
+    ],
+    "instructions": "Use for current weather questions. Convert the city to approximate latitude/longitude yourself and pass current=temperature_2m,relative_humidity_2m,wind_speed_10m.",
+    "headers": {},
+    "active": true
   },
   {
     "id": "calculator-tool",
     "name": "Calculator",
-    "description": "Perform mathematical calculations",
-    "http_config": {
-      "base_url": "https://api.mathjs.org/v4",
-      "method": "GET",
-      "endpoint": "/",
-      "headers": {
-        "Content-Type": "application/json"
-      },
-      "parameters": [
-        {
-          "name": "expr",
-          "type": "string",
-          "description": "Mathematical expression to evaluate",
-          "required": true
-        }
-      ]
-    }
+    "description": "Evaluate a mathematical expression (mathjs.org)",
+    "route": "https://api.mathjs.org/v4/",
+    "http_method": "GET",
+    "parameters": [
+      {
+        "name": "expr",
+        "type": "string",
+        "description": "Mathematical expression to evaluate, e.g. 2*(3+4)",
+        "required": true
+      }
+    ],
+    "instructions": "Use for arithmetic that must be exact; pass the whole expression in expr.",
+    "headers": {},
+    "active": true
   }
 ]);
 

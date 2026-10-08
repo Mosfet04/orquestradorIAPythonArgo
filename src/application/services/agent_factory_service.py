@@ -102,16 +102,55 @@ class AgentFactoryService:
         )
 
     async def _build_tools(self, config: AgentConfig) -> List[Any]:
+        """Tools do agente; cada tool referenciada que não entra gera log de erro com os ids."""
         if not config.tools_ids:
             return []
         try:
             tool_configs = await self._tool_repository.get_tools_by_ids(
                 config.tools_ids
             )
-            return await self._tool_factory.create_tools_from_configs(tool_configs)
         except Exception as exc:
-            self._logger.warning("Erro ao criar tools", error=str(exc))
+            self._logger.error(
+                "Erro ao buscar tools do agente; agente sobe sem elas",
+                agent_id=config.id,
+                tool_ids=list(config.tools_ids),
+                error=str(exc),
+            )
             return []
+
+        found = {tool.id for tool in tool_configs}
+        for tool_id in dict.fromkeys(config.tools_ids):
+            if tool_id not in found:
+                self._logger.error(
+                    "Tool referenciada pelo agente não encontrada (ausente, inativa "
+                    "ou inválida); ignorada",
+                    agent_id=config.id,
+                    tool_id=tool_id,
+                )
+
+        tools: List[Any] = []
+        for tool_config in tool_configs:
+            try:
+                created = await self._tool_factory.create_tools_from_configs(
+                    [tool_config]
+                )
+            except Exception as exc:
+                self._logger.error(
+                    "Erro ao criar tool do agente; agente sobe sem ela",
+                    agent_id=config.id,
+                    tool_id=tool_config.id,
+                    error_type=type(exc).__name__,
+                    error=str(exc),
+                )
+                continue
+            if not created:
+                self._logger.error(
+                    "Tool referenciada pelo agente não pôde ser criada; ignorada",
+                    agent_id=config.id,
+                    tool_id=tool_config.id,
+                )
+            tools.extend(created)
+        return tools
 
     def _build_knowledge(self, config: AgentConfig) -> Optional[Knowledge]:
         rag = config.rag_config

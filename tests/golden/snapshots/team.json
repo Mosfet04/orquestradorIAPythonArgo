@@ -110,6 +110,8 @@
     ]
   },
   "log_warnings_errors": [
+    "error: Tool referenciada pelo agente não encontrada (ausente, inativa ou inválida); ignorada",
+    "error: Tool referenciada pelo agente não encontrada (ausente, inativa ou inválida); ignorada",
     "warning: Membro não encontrado entre agentes ativos"
   ]
 }

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 from enum import Enum
+from inspect import iscoroutinefunction
 from typing import Any
 
 from agno.agent import Agent
@@ -118,4 +119,12 @@ def normalize(value: Any) -> JsonValue:
         }
     if isinstance(value, Toolkit):
         return _toolkit(value)
+    if isinstance(value, Function):
+        # tool solta (ex.: HTTP, F1-05): instruções entram no system message se add_instructions
+        return {
+            "__type__": _type_name(value),
+            **_function(value, is_async=iscoroutinefunction(value.entrypoint)),
+            "instructions": value.instructions,
+            "add_instructions": value.add_instructions,
+        }
     raise TypeError(f"golden: sem normalização para {_type_name(value)}; trate o tipo em tests/golden/normalize.py")

@@ -51,7 +51,7 @@ class TestBuildToolsError:
     @patch("src.application.services.agent_factory_service.Agent")
     @patch("src.application.services.agent_factory_service.MongoAgentDb")
     async def test_build_tools_exception_returns_empty(self, mock_db, mock_agent, service, mock_logger):
-        """Se _build_tools falhar, deve retornar lista vazia e logar warning."""
+        """Se a busca das tools falhar, o agente sobe sem tools e o erro é logado com os ids."""
         mock_agent.return_value = MagicMock()
         # Fazer o repositório lançar exceção
         service._tool_repository.get_tools_by_ids = AsyncMock(
@@ -60,7 +60,12 @@ class TestBuildToolsError:
         config = _make_config(tools_ids=["t1"])
         agent = await service.create_agent(config)
         assert agent is not None
-        mock_logger.warning.assert_any_call("Erro ao criar tools", error="db error")
+        mock_logger.error.assert_any_call(
+            "Erro ao buscar tools do agente; agente sobe sem elas",
+            agent_id="test-agent",
+            tool_ids=["t1"],
+            error="db error",
+        )
 
 
 class TestBuildKnowledgeEdgeCases:

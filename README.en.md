@@ -289,7 +289,7 @@ orquestradorIAPythonArgo/
 │   │   │   └── model_cache_service.py # Cache of instantiated models
 │   │   ├── database/               #   (reserved for future connections)
 │   │   ├── http/
-│   │   │   └── http_tool_factory.py #   Creates agno Toolkits from HTTP configs
+│   │   │   └── http_tool_factory.py #   Creates agno Functions from HTTP configs
 │   │   ├── logging/
 │   │   │   ├── structlog_logger.py #   Single logging setup (structlog) + sanitization
 │   │   │   ├── logger_adapter.py   #   Adapter: structlog → ILogger
@@ -673,6 +673,13 @@ Each document defines an HTTP tool that agents can use:
   "active": true
 }
 ```
+
+- The model receives a JSON Schema generated from `parameters`: `name`, `type` (`string`, `integer`, `float` → `number`, `boolean`, `object`, `array`), `description` and `required` (with `additionalProperties: false`). Before the request the tool checks the model's arguments: only declared ones, required ones present (`null` on an optional one counts as absent) and basic type from `type` (a boolean is not an `integer`/`float`). On violation nothing is sent and the model gets a short error, e.g. `argumento não declarado: admin`, `argumento obrigatório ausente: cep`, `tipo inválido para pagina: esperado integer`. This is not full JSON Schema validation (no `enum`, format or array item checks). Before the tool runs, agno 2.5.8 turns the strings `"true"`/`"false"` into booleans and `"null"`/`"none"` into `null` (and strips surrounding spaces): on a `string` parameter, `true`/`false` come back as `"true"`/`"false"` (lowercase), but literal `"null"`/`"none"` are indistinguishable from `null`.
+- `{name}` in `route` is replaced by the `name` argument (percent-encoded value; `.` and `..` are rejected); every `{name}` in the route must be a declared parameter with `required: true`, otherwise the tool is rejected at load time (error log with `tool_id` and the placeholders). The other arguments go to the query string (`GET`/`DELETE`) or to the JSON body (`POST`/`PUT`/`PATCH`).
+- `instructions` go to the agent's system message (prefixed by the tool `id`); the `route` is not sent to the prompt.
+- Only tools with `active: true` are loaded. A tool listed in `tools_ids` that is missing, inactive or invalid does not break the agent, but logs an error with `agent_id` and `tool_id`.
+- Never declare an API key/token as a parameter (the LLM would see and forward the secret) and never store secrets in `headers`: secret headers by reference (`env:VAR`) arrive in F5-05.
+- The tool function is async: use `Agent.arun` (AgentOS already does). With the synchronous `Agent.run`, agno rejects the run with an explicit error.
 
 ### Collection: `teams_config`
 

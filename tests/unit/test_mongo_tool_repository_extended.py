@@ -87,6 +87,28 @@ class TestGetToolsByIds:
         tools = await repository.get_tools_by_ids(["missing"])
         assert tools == []
 
+    @pytest.mark.parametrize(
+        "invalid",
+        [
+            _make_tool_doc(id="ruim", route=""),
+            _make_tool_doc(id="ruim", parameters=[{"name": "q", "type": "texto", "description": "x"}]),
+            _make_tool_doc(id="ruim", parameters=[{"name": "q", "type": "string"}]),
+            _make_tool_doc(id="ruim", http_method="TRACE"),
+        ],
+    )
+    async def test_invalid_document_is_skipped_with_error_log(self, repo, mock_logger, invalid):
+        """F1-05: um documento inválido some com log de erro (id), sem derrubar os outros."""
+        repository, mock_collection = repo
+        mock_collection.find.return_value = _AsyncCursorMock([invalid, _make_tool_doc(id="t2")])
+
+        tools = await repository.get_tools_by_ids(["ruim", "t2"])
+
+        assert [t.id for t in tools] == ["t2"]
+        (call,) = mock_logger.error.call_args_list
+        assert call.args == ("Documento de tool inválido ignorado",)
+        assert call.kwargs["tool_id"] == "ruim"
+        assert call.kwargs["error_type"] in ("ValueError", "KeyError")
+
 
 class TestGetToolById:
     async def test_found(self, repo):

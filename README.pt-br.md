@@ -289,7 +289,7 @@ orquestradorIAPythonArgo/
 │   │   │   └── model_cache_service.py # Cache de modelos já instanciados
 │   │   ├── database/               #   (reservado para futuras conexões)
 │   │   ├── http/
-│   │   │   └── http_tool_factory.py #   Cria agno Toolkits a partir de configs HTTP
+│   │   │   └── http_tool_factory.py #   Cria Functions agno a partir de configs HTTP
 │   │   ├── logging/
 │   │   │   ├── structlog_logger.py #   Configuração única do logging (structlog) + sanitização
 │   │   │   ├── logger_adapter.py   #   Adapter: structlog → ILogger
@@ -687,6 +687,13 @@ Cada documento define uma ferramenta HTTP que agentes podem usar:
   "active": true
 }
 ```
+
+- O modelo recebe um JSON Schema gerado de `parameters`: `name`, `type` (`string`, `integer`, `float` → `number`, `boolean`, `object`, `array`), `description` e `required` (com `additionalProperties: false`). Antes do request a tool confere os argumentos do modelo: só os declarados, obrigatórios presentes (`null` em opcional conta como ausente) e tipo básico pelo `type` (booleano não vale como `integer`/`float`). Em violação nada é enviado e o modelo recebe um erro curto, ex.: `argumento não declarado: admin`, `argumento obrigatório ausente: cep`, `tipo inválido para pagina: esperado integer`. Não é validação completa de JSON Schema (sem `enum`, formato ou itens de array). O agno 2.5.8 converte antes da tool as strings `"true"`/`"false"` em booleano e `"null"`/`"none"` em `null` (e tira espaços das pontas): em parâmetro `string`, `true`/`false` voltam como `"true"`/`"false"` (minúsculas), mas `"null"`/`"none"` literais são indistinguíveis de `null`.
+- `{nome}` na `route` é trocado pelo argumento `nome` (valor percent-encoded; `.` e `..` são recusados); todo `{nome}` da rota precisa ser parâmetro declarado com `required: true`, senão a tool é recusada na carga (log de erro com `tool_id` e os placeholders). Os demais argumentos vão na query (`GET`/`DELETE`) ou no corpo JSON (`POST`/`PUT`/`PATCH`).
+- `instructions` vão para o system message do agente (prefixadas pelo `id` da tool); a `route` não vai para o prompt.
+- Só tools com `active: true` são carregadas. Tool listada em `tools_ids` e ausente, inativa ou inválida não derruba o agente, mas gera log de erro com `agent_id` e `tool_id`.
+- Nunca declare API key/token como parâmetro (o LLM veria e repassaria o segredo) nem grave segredo em `headers`: headers secretos por referência (`env:VAR`) chegam na F5-05.
+- A função da tool é assíncrona: use `Agent.arun` (o AgentOS já usa). No `Agent.run` síncrono o agno recusa o run com erro explícito.
 
 ### Collection: `teams_config`
 
