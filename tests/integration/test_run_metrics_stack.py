@@ -16,7 +16,7 @@ from starlette.testclient import TestClient
 
 from src.infrastructure.web import metrics_middleware
 from src.infrastructure.web.app_factory import AppFactory
-from tests.fakes import FakeChatModel, RecordingTelemetryMetrics
+from tests.fakes import FakeChatModel, RecordingTelemetryMetrics, loopback_client
 
 ORIGIN = "http://localhost:3000"  # origem do default de CORS_ALLOWED_ORIGINS (AppConfig)
 
@@ -48,7 +48,7 @@ def client(
     factory = AppFactory()
     app = factory.create_app()
     factory._mount_agent_os(app, [agent], [team])  # o mesmo passo do lifespan, sem Mongo
-    return TestClient(app, raise_server_exceptions=False)
+    return loopback_client(app, raise_server_exceptions=False)
 
 
 def _server_spans(exporter: InMemorySpanExporter) -> list[str]:
@@ -126,7 +126,7 @@ def test_sucesso_de_run_pela_pilha_nao_conta_erro(
     factory = AppFactory()
     app = factory.create_app()
     factory._mount_agent_os(app, [agent], [])
-    client = TestClient(app, raise_server_exceptions=False)
+    client = loopback_client(app, raise_server_exceptions=False)
 
     response = client.post("/agents/agente-1/runs", data={"message": "oi", "stream": "false"})
 

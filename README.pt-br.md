@@ -26,6 +26,7 @@
 - [Arquitetura](#-arquitetura)
 - [Funcionalidades](#-funcionalidades)
 - [Configuração](#-configuração)
+- [Autenticação](#-autenticação)
 - [Endpoints da API](#-endpoints-da-api)
 - [Frontend (os.agno.com)](#-frontend-osagnocom)
 - [Banco de Dados (MongoDB)](#-banco-de-dados-mongodb)
@@ -115,10 +116,10 @@ Nenhuma credencial fica nos arquivos compose: tudo vem do `.env`, e as variávei
 ```bash
 git clone https://github.com/Mosfet04/orquestradorIAPythonArgo.git
 cd orquestradorIAPythonArgo
-cp .env.example .env   # preencha MONGO_CONNECTION_STRING (e MONGO_ROOT_*/MONGO_EXPRESS_* para o modo dev)
+cp .env.example .env   # preencha MONGO_CONNECTION_STRING, API_KEY_RUN e API_KEY_ADMIN (e MONGO_ROOT_*/MONGO_EXPRESS_* para o modo dev)
 
 # Só a aplicação (porta 7777), com MongoDB/Ollama externos definidos no .env.
-# Exige apenas MONGO_CONNECTION_STRING.
+# Exige MONGO_CONNECTION_STRING, API_KEY_RUN e API_KEY_ADMIN (o container faz bind em 0.0.0.0).
 docker compose up -d
 
 # Desenvolvimento: aplicação + MongoDB + Ollama + mongo-express locais
@@ -135,7 +136,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 
 ### Verificação
 
-Após iniciar, acesse:
+Após iniciar, acesse (com chaves configuradas, todas exceto `/livez` pedem `Authorization: Bearer <chave>`; ver [Autenticação](#-autenticação)):
 
 | URL | Descrição |
 |---|---|
@@ -482,6 +483,8 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317   # Docker: http://grafana-lgt
 OTEL_SERVICE_NAME=orquestrador-ia
 
 # ═══ Borda HTTP ═══
+# API_KEY_RUN=...              # chaves da borda (ver Autenticação); sem elas, só modo dev local (loopback + development/test)
+# API_KEY_ADMIN=...
 # ENVIRONMENT=development      # development | test | staging | production (outro valor: o app não inicia); ausente = development no host, production na imagem Docker
 # ENABLE_DOCS=true             # /docs, /redoc, /openapi.json; vazio = ligado só em development
 # CORS_ALLOWED_ORIGINS=https://os.agno.com,http://localhost:3000   # vírgula; vazio = default; cada item é http(s)://host[:porta] (sem barra final/path); "*" e null são recusados
@@ -493,6 +496,26 @@ OTEL_SERVICE_NAME=orquestrador-ia
 > **Telemetria do Agno**: `AGNO_TELEMETRY=true` explícito religa a telemetria de Agent/Team (o Agno 2.5.8 deixa a variável sobrepor o `telemetry=False`); o AgentOS continua desligado. Resíduo conhecido: os evals criados pela rota `/eval-runs` do AgentOS (`agno/os/routers/evals/utils.py`) usam o default `telemetry=True` do Agno e ignoram `AGNO_TELEMETRY`; revisão prevista na F3 (Agno 3.x).
 
 > **Convenção de API Keys**: o orquestrador busca automaticamente `{PROVIDER}_API_KEY` no ambiente. Exemplo: para `factoryIaModel: "gemini"`, busca `GEMINI_API_KEY`.
+
+---
+
+## 🔐 Autenticação
+
+Toda rota exige chave de API, exceto `GET /livez` e o preflight CORS (`OPTIONS` com `Origin` e `Access-Control-Request-Method`). A regra é default-deny: rota que não está na lista de admin (inclusive rota que não existe, que só vira 404 depois da chave) exige a chave **run**.
+
+- **Chaves**: `API_KEY_RUN` (uso dos agentes) e `API_KEY_ADMIN` (operação; vale também onde a run vale). As duas juntas, diferentes entre si, com ao menos 32 caracteres ASCII visíveis. Gere cada uma com `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
+- **Credencial**: `Authorization: Bearer <chave>` ou `X-API-Key: <chave>`. Com os dois headers vale o Bearer.
+- **Rotas admin** (só `API_KEY_ADMIN`): `/admin/*`, `/metrics` e `/metrics/*`, `/databases/*`, `/eval-runs*`, `/components*`, `/schedules*`, `/registry*`, `POST /optimize-memories` (reescreve memórias de qualquer `user_id` com o modelo que o request escolher); `DELETE` em `/sessions*` e `/memories*`; `POST|PUT|PATCH|DELETE` em `/knowledge*` (inclusive `POST /knowledge/search`, que devolve o texto dos chunks de toda a base e gera custo de embedding); `/docs`, `/redoc` e `/openapi.json` fora de `ENVIRONMENT=development`.
+- **Rotas run**: todo o resto (runs de agente/team, `/agui`, `/agents`, `/teams`, `/sessions`, `/memories` exceto `DELETE`, `/config`, `/health`, WebSocket `/workflows/ws`...).
+- **Respostas**: `401 {"detail":"unauthorized"}` + `WWW-Authenticate: Bearer` sem credencial ou com chave inválida; `403 {"detail":"forbidden"}` com a chave run em rota admin. WebSocket sem chave válida é recusado no handshake (`websocket.close` 1008 antes do accept; o servidor responde 403). O WebSocket só autentica por header (`Authorization`/`X-API-Key`): navegador não manda header customizado no handshake, então com chaves configuradas o `/workflows/ws` só é usável por cliente não-navegador. O 401 de uma origem permitida leva os headers CORS.
+- **Fail-closed**: sem nenhuma chave o app só inicia com `APP_HOST` em loopback (`127.0.0.0/8`, `::1`, `localhost`) **e** `ENVIRONMENT` `development` ou `test`; nesse modo dev local não há chave (aviso no log), mas cada request só passa se o cliente, o endereço local do servidor e o header `Host` (`localhost`, `127.x`, `[::1]`, porta opcional) forem loopback (socket UNIX não é suportado nesse modo) e se não vier de outro site no navegador: `Origin` presente precisa estar em `CORS_ALLOWED_ORIGINS` (origem permitida passa mesmo `cross-site`, como os.agno.com → localhost) e, sem `Origin`, `Sec-Fetch-Site: cross-site` é recusado. O resto recebe 401 (WebSocket: 1008). `/livez` segue público. Em qualquer outro caso (ex.: `0.0.0.0`, ou `production` no loopback) o app recusa iniciar com erro claro. Só uma das chaves também é erro.
+- O `APP_HOST` decide se o app sobe sem chaves: rode por `python app.py` (que faz o bind nele). Se ele subir com `uvicorn app:app --host 0.0.0.0` direto, a guarda por request recusa quem vem de fora do loopback. **Atenção (risco residual do modo dev local):** um proxy reverso ou túnel (ngrok, `ssh -R`, port-forward) rodando no próprio host conecta pelo loopback e continua expondo o app sem chave; qualquer processo local também acessa tudo, e uma origem listada em `CORS_ALLOWED_ORIGINS` (ex.: os.agno.com) pode chamar o app pelo navegador do dev. Para expor ou restringir, configure as chaves.
+- As chaves nunca são logadas (nem o header) e ficam fora do `repr` da configuração. Identidade por usuário e escopo por agente ficam para fases seguintes.
+
+```bash
+curl -H "Authorization: Bearer $API_KEY_RUN" http://localhost:7777/agents
+curl -X POST -H "X-API-Key: $API_KEY_ADMIN" http://localhost:7777/admin/refresh-cache
+```
 
 ---
 
@@ -529,16 +552,18 @@ Após o AgentOS montar as rotas, a aplicação expõe ~75 endpoints. Os principa
 
 ### Rotas Administrativas (customizadas)
 
+Exceto `/livez` (público), exigem a chave admin.
+
 | Método | Rota | Descrição |
 |--------|------|-----------|
-| `GET` | `/livez` | Liveness público e mínimo (`{"status":"ok"}`), sem dependências; alvo do HEALTHCHECK |
+| `GET` | `/livez` | Liveness público (sem chave) e mínimo (`{"status":"ok"}`), sem dependências; alvo do HEALTHCHECK |
 | `GET` | `/admin/health` | Health check detalhado (MongoDB + memória + OTLP): 200 se `healthy`, **503** se algo está `unhealthy`/`error`; o corpo nunca traz texto de exceção (o detalhe fica no log, pelo tipo) |
 | `GET` | `/metrics/cache` | Estatísticas do cache de agentes |
 | `POST` | `/admin/refresh-cache` | Força recarga dos agentes do MongoDB |
 
 ### Documentação Interativa
 
-Acesse **http://localhost:7777/docs** para a documentação Swagger completa com todas as rotas. `/docs`, `/redoc` e `/openapi.json` só existem com `ENABLE_DOCS` ligado (default: só em `ENVIRONMENT=development`).
+Acesse **http://localhost:7777/docs** para a documentação Swagger completa com todas as rotas. `/docs`, `/redoc` e `/openapi.json` só existem com `ENABLE_DOCS` ligado (default: só em `ENVIRONMENT=development`); fora de development exigem a chave admin.
 
 ---
 
@@ -555,12 +580,14 @@ A aplicação é projetada para funcionar com o frontend **[os.agno.com](https:/
    - **Endpoint URL**: `http://localhost:7777`
 4. O frontend se conecta automaticamente e mostra os agentes disponíveis
 
+Com `API_KEY_RUN`/`API_KEY_ADMIN` configuradas, o frontend precisa mandar a chave run em `Authorization: Bearer`; no modo dev local (host em loopback, sem chaves) nada muda.
+
 ### Como funciona
 
 - O frontend chama `GET /health` e `GET /status` para verificar se o servidor está ativo
 - Lista os agentes via `GET /config` e `GET /agents`
 - Envia mensagens via `POST /agents/{agent_id}/runs` (SSE streaming nativo) ou `POST /agui` (protocolo AG-UI)
-- Gerencia sessões via `GET/DELETE /sessions/{session_id}`
+- Gerencia sessões via `GET/DELETE /sessions/{session_id}` (o `DELETE` exige a chave admin)
 
 ---
 
@@ -728,7 +755,7 @@ db.agents_config.insertOne({
 
 Depois, force a recarga:
 ```bash
-curl -X POST http://localhost:7777/admin/refresh-cache
+curl -X POST -H "Authorization: Bearer $API_KEY_ADMIN" http://localhost:7777/admin/refresh-cache
 ```
 
 O agente aparece imediatamente no frontend e na API.

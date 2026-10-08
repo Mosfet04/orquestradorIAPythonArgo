@@ -12,6 +12,7 @@ from opentelemetry.trace import SpanKind
 from starlette.testclient import TestClient
 
 from src.infrastructure.web.app_factory import AppFactory
+from tests.fakes import loopback_client
 
 
 class TestAppFactory:
@@ -45,7 +46,7 @@ def test_create_app_instrumenta_fastapi_antes_da_pilha_de_middleware():
     provider.add_span_processor(SimpleSpanProcessor(exporter))
     trace.set_tracer_provider(provider)
 
-    client = TestClient(app)  # sem `with`: o lifespan (Mongo, AgentOS) não roda
+    client = loopback_client(app)  # sem `with`: o lifespan (Mongo, AgentOS) não roda
     assert client.get("/sonda").status_code == 200
     assert client.get("/admin/health").status_code == 200
 
@@ -55,8 +56,12 @@ def test_create_app_instrumenta_fastapi_antes_da_pilha_de_middleware():
 
 @pytest.mark.usefixtures("reset_otel_providers")
 @pytest.mark.parametrize("host", ["livez", "admin", "metrics", "x.livez.example"])
-def test_exclusao_do_otel_casa_so_o_path_e_nao_o_host(host: str):
+def test_exclusao_do_otel_casa_so_o_path_e_nao_o_host(host: str, monkeypatch: pytest.MonkeyPatch):
     """``excluded_urls`` é regex buscada em ``scheme://<Host><path>``: o Host do cliente não pode apagar spans."""
+    # Com chaves (F1-04): no modo dev local um Host fora do loopback seria recusado antes da rota.
+    run_key = "chave-de-teste-run-" + "r" * 21
+    monkeypatch.setenv("API_KEY_RUN", run_key)
+    monkeypatch.setenv("API_KEY_ADMIN", "chave-de-teste-admin-" + "a" * 19)
     app = AppFactory().create_app()
 
     @app.get("/sonda")
@@ -68,7 +73,7 @@ def test_exclusao_do_otel_casa_so_o_path_e_nao_o_host(host: str):
     provider.add_span_processor(SimpleSpanProcessor(exporter))
     trace.set_tracer_provider(provider)
 
-    client = TestClient(app)
+    client = TestClient(app, headers={"Authorization": f"Bearer {run_key}"})
     assert client.get("/sonda", headers={"Host": host}).status_code == 200
     assert client.get("/livez", headers={"Host": host}).status_code == 200
 

@@ -60,6 +60,10 @@ def setup_test_environment():
         "LOG_LEVEL": "ERROR",
     }
     with patch.dict(os.environ, test_env):
+        # Auth da borda (F1-04): sem chaves nem APP_HOST herdados do shell, o app dos
+        # testes sobe no modo dev local; quem testa auth define as chaves no próprio teste.
+        for name in ("API_KEY_RUN", "API_KEY_ADMIN", "APP_HOST"):
+            os.environ.pop(name, None)
         yield
 
 

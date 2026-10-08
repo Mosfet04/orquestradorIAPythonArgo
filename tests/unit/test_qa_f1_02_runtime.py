@@ -230,7 +230,11 @@ _FAKE_ENV = {
     "MONGO_ROOT_PASSWORD": "qa-pass",
     "MONGO_EXPRESS_USERNAME": "qa-me",
     "MONGO_EXPRESS_PASSWORD": "qa-mep",
+    # F1-04: o app no container exige as chaves da borda.
+    "API_KEY_RUN": "qa-run-" + "r" * 32,
+    "API_KEY_ADMIN": "qa-admin-" + "a" * 32,
 }
+_APP_ONLY_ENV = {k: _FAKE_ENV[k] for k in ("MONGO_CONNECTION_STRING", "API_KEY_RUN", "API_KEY_ADMIN")}
 
 
 def _compose_config(tmp_path: Path, files: list[Path], env: dict[str, str]) -> dict:
@@ -252,7 +256,7 @@ def _compose_config(tmp_path: Path, files: list[Path], env: dict[str, str]) -> d
 
 @pytestmark_compose
 def test_compose_base_renderizado_so_app_sem_porta_de_banco(tmp_path):
-    cfg = _compose_config(tmp_path, [COMPOSE], {"MONGO_CONNECTION_STRING": _FAKE_ENV["MONGO_CONNECTION_STRING"]})
+    cfg = _compose_config(tmp_path, [COMPOSE], _APP_ONLY_ENV)
     assert set(cfg["services"]) == {"app"}
     published = {p["target"] for p in cfg["services"]["app"]["ports"]}
     assert published == {7777}
@@ -261,13 +265,17 @@ def test_compose_base_renderizado_so_app_sem_porta_de_banco(tmp_path):
 
 
 @pytestmark_compose
-def test_compose_base_exige_connection_string(tmp_path):
+@pytest.mark.parametrize("missing", ["MONGO_CONNECTION_STRING", "API_KEY_RUN", "API_KEY_ADMIN"])
+def test_compose_base_exige_connection_string(tmp_path, missing):
+    """Inclui as chaves da borda (F1-04): o container faz bind em 0.0.0.0."""
     for f in (COMPOSE,):
         shutil.copy(f, tmp_path / f.name)
+    env = {"PATH": os.environ.get("PATH", ""), "HOME": str(tmp_path), **_APP_ONLY_ENV}
+    del env[missing]
     result = subprocess.run(  # noqa: S603
         [DOCKER, "compose", "-f", "docker-compose.yml", "config"],
         cwd=tmp_path,
-        env={"PATH": os.environ.get("PATH", ""), "HOME": str(tmp_path)},
+        env=env,
         capture_output=True,
         text=True,
         timeout=60,
@@ -276,7 +284,7 @@ def test_compose_base_exige_connection_string(tmp_path):
     if "not a docker command" in result.stderr:
         pytest.skip("plugin docker compose ausente")
     assert result.returncode != 0
-    assert "MONGO_CONNECTION_STRING" in result.stderr
+    assert missing in result.stderr
 
 
 @pytestmark_compose

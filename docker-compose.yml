@@ -18,6 +18,10 @@ services:
     environment:
       MONGO_CONNECTION_STRING: ${MONGO_CONNECTION_STRING:?defina MONGO_CONNECTION_STRING no .env}
       MONGO_DATABASE_NAME: ${MONGO_DATABASE_NAME:-agno}
+      # Auth da borda (F1-04): o container faz bind em 0.0.0.0, então o app não sobe
+      # sem as duas chaves; o compose falha antes, com mensagem, em vez de reiniciar em loop.
+      API_KEY_RUN: ${API_KEY_RUN:?defina API_KEY_RUN no .env (ver .env.example)}
+      API_KEY_ADMIN: ${API_KEY_ADMIN:?defina API_KEY_ADMIN no .env (ver .env.example)}
       APP_TITLE: ${APP_TITLE:-AI Agents Orchestrator}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       # Vazio = defaults do cliente ollama/agno (OLLAMA_HOST, localhost ou Ollama Cloud

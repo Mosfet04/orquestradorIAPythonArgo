@@ -33,7 +33,8 @@ USER 10001:10001
 EXPOSE 7777
 
 # Sem curl na imagem: health via stdlib. /livez é público e não depende do MongoDB
-# (o /admin/health responde 503 com dependência fora e vai exigir chave admin no F1-04).
+# (o /admin/health responde 503 com dependência fora e exige a chave admin).
+# Bind em 0.0.0.0: o app só inicia com API_KEY_RUN e API_KEY_ADMIN definidas.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
     CMD python -c "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.environ.get('APP_PORT', '7777') + '/livez', timeout=5)"
 

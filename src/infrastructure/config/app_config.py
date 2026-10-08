@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 from urllib.parse import urlsplit
 
@@ -17,6 +17,10 @@ DEFAULT_CORS_ALLOWED_ORIGINS = (
     "http://localhost:7777",
     "https://os.agno.com",
 )
+
+# Chaves de API da borda (F1-04): tamanho mínimo e como gerar uma.
+API_KEY_MIN_LENGTH = 32
+API_KEY_HINT = 'python -c "import secrets; print(secrets.token_urlsafe(32))"'
 
 _TRUE = ("true", "1", "yes", "on")
 _FALSE = ("false", "0", "no", "off")
@@ -46,6 +50,9 @@ class AppConfig:
     # /docs, /redoc e /openapi.json; load() liga por padrão só em development
     enable_docs: bool = False
     cors_allowed_origins: tuple[str, ...] = DEFAULT_CORS_ALLOWED_ORIGINS
+    # Chaves de API (F1-04). As duas ou nenhuma; fora do repr para não irem parar em log.
+    api_key_run: Optional[str] = field(default=None, repr=False)
+    api_key_admin: Optional[str] = field(default=None, repr=False)
 
     @classmethod
     def load(cls) -> AppConfig:
@@ -74,6 +81,8 @@ class AppConfig:
                 "ENABLE_DOCS", os.getenv("ENABLE_DOCS"), default=environment == "development"
             ),
             cors_allowed_origins=_cors_allowed_origins(),
+            api_key_run=_api_key("API_KEY_RUN", os.getenv("API_KEY_RUN")),
+            api_key_admin=_api_key("API_KEY_ADMIN", os.getenv("API_KEY_ADMIN")),
         )
         config._validate()
         return config
@@ -84,6 +93,19 @@ class AppConfig:
             raise ValueError("MONGO_CONNECTION_STRING é obrigatória")
         if not self.mongo_database_name:
             raise ValueError("MONGO_DATABASE_NAME é obrigatório")
+        self._validate_api_keys()
+
+    def _validate_api_keys(self) -> None:
+        """As duas chaves juntas (ou nenhuma) e diferentes entre si. Nunca cita o valor."""
+        run, admin = self.api_key_run, self.api_key_admin
+        if (run is None) != (admin is None):
+            missing = "API_KEY_ADMIN" if admin is None else "API_KEY_RUN"
+            raise ValueError(
+                f"{missing} ausente: defina API_KEY_RUN e API_KEY_ADMIN juntas "
+                f"(gere cada uma com: {API_KEY_HINT})"
+            )
+        if run is not None and run == admin:
+            raise ValueError("API_KEY_RUN e API_KEY_ADMIN precisam ser diferentes")
 
 
 def _environment() -> str:
@@ -92,6 +114,23 @@ def _environment() -> str:
     if value not in ENVIRONMENTS:
         raise ValueError(
             f"ENVIRONMENT inválido: {value!r}. Use um de: {', '.join(ENVIRONMENTS)}"
+        )
+    return value
+
+
+def _api_key(name: str, raw: Optional[str]) -> Optional[str]:
+    """Chave de API do ambiente; vazia = ausente. Erros citam só o nome, nunca o valor."""
+    value = (raw or "").strip()
+    if not value:
+        return None
+    if len(value) < API_KEY_MIN_LENGTH:
+        raise ValueError(
+            f"{name} curta demais: use ao menos {API_KEY_MIN_LENGTH} caracteres (gere com: {API_KEY_HINT})"
+        )
+    # ASCII visível: o valor vai num header HTTP e é comparado byte a byte.
+    if not all("!" <= char <= "~" for char in value):
+        raise ValueError(
+            f"{name} inválida: use só caracteres ASCII visíveis, sem espaços (gere com: {API_KEY_HINT})"
         )
     return value
 

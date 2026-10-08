@@ -192,3 +192,61 @@ def test_dataclass_sem_env_nao_liga_docs():
         ollama_base_url=None,
     )
     assert config.enable_docs is False
+
+
+# ── F1-04: API_KEY_RUN / API_KEY_ADMIN ──────────────────────────────
+
+# Valores de teste (não são segredos): 40 caracteres ASCII visíveis cada.
+RUN_KEY = "chave-de-teste-run-" + "r" * 21
+ADMIN_KEY = "chave-de-teste-admin-" + "a" * 19
+
+
+class TestApiKeys:
+    def test_ausentes_por_padrao(self):
+        config = _load()
+        assert (config.api_key_run, config.api_key_admin) == (None, None)
+
+    @pytest.mark.parametrize("value", ["", "   "])
+    def test_vazias_ou_em_branco_contam_como_ausentes(self, value):
+        config = _load(API_KEY_RUN=value, API_KEY_ADMIN=value)
+        assert (config.api_key_run, config.api_key_admin) == (None, None)
+
+    def test_lidas_do_ambiente_sem_espacos_nas_pontas(self):
+        config = _load(API_KEY_RUN=f"  {RUN_KEY} ", API_KEY_ADMIN=f"\t{ADMIN_KEY}\n")
+        assert (config.api_key_run, config.api_key_admin) == (RUN_KEY, ADMIN_KEY)
+
+    @pytest.mark.parametrize("name", ["API_KEY_RUN", "API_KEY_ADMIN"])
+    def test_chave_curta_falha_sem_mostrar_o_valor(self, name):
+        curta = "curta-" + "x" * 25  # 31 caracteres
+        env = {"API_KEY_RUN": RUN_KEY, "API_KEY_ADMIN": ADMIN_KEY, name: curta}
+        with pytest.raises(ValueError, match=rf"{name}.*32 caracteres") as exc:
+            _load(**env)
+        assert curta not in str(exc.value)
+
+    def test_chave_com_exatos_32_caracteres_e_aceita(self):
+        config = _load(API_KEY_RUN="r" * 32, API_KEY_ADMIN="a" * 32)
+        assert config.api_key_run == "r" * 32
+
+    @pytest.mark.parametrize("value", ["com espaco " + "x" * 30, "acentuação-" + "x" * 30])
+    def test_chave_com_caractere_fora_do_ascii_visivel_falha(self, value):
+        with pytest.raises(ValueError, match=r"API_KEY_RUN.*ASCII") as exc:
+            _load(API_KEY_RUN=value, API_KEY_ADMIN=ADMIN_KEY)
+        assert value not in str(exc.value)
+
+    def test_chaves_iguais_falham(self):
+        with pytest.raises(ValueError, match=r"API_KEY_RUN e API_KEY_ADMIN.*diferentes") as exc:
+            _load(API_KEY_RUN=RUN_KEY, API_KEY_ADMIN=RUN_KEY)
+        assert RUN_KEY not in str(exc.value)
+
+    @pytest.mark.parametrize(
+        ("env", "missing"),
+        [({"API_KEY_RUN": RUN_KEY}, "API_KEY_ADMIN"), ({"API_KEY_ADMIN": ADMIN_KEY}, "API_KEY_RUN")],
+    )
+    def test_so_uma_chave_falha_dizendo_qual_falta(self, env, missing):
+        with pytest.raises(ValueError, match=rf"{missing} ausente") as exc:
+            _load(**env)
+        assert RUN_KEY not in str(exc.value) and ADMIN_KEY not in str(exc.value)
+
+    def test_repr_nao_mostra_as_chaves(self):
+        config = _load(API_KEY_RUN=RUN_KEY, API_KEY_ADMIN=ADMIN_KEY)
+        assert RUN_KEY not in repr(config) and ADMIN_KEY not in repr(config)

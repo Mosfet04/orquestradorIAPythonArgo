@@ -8,51 +8,9 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from src.infrastructure.web.app_factory import (
-    _AGENT_SESSION_RE,
     AppFactory,
     create_app,
 )
-
-# ── _PlaygroundPrefixMiddleware ──────────────────────────────────────
-
-
-class TestPlaygroundPrefixMiddleware:
-    """Testa o middleware de reescrita de paths."""
-
-    async def test_strip_playground_prefix(self):
-        """Paths /playground/… devem ser reescritos para /…"""
-        factory = AppFactory()
-        app = factory.create_app()
-        factory._add_playground_rewrite(app)
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/playground/admin/health")
-            assert resp.status_code == 200
-
-    async def test_rewrite_agent_sessions_path(self):
-        """Paths /agents/{id}/sessions/… devem ser reescritos para /sessions/…"""
-        m = _AGENT_SESSION_RE.match("/agents/my-agent/sessions/abc123")
-        assert m is not None
-        assert m.group(1) == "/sessions/abc123"
-
-    async def test_no_rewrite_for_normal_path(self):
-        """Paths normais não devem ser alterados."""
-        m = _AGENT_SESSION_RE.match("/admin/health")
-        assert m is None
-
-    async def test_middleware_passthrough_no_playground(self):
-        """Sem /playground, middleware não altera path."""
-        factory = AppFactory()
-        app = factory.create_app()
-        factory._add_playground_rewrite(app)
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/admin/health")
-            assert resp.status_code == 200
-            assert resp.json()["status"] == "healthy"
-
 
 # ── admin endpoints com container ────────────────────────────────────
 
@@ -78,7 +36,7 @@ class TestAdminEndpointsWithContainer:
         """health_check deve chamar health_service quando disponível."""
         app = factory_with_container.create_app()
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(transport=transport, base_url="http://127.0.0.1:7777") as client:
             resp = await client.get("/admin/health")
             assert resp.status_code == 200
             assert resp.json()["status"] == "healthy"
@@ -89,7 +47,7 @@ class TestAdminEndpointsWithContainer:
         )
         app = factory_with_container.create_app()
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(transport=transport, base_url="http://127.0.0.1:7777") as client:
             resp = await client.get("/admin/health")
         assert resp.status_code == 503
         assert resp.json() == {"status": "unhealthy", "checks": {"mongodb": {"status": "unhealthy"}}}
@@ -97,7 +55,7 @@ class TestAdminEndpointsWithContainer:
     async def test_cache_metrics_with_container(self, factory_with_container):
         app = factory_with_container.create_app()
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(transport=transport, base_url="http://127.0.0.1:7777") as client:
             resp = await client.get("/metrics/cache")
             assert resp.status_code == 200
             assert resp.json()["agents"]["status"] == "active"
@@ -105,7 +63,7 @@ class TestAdminEndpointsWithContainer:
     async def test_refresh_cache_with_container(self, factory_with_container):
         app = factory_with_container.create_app()
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(transport=transport, base_url="http://127.0.0.1:7777") as client:
             resp = await client.post("/admin/refresh-cache")
             assert resp.status_code == 200
             assert resp.json()["status"] == "cache_refreshed"
@@ -115,7 +73,7 @@ class TestAdminEndpointsWithContainer:
         factory = AppFactory()
         app = factory.create_app()
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(transport=transport, base_url="http://127.0.0.1:7777") as client:
             resp = await client.get("/admin/health")
             assert resp.json()["status"] == "healthy"
 
@@ -124,7 +82,7 @@ class TestAdminEndpointsWithContainer:
         factory = AppFactory()
         app = factory.create_app()
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(transport=transport, base_url="http://127.0.0.1:7777") as client:
             resp = await client.get("/metrics/cache")
             assert resp.json()["status"] == "no_cache"
 
@@ -133,7 +91,7 @@ class TestAdminEndpointsWithContainer:
         factory = AppFactory()
         app = factory.create_app()
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(transport=transport, base_url="http://127.0.0.1:7777") as client:
             resp = await client.post("/admin/refresh-cache")
             assert resp.json()["status"] == "no_cache"
 

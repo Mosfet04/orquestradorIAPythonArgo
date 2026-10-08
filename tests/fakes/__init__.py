@@ -16,6 +16,7 @@ from tests.fakes.repositories import (
     InMemoryToolRepository,
 )
 from tests.fakes.telemetry import RecordingTelemetryMetrics
+from tests.fakes.web import loopback_client
 
 __all__ = [
     "FakeChatModel",
@@ -31,4 +32,5 @@ __all__ = [
     "RecordingLogger",
     "RecordingTelemetryMetrics",
     "ScriptExhaustedError",
+    "loopback_client",
 ]

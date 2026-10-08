@@ -15,7 +15,7 @@ from starlette.testclient import TestClient
 
 from src.infrastructure.dependency_injection import HealthService
 from src.infrastructure.web.app_factory import AppFactory
-from tests.fakes import FakeChatModel, RecordingLogger
+from tests.fakes import FakeChatModel, RecordingLogger, loopback_client
 
 # Texto que só existe na exceção do driver: não pode chegar ao cliente HTTP.
 SEGREDO_NA_EXCECAO = "mongodb://admin:senha-super-secreta@mongo.interno:27017"
@@ -74,7 +74,7 @@ def test_health_com_mongo_fora_responde_503_sem_texto_de_excecao():
     app = factory.create_app()
     factory._container = _HealthOnlyContainer(HealthService(_MongoClientDown(), logger))  # type: ignore[assignment]
 
-    response = TestClient(app).get("/admin/health")
+    response = loopback_client(app).get("/admin/health")
 
     assert response.status_code == 503
     body = response.json()
@@ -94,7 +94,7 @@ def test_health_com_mongo_fora_responde_503_sem_texto_de_excecao():
 
 def test_livez_responde_ok_sem_dependencias(build_app: Callable[..., FastAPI]):
     """Sem container (Mongo nunca tocado): o processo está vivo e é só isso que ele diz."""
-    response = TestClient(build_app()).get("/livez")
+    response = loopback_client(build_app()).get("/livez")
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
@@ -105,20 +105,23 @@ def test_livez_responde_ok_sem_dependencias(build_app: Callable[..., FastAPI]):
 
 @pytest.mark.parametrize("with_agent_os", [False, True], ids=["so-base-app", "com-agentos"])
 def test_docs_somem_com_enable_docs_false(build_app: Callable[..., FastAPI], with_agent_os: bool):
-    client = TestClient(build_app(with_agent_os=with_agent_os, ENABLE_DOCS="false"))
+    client = loopback_client(build_app(with_agent_os=with_agent_os, ENABLE_DOCS="false"))
 
     assert {path: client.get(path).status_code for path in DOC_ROUTES} == dict.fromkeys(DOC_ROUTES, 404)
 
 
 def test_docs_desligados_por_padrao_fora_de_development(build_app: Callable[..., FastAPI]):
-    client = TestClient(build_app(with_agent_os=True, ENVIRONMENT="production"))
+    # Fora de development o app exige chaves (F1-04) e docs são rota admin. Valores de teste.
+    keys = {"API_KEY_RUN": "chave-de-teste-run-" + "r" * 21, "API_KEY_ADMIN": "chave-de-teste-admin-" + "a" * 19}
+    app = build_app(with_agent_os=True, ENVIRONMENT="production", **keys)
+    client = loopback_client(app, headers={"Authorization": f"Bearer {keys['API_KEY_ADMIN']}"})
 
     assert {path: client.get(path).status_code for path in DOC_ROUTES} == dict.fromkeys(DOC_ROUTES, 404)
 
 
 def test_docs_continuam_disponiveis_quando_habilitados(build_app: Callable[..., FastAPI]):
     """Controle positivo: sem isto, o 404 acima poderia vir de qualquer outra coisa."""
-    client = TestClient(build_app(with_agent_os=True, ENABLE_DOCS="true"))
+    client = loopback_client(build_app(with_agent_os=True, ENABLE_DOCS="true"))
 
     assert {path: client.get(path).status_code for path in DOC_ROUTES} == dict.fromkeys(DOC_ROUTES, 200)
     assert "/agents/{agent_id}/runs" in client.get("/openapi.json").json()["paths"]
@@ -138,7 +141,7 @@ def _preflight(client: TestClient, origin: str, *, method: str = "POST", headers
 def test_cors_respeita_a_env(build_app: Callable[..., FastAPI], with_agent_os: bool):
     permitida = "https://painel.example.com"
     app = build_app(with_agent_os=with_agent_os, CORS_ALLOWED_ORIGINS=f" {permitida} , https://outra.example.com")
-    client = TestClient(app)
+    client = loopback_client(app)
 
     ok = _preflight(client, permitida, headers="Authorization, Content-Type, X-API-Key")
     assert ok.status_code == 200
@@ -156,7 +159,7 @@ def test_cors_respeita_a_env(build_app: Callable[..., FastAPI], with_agent_os: b
 
 @pytest.mark.parametrize("with_agent_os", [False, True], ids=["so-base-app", "com-agentos"])
 def test_cors_metodos_e_headers_explicitos(build_app: Callable[..., FastAPI], with_agent_os: bool):
-    client = TestClient(build_app(with_agent_os=with_agent_os))
+    client = loopback_client(build_app(with_agent_os=with_agent_os))
     origin = "https://os.agno.com"  # está no default
 
     ok = _preflight(client, origin, method="PATCH", headers="authorization,content-type,x-api-key")
@@ -211,12 +214,12 @@ def test_cors_reaplicado_mesmo_se_a_montagem_do_agentos_falhar(monkeypatch: pyte
         factory._mount_agent_os(app, [_agent()], [])
 
     _assert_cors_outermost_and_explicit(app, ["https://painel.example.com"])
-    denied = _preflight(TestClient(app), "https://evil.example.com")
+    denied = _preflight(loopback_client(app), "https://evil.example.com")
     assert denied.status_code == 400
 
 
 def test_cors_nao_expoe_headers_de_resposta(build_app: Callable[..., FastAPI]):
-    response = TestClient(build_app()).get("/livez", headers={"Origin": "https://os.agno.com"})
+    response = loopback_client(build_app()).get("/livez", headers={"Origin": "https://os.agno.com"})
 
     assert response.headers["access-control-allow-origin"] == "https://os.agno.com"
     assert "access-control-expose-headers" not in response.headers

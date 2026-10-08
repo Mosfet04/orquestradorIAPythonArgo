@@ -25,7 +25,7 @@ from starlette.testclient import TestClient
 from src.infrastructure.config.app_config import AppConfig
 from src.infrastructure.dependency_injection import HealthService
 from src.infrastructure.web.app_factory import AppFactory
-from tests.fakes import FakeChatModel, RecordingLogger
+from tests.fakes import FakeChatModel, RecordingLogger, loopback_client
 
 REPO = Path(__file__).resolve().parents[2]
 ALLOWED = "https://painel.example.com"
@@ -119,7 +119,7 @@ def test_run_real_nao_tenta_falar_com_a_agno(monkeypatch: pytest.MonkeyPatch, ne
         telemetry=False,
     )
     app = _mounted(monkeypatch, [_agent()], [team])
-    client = TestClient(app)
+    client = loopback_client(app)
 
     rest = client.post("/agents/agente-1/runs", data={"message": "oi", "stream": "false"})
     agui = client.post("/agui", json=AGUI_BODY)
@@ -136,7 +136,7 @@ def test_bloqueador_de_rede_enxerga_a_telemetria_ligada(monkeypatch: pytest.Monk
     app = _mounted(monkeypatch, [_agent(telemetry=True)])
     monkeypatch.setenv("AGNO_TELEMETRY", "true")
 
-    TestClient(app).post("/agents/agente-1/runs", data={"message": "oi", "stream": "false"})
+    loopback_client(app).post("/agents/agente-1/runs", data={"message": "oi", "stream": "false"})
 
     assert network.mentions("os-api.agno.com")
 
@@ -164,7 +164,7 @@ def test_startup_mantem_telemetria_desligada_mesmo_com_agent_default(
 def test_preflight_permitida_e_negada_nas_rotas_do_agentos(
     monkeypatch: pytest.MonkeyPatch, path: str, method: str
 ):
-    client = TestClient(_mounted(monkeypatch, [_agent()], CORS_ALLOWED_ORIGINS=ALLOWED))
+    client = loopback_client(_mounted(monkeypatch, [_agent()], CORS_ALLOWED_ORIGINS=ALLOWED))
 
     def pre(origin: str):
         return client.options(path, headers={"Origin": origin, "Access-Control-Request-Method": method})
@@ -179,7 +179,7 @@ def test_preflight_permitida_e_negada_nas_rotas_do_agentos(
 
 
 def test_resposta_sse_do_agui_ecoa_a_origem_permitida_e_nunca_curinga_com_ela(monkeypatch: pytest.MonkeyPatch):
-    client = TestClient(_mounted(monkeypatch, [_agent()], CORS_ALLOWED_ORIGINS=ALLOWED))
+    client = loopback_client(_mounted(monkeypatch, [_agent()], CORS_ALLOWED_ORIGINS=ALLOWED))
 
     ok = client.post("/agui", json=AGUI_BODY, headers={"Origin": ALLOWED})
 
@@ -193,16 +193,18 @@ def test_resposta_sse_do_agui_ecoa_a_origem_permitida_e_nunca_curinga_com_ela(mo
     "no StreamingResponse; o CORS do app só sobrescreve para origem permitida. Escopo declarado do F1-08 (B7).",
 )
 def test_resposta_sse_do_agui_nao_carrega_curinga_para_origem_negada(monkeypatch: pytest.MonkeyPatch):
-    client = TestClient(_mounted(monkeypatch, [_agent()], CORS_ALLOWED_ORIGINS=ALLOWED))
+    # Com chaves e chave run válida: no modo dev local (F1-04) a origem negada nem chegaria ao AG-UI.
+    client = loopback_client(_mounted(monkeypatch, [_agent()], CORS_ALLOWED_ORIGINS=ALLOWED, **_KEYS))
+    run_key = {"Authorization": f"Bearer {_KEYS['API_KEY_RUN']}"}
 
-    denied = client.post("/agui", json=AGUI_BODY, headers={"Origin": DENIED})
+    denied = client.post("/agui", json=AGUI_BODY, headers={"Origin": DENIED, **run_key})
 
     assert "access-control-allow-origin" not in denied.headers
 
 
 def test_cors_ate_nas_respostas_de_erro_do_agentos(monkeypatch: pytest.MonkeyPatch):
     """CORS é o mais externo: 404/422 de rotas do AgentOS também carregam o header da origem permitida."""
-    client = TestClient(_mounted(monkeypatch, [_agent()], CORS_ALLOWED_ORIGINS=ALLOWED))
+    client = loopback_client(_mounted(monkeypatch, [_agent()], CORS_ALLOWED_ORIGINS=ALLOWED))
 
     missing = client.get("/agents/nao-existe", headers={"Origin": ALLOWED})
     invalid = client.post("/agui", json={"x": 1}, headers={"Origin": ALLOWED})
@@ -212,7 +214,7 @@ def test_cors_ate_nas_respostas_de_erro_do_agentos(monkeypatch: pytest.MonkeyPat
 
 
 def test_default_de_origens_vale_sem_a_env(monkeypatch: pytest.MonkeyPatch):
-    client = TestClient(_mounted(monkeypatch, [_agent()]))
+    client = loopback_client(_mounted(monkeypatch, [_agent()]))
 
     for origin in ("https://os.agno.com", "http://localhost:3000", "http://localhost:7777"):
         resp = client.options("/agui", headers={"Origin": origin, "Access-Control-Request-Method": "POST"})
@@ -235,23 +237,29 @@ def test_docs_extras_e_enable_docs_tambem_fora_de_production(monkeypatch: pytest
     app = factory.create_app()
     if mounted:
         factory._mount_agent_os(app, [_agent()], [])
-    client = TestClient(app)
+    client = loopback_client(app)
 
     for path in ("/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"):
         assert client.get(path).status_code == 404, path
 
 
+# Fora de development o app exige chaves (F1-04) e docs são rota admin. Valores de teste.
+_KEYS = {"API_KEY_RUN": "chave-de-teste-run-" + "r" * 21, "API_KEY_ADMIN": "chave-de-teste-admin-" + "a" * 19}
+_ADMIN_HEADERS = {"Authorization": f"Bearer {_KEYS['API_KEY_ADMIN']}"}
+
+
 def test_docs_ligados_por_padrao_em_development_e_explicitos_em_production(monkeypatch: pytest.MonkeyPatch):
     _clean_env(monkeypatch)
-    assert TestClient(AppFactory().create_app()).get("/docs").status_code == 200
-    _clean_env(monkeypatch, ENVIRONMENT="production", ENABLE_DOCS="true")
-    assert TestClient(AppFactory().create_app()).get("/openapi.json").status_code == 200
+    assert loopback_client(AppFactory().create_app()).get("/docs").status_code == 200
+    _clean_env(monkeypatch, ENVIRONMENT="production", ENABLE_DOCS="true", **_KEYS)
+    client = loopback_client(AppFactory().create_app(), headers=_ADMIN_HEADERS)
+    assert client.get("/openapi.json").status_code == 200
 
 
 def test_openapi_nao_e_regenerado_com_docs_desligados(monkeypatch: pytest.MonkeyPatch):
     """``app.openapi_schema = None`` após a montagem não pode reabrir o schema por outra rota."""
-    app = _mounted(monkeypatch, [_agent()], ENVIRONMENT="production")
-    client = TestClient(app)
+    app = _mounted(monkeypatch, [_agent()], ENVIRONMENT="production", **_KEYS)
+    client = loopback_client(app, headers=_ADMIN_HEADERS)
 
     assert client.get("/openapi.json").status_code == 404
     paths = {getattr(r, "path", "") for r in app.routes}
@@ -283,7 +291,7 @@ def _health_client(monkeypatch: pytest.MonkeyPatch, service: HealthService) -> T
     factory = AppFactory()
     app = factory.create_app()
     factory._container = _Container(service)  # type: ignore[assignment]
-    return TestClient(app)
+    return loopback_client(app)
 
 
 def test_health_com_mongo_ok_responde_200(monkeypatch: pytest.MonkeyPatch):

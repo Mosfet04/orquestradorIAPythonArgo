@@ -39,13 +39,13 @@ Dependencies are declared in `requirements.in` / `requirements-dev.in` and locke
 
 **Or with Docker** (credentials come only from `.env`):
 ```bash
-cp .env.example .env    # fill MONGO_CONNECTION_STRING (+ MONGO_ROOT_*, MONGO_EXPRESS_* for dev)
+cp .env.example .env    # fill MONGO_CONNECTION_STRING, API_KEY_RUN, API_KEY_ADMIN (+ MONGO_ROOT_*, MONGO_EXPRESS_* for dev)
 docker compose up -d    # app only (external MongoDB/Ollama)
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d   # + local MongoDB, Ollama, mongo-express (ports on 127.0.0.1)
 ```
 Details: [README.en.md](README.en.md#with-docker-compose).
 
-**Access:**
+**Access** (every route except `/livez` needs an API key in `Authorization: Bearer <key>`: run, or admin for admin routes; without keys the app only starts on loopback in development/test and only answers local requests: [Authentication](README.en.md#-authentication)):
 - 🌐 API Docs: http://localhost:7777/docs (`ENVIRONMENT=development` or `ENABLE_DOCS=true`)
 - 🤖 Agents: http://localhost:7777/agents
 - ❤️ Health: http://localhost:7777/health

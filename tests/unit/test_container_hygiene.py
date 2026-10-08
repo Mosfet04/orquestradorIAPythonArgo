@@ -344,8 +344,8 @@ def test_compose_base_so_tem_o_app(compose):
 
 
 def test_compose_base_nao_exige_credencial_de_servico_de_apoio():
-    """Modo só-app: a única variável obrigatória é a connection string do Mongo externo."""
-    assert _required_vars(COMPOSE) == {"MONGO_CONNECTION_STRING"}
+    """Modo só-app: obrigatórias só a connection string do Mongo externo e as chaves da borda (F1-04)."""
+    assert _required_vars(COMPOSE) == {"MONGO_CONNECTION_STRING", "API_KEY_RUN", "API_KEY_ADMIN"}
 
 
 def test_compose_base_nao_publica_porta_de_apoio(compose):
