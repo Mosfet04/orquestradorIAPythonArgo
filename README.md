@@ -111,6 +111,14 @@ All observability (traces, metrics, logs) is now handled by the Grafana LGTM sta
 
 OpenTelemetry SDK is used for exporting all telemetry data. MongoDB is no longer used for storing traces or logs.
 
+Run metrics (`MetricsMiddleware`, only `POST /agents/{id}/runs` and `POST /teams/{id}/runs`; each request counts at most one error):
+
+- `agent_errors_total{agent_id}` / `team_errors_total{team_id}`: failed run. Agno catches the run exception and AgentOS answers 200, so the middleware also reads the response: SSE event `RunError` (agent) or `TeamRunError` (team; a member `RunError` inside a team stream is not counted), or JSON (`stream=false`) with top-level `status == "ERROR"`. An exception escaping the route or a status >= 400 also counts. Client cancellation is not an error.
+- `agent_requests_total{agent_id}` / `team_requests_total{team_id}`: run requests, with `status="error"` when the run failed (else `"success"`); a 4xx response (e.g. unknown id or invalid form) is recorded as `unknown`.
+- `agents_active{agent_id}`: agent runs in progress; always released at the end of the request, including on exception or cancellation.
+
+Failures loading agents/teams from the config store go to the log, not to these metrics.
+
 ---
 
 ## 📚 Documentation

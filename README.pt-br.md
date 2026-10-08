@@ -144,6 +144,14 @@ Toda a observabilidade (traces, métricas, logs) agora é feita pela stack Grafa
 
 O SDK OpenTelemetry é usado para exportar todos os dados de telemetria. O MongoDB não é mais utilizado para armazenar traces ou logs.
 
+Métricas de run (`MetricsMiddleware`, só `POST /agents/{id}/runs` e `POST /teams/{id}/runs`; cada request conta no máximo um erro):
+
+- `agent_errors_total{agent_id}` / `team_errors_total{team_id}`: run com falha. O Agno captura a exceção do run e o AgentOS responde 200, então o middleware também lê a resposta: evento SSE `RunError` (agente) ou `TeamRunError` (team; `RunError` de membro dentro do stream do team não conta), ou JSON (`stream=false`) com `status == "ERROR"` no topo. Exceção que escapa da rota e status >= 400 também contam. Cancelamento pelo cliente não é erro.
+- `agent_requests_total{agent_id}` / `team_requests_total{team_id}`: requests de run, com `status="error"` quando o run falhou (senão `"success"`); resposta 4xx (ex.: id inexistente ou form inválido) é registrada como `unknown`.
+- `agents_active{agent_id}`: runs de agente em andamento; sempre liberado ao fim do request, inclusive com exceção ou cancelamento.
+
+Falha ao carregar agentes/teams do config store fica no log, não nessas métricas.
+
 ---
 
 ## 🏗️ Arquitetura

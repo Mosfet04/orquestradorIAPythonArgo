@@ -15,6 +15,7 @@ from tests.fakes.repositories import (
     InMemoryTeamConfigRepository,
     InMemoryToolRepository,
 )
+from tests.fakes.telemetry import RecordingTelemetryMetrics
 
 __all__ = [
     "FakeChatModel",
@@ -28,5 +29,6 @@ __all__ = [
     "InMemoryToolRepository",
     "LoggedRecord",
     "RecordingLogger",
+    "RecordingTelemetryMetrics",
     "ScriptExhaustedError",
 ]

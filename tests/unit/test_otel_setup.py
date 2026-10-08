@@ -113,3 +113,27 @@ def test_setup_telemetry_disabled_does_not_raise():
     cfg = DummyConfig(enabled=False)
     # Deve retornar sem exceção
     otel_setup.setup_telemetry(cfg)
+
+
+def test__instrument_frameworks_nao_instrumenta_fastapi_globalmente(monkeypatch):
+    """A instrumentação do FastAPI é só por app (AppFactory._instrument_fastapi), nunca global."""
+    import fastapi
+    from fastapi.applications import FastAPI as fastapi_original
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
+    instrumentor = FastAPIInstrumentor()  # singleton do BaseInstrumentor
+    if instrumentor.is_instrumented_by_opentelemetry:
+        instrumentor.uninstrument()
+    monkeypatch.setitem(
+        sys.modules, "opentelemetry.instrumentation.httpx", types.ModuleType("fail")
+    )
+    monkeypatch.setitem(
+        sys.modules, "openinference.instrumentation.agno", types.ModuleType("fail")
+    )
+
+    try:
+        otel_setup._instrument_frameworks()
+        assert fastapi.FastAPI is fastapi_original
+    finally:
+        if instrumentor.is_instrumented_by_opentelemetry:
+            instrumentor.uninstrument()

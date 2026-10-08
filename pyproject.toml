@@ -184,7 +184,6 @@ module = [
     "src.infrastructure.repositories.mongo_team_config_repository",
     "src.infrastructure.repositories.mongo_tool_repository",
     "src.infrastructure.web.app_factory",
-    "src.infrastructure.web.metrics_middleware",
 ]
 ignore_errors = true
 

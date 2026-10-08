@@ -89,7 +89,9 @@ def _setup_metrics(resource: Resource, endpoint: str) -> MeterProvider:
 def _instrument_frameworks() -> None:
     """Aplica auto-instrumentação em frameworks usados pela app.
 
-    - FastAPI: rastreia toda requisição HTTP recebida
+    O FastAPI não entra aqui: é instrumentado por app em ``AppFactory.create_app``
+    (``instrument_app``, antes da pilha de middleware ser montada), nunca globalmente.
+
     - HTTPX: rastreia chamadas HTTP saintes (tools, APIs externas)
     - Agno: captura spans de execução de agentes/teams
     """

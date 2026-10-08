@@ -79,6 +79,9 @@ class AppFactory:
         self._add_cors(base_app)
         # self._add_playground_rewrite(base_app)
         self._add_metrics_middleware(base_app)
+        # Antes do primeiro evento ASGI (o lifespan inclusive), que monta a pilha de
+        # middleware; instrument_app depois disso não gera span nenhum.
+        self._instrument_fastapi(base_app)
         self._add_admin_endpoints(base_app)
         # self._add_playground_compat_endpoints(base_app)
         return base_app
@@ -172,7 +175,11 @@ class AppFactory:
         return teams
 
     def _instrument_fastapi(self, app: FastAPI) -> None:
-        """Aplica auto-instrumentação OpenTelemetry no FastAPI."""
+        """Aplica auto-instrumentação OpenTelemetry no FastAPI (só nesta app, nunca global).
+
+        O tracer é o proxy global: passa a exportar quando ``setup_telemetry`` define o
+        TracerProvider no lifespan; com OTel desligado, os spans são no-op.
+        """
         try:
             from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
@@ -180,9 +187,10 @@ class AppFactory:
                 app,
                 excluded_urls="admin/health,metrics/cache",
             )
-        except Exception:
-            self._logger.info(
-                "OpenTelemetry FastAPI instrumentation não disponível — ignorando"
+        except Exception as exc:
+            self._logger.warning(
+                "OpenTelemetry FastAPI instrumentation não disponível — ignorando",
+                error_type=type(exc).__name__,
             )
 
     def _mount_agent_os(self, app: FastAPI, agents: list, teams: list) -> None:
@@ -224,7 +232,6 @@ class AppFactory:
 
             config = self._container.config
             setup_telemetry(config)
-            self._instrument_fastapi(app)
 
             agents, teams = await self._load_all_entities()
             self._try_mount_agent_os(app, agents, teams)

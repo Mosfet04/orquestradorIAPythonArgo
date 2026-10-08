@@ -46,7 +46,7 @@ Dependências: `requirements.in`/`requirements-dev.in` → locks com hash (`pip-
 | Fase | Gates |
 |---|---|
 | F0 | `ruff check`, `pytest -m "not live"` com cobertura, `mypy` (módulos novos), `lint-imports` (com baseline) |
-| F1 | F0 + `bandit`, `pip-audit`, `pytest -m security` |
+| F1 | F0 + `bandit` (sem achado novo; zera no F1-03), `pip-audit` (só os conhecidos: agno PYSEC-2026-2333 até a F3; chromadb até o F1-02), `pytest -m security` |
 | F2 | F1 + testes de contrato, `lint-imports` sem baseline em `domain`/`application`, cobertura do diff ≥ 85% |
 | F3+ | F2 + matriz de versões quando aplicável, evals determinísticas |
 
