@@ -3,15 +3,15 @@ Sistema de logging seguro para o Orquestrador IA.
 Implementa sanitização de dados sensíveis e estruturação para análise eficiente.
 """
 
-import logging
+import hashlib
 import json
+import logging
 import re
 import traceback
-from typing import Any, Dict, Optional, List, Sequence
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from enum import Enum
-from dataclasses import dataclass, asdict
-import hashlib
+from typing import Any, Dict, List, Optional, Sequence
 
 
 class LogLevel(Enum):

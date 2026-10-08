@@ -8,7 +8,6 @@ import pytest
 
 from src.infrastructure.dependency_injection import DependencyContainer, HealthService
 
-
 # ── HealthService ───────────────────────────────────────────────────
 
 

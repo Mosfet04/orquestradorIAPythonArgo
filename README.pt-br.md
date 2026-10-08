@@ -82,8 +82,10 @@ python -m venv .venv
 # Linux / macOS
 source .venv/bin/activate
 
-# 3. Instale as dependências
-pip install -r requirements.txt
+# 3. Instale as dependências (versões fixas, com verificação de hash)
+pip install --require-hashes -r requirements.lock
+# para desenvolvimento (testes, ruff, mypy, import-linter...):
+# pip install --require-hashes -r requirements.lock -r requirements-dev.lock
 
 # 4. Configure as variáveis de ambiente
 cp .env.example .env   # ou crie manualmente (veja seção Configuração)
@@ -91,6 +93,20 @@ cp .env.example .env   # ou crie manualmente (veja seção Configuração)
 # 5. Inicie a aplicação
 python app.py
 ```
+
+#### Dependências e arquivos de lock
+
+| Arquivo | Papel |
+|---|---|
+| `requirements.in` | Dependências diretas de runtime (`agno==2.5.8` exato) |
+| `requirements.lock` | Gerado por `pip-compile --generate-hashes`; versões exatas + hashes |
+| `requirements-dev.in` / `requirements-dev.lock` | Testes e ferramentas de qualidade (pytest, ruff, mypy, import-linter, bandit, pip-audit, diff-cover, respx, pip-tools) |
+| `requirements.txt` | Só compatibilidade: `-r requirements.lock` |
+
+- O lock é gerado em Linux/CPython 3.12 e validado para Linux CPython 3.11/3.12 (Docker e CI). No Windows nativo, se o `--require-hashes` falhar, use WSL/Docker ou regenere o lock localmente.
+- `uvloop` só é instalado fora do Windows (`sys_platform != "win32"`); o `app.py` ainda o importa sem guarda, então falha no Windows nativo até o item F1-03 do roadmap.
+- Extras opcionais, **não instalados por padrão** (fora do lock): `PyJWT` (auth JWT do AgentOS), `mcp` (tools MCP), `anthropic` e `groq` (providers de modelo). Para adotar um deles, acrescente-o ao `requirements.in` e regenere o lock.
+- Nunca edite um `.lock` à mão. Comandos de regeneração: [CONTRIBUTING.md](CONTRIBUTING.md#dependencies-and-lock-files).
 
 ### Com Docker Compose
 
@@ -193,7 +209,9 @@ graph TB
 ```
 orquestradorIAPythonArgo/
 ├── app.py                          # Ponto de entrada — cria o FastAPI app
-├── requirements.txt                # Dependências Python
+├── pyproject.toml                  # Config. das ferramentas (ruff, mypy, pytest, coverage, import-linter, bandit)
+├── requirements.in / .lock         # Dependências de runtime (lock com hashes)
+├── requirements-dev.in / .lock     # Dependências de desenvolvimento (lock com hashes)
 ├── docker-compose.yml              # MongoDB + Ollama + Grafana LGTM + App
 ├── Dockerfile                      # Build da imagem Docker
 ├── .env                            # Variáveis de ambiente (NÃO commitado)

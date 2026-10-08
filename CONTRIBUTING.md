@@ -68,10 +68,9 @@ This project adheres to a code of conduct. By participating, you are expected to
    .\venv\Scripts\Activate.ps1  # Windows
    ```
 
-2. **Install Dependencies**
+2. **Install Dependencies** (pinned, hash-checked; see [Dependencies and lock files](#dependencies-and-lock-files))
    ```bash
-   pip install -r requirements.txt
-   pip install -r requirements-dev.txt  # Development dependencies
+   pip install --require-hashes -r requirements.lock -r requirements-dev.lock
    ```
 
 3. **Environment Configuration**
@@ -88,6 +87,45 @@ This project adheres to a code of conduct. By participating, you are expected to
    # Initialize with sample data
    mongosh agno mongo-init/init-db.js
    ```
+
+### Dependencies and lock files
+
+| File | Edited by | Role |
+|---|---|---|
+| `requirements.in` | hand | Direct runtime dependencies (`agno==2.5.8` exact, others with a minimum version) |
+| `requirements.lock` | `pip-compile` | Every runtime package pinned with `==` and `--hash` |
+| `requirements-dev.in` | hand | Tests and tooling; constrained by `-c requirements.lock` |
+| `requirements-dev.lock` | `pip-compile` | Every dev package pinned with `==` and `--hash` |
+| `requirements.txt` | hand | Compatibility shim: `-r requirements.lock` |
+
+Never edit a `.lock` file by hand. Use the `pip-tools` installed by the dev lock, always runtime first (the dev lock is constrained by it):
+
+```bash
+# Update everything (the normal way to refresh the locks), runtime first
+.venv/bin/pip-compile --upgrade --generate-hashes --allow-unsafe --strip-extras \
+    --output-file=requirements.lock requirements.in
+.venv/bin/pip-compile --upgrade --generate-hashes --allow-unsafe --strip-extras \
+    --output-file=requirements-dev.lock requirements-dev.in
+
+# Or upgrade a single package (repeat on the dev lock if the package is shared)
+.venv/bin/pip-compile --upgrade-package fastapi --generate-hashes --allow-unsafe --strip-extras \
+    --output-file=requirements.lock requirements.in
+
+# ALWAYS audit the result and check that both locks install
+.venv/bin/pip-audit -r requirements.lock --require-hashes --disable-pip
+pip install --dry-run --require-hashes -r requirements.lock -r requirements-dev.lock
+```
+
+Without `--upgrade`/`--upgrade-package`, `pip-compile` keeps the current pins, so it never
+fixes a vulnerable version by itself. Every remaining `pip-audit` finding must be
+justified in the PR description (why it does not apply or why it cannot be fixed yet).
+
+Notes:
+- Locks are generated on **Linux / CPython 3.12** and validated for Linux CPython 3.11 and 3.12 (Docker image and CI). `pip-compile` resolves for the machine it runs on: Windows-only transitive dependencies are dropped. That is why `colorama` is listed explicitly in `requirements.in`. On native Windows, if `--require-hashes` still fails, use WSL/Docker or regenerate locally (and do not commit that lock).
+- `uvloop` is declared with `sys_platform != "win32"`. Note: `app.py` still imports `uvloop` unconditionally, so it fails on native Windows until roadmap item F1-03.
+- Optional extras are **not installed by default** and stay out of the lock: `PyJWT` (AgentOS JWT auth), `mcp` (MCP tools), `anthropic`, `groq` (model providers). To adopt one, add it to `requirements.in` with a minimum version and regenerate.
+- A new dependency needs a justification in the PR (license, maintenance, discarded alternatives).
+- Upper bounds in `requirements.in` are deliberate and explained next to each one: `fastapi<0.137` (agno 2.5.8 breaks with the `_IncludedRouter` introduced in 0.137), major caps on SDKs consumed by agno (`openai<3`, `google-genai<2`, `ag-ui-protocol<0.2`, `openinference-instrumentation-agno<0.2`) until the agno migration (F3), and `numpy<2.5` (2.5 dropped Python 3.11, still used by the Docker image and CI). Do not lift them in a routine `--upgrade`.
 
 ### Using Docker
 
@@ -154,25 +192,18 @@ This project follows **Clean Architecture (Onion Architecture)**:
 
 ### Code Style
 
-We use these tools for code quality:
-
-- **Black** for code formatting
-- **isort** for import sorting
-- **flake8** for linting
-- **mypy** for type checking
-
-Run before committing:
+All tool configuration lives in `pyproject.toml`. Run before committing:
 ```bash
-# Format code
-black .
-isort .
-
-# Check linting
-flake8 .
-
-# Type checking
-mypy src/
+.venv/bin/ruff check src tests app.py  # lint (incl. import sorting); `ruff format` is not adopted yet
+.venv/bin/mypy                          # strict by default; legacy modules listed with ignore_errors
+.venv/bin/lint-imports                  # onion layer contracts
+.venv/bin/python -m pytest --cov        # tests + coverage (source = src, branch = true)
 ```
+
+The legacy findings are recorded as an explicit baseline (`per-file-ignores` in ruff,
+`ignore_errors` modules in mypy, `ignore_imports` in import-linter). **The baseline can only
+shrink**: fix and remove an entry when you touch that code; never add new entries. New modules
+are checked with every rule.
 
 ### Python Standards
 

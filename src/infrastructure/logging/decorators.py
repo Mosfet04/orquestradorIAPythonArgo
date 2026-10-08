@@ -2,9 +2,10 @@
 Decoradores para logging automático de métodos e funções.
 """
 
-import time
 import functools
+import time
 from typing import Any, Callable, Dict
+
 from .structlog_logger import LoggerFactory
 
 _SENSITIVE_KEYS = {"password", "passwd", "secret", "token", "api_key", "apikey", "authorization", "auth"}

@@ -81,12 +81,13 @@ function Initialize-VirtualEnvironment {
 function Install-Dependencies {
     Write-Step "Installing Python dependencies..."
     
-    if (Test-Path "requirements.txt") {
-        pip install -r requirements.txt
+    # Lock com hashes: runtime + desenvolvimento (pytest e ferramentas de qualidade)
+    if ((Test-Path "requirements.lock") -and (Test-Path "requirements-dev.lock")) {
+        pip install --require-hashes -r requirements.lock -r requirements-dev.lock
         Write-Success "Dependencies installed"
     }
     else {
-        Write-Error "requirements.txt not found"
+        Write-Error "requirements.lock / requirements-dev.lock not found"
         exit 1
     }
 }

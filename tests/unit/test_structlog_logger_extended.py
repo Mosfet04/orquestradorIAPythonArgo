@@ -6,13 +6,12 @@ from src.infrastructure.logging.structlog_logger import (
     DataSanitizer,
     LogContext,
     StructlogLogger,
-    setup_structlog,
-    sanitize_log_data,
     add_correlation_id,
-    add_timestamp,
     add_service_metadata,
+    add_timestamp,
+    sanitize_log_data,
+    setup_structlog,
 )
-
 
 # ── DataSanitizer._sanitize_string ──────────────────────────────────
 

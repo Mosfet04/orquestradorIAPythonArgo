@@ -29,10 +29,13 @@ git clone https://github.com/Mosfet04/orquestradorIAPythonArgo.git
 cd orquestradorIAPythonArgo
 python -m venv .venv && .venv\Scripts\Activate.ps1  # Windows
 # source .venv/bin/activate                          # Linux/macOS
-pip install -r requirements.txt
+pip install --require-hashes -r requirements.lock      # runtime (pinned, hash-checked)
+# pip install --require-hashes -r requirements.lock -r requirements-dev.lock  # + tests/tooling
 cp .env.example .env  # configure MongoDB + API keys
 python app.py
 ```
+
+Dependencies are declared in `requirements.in` / `requirements-dev.in` and locked with hashes by `pip-compile` (`requirements.txt` is just `-r requirements.lock`). The lock is generated on Linux/CPython 3.12 and validated for Linux 3.11/3.12. Optional providers (`anthropic`, `groq`, `mcp`, `PyJWT`) are not installed by default. How to regenerate the lock: [CONTRIBUTING.md](CONTRIBUTING.md#dependencies-and-lock-files).
 
 **Or with Docker:**
 ```bash

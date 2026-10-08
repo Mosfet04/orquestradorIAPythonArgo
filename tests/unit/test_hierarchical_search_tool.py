@@ -5,7 +5,6 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
-
 from agno.tools import Toolkit
 
 from src.domain.entities.search_result import SearchResult

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from src.domain.entities.tool import HttpMethod, ToolParameter, Tool
+from src.domain.entities.tool import HttpMethod, Tool, ToolParameter
 from src.infrastructure.http.http_tool_factory import (
     HttpToolFactory,
     _resolve_url,

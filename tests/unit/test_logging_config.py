@@ -1,5 +1,6 @@
 import logging
 import os
+
 from src.infrastructure.logging.config import setup_logging
 
 

@@ -34,4 +34,5 @@ Escopo:
 - `conftest.py` sem estado global vazando: reset do tracer/meter provider do OTel entre testes que os configuram; `setup_logging()` não roda mais no import de `src/infrastructure/logging/config.py` (chamado explicitamente pelo `app.py`).
 - `tests/golden/`: snapshot dos kwargs que `AgentFactoryService` e `TeamFactoryService` passam a `Agent`/`Team` em 4 configurações (mínima, com tools, RAG semantic, RAG hierarchical), salvos em JSON versionado. Atualização só com `--update-golden` explícito.
 Critérios de aceite: `pytest -m unit` e `pytest -m contract` rodam isolados; a suíte passa em ordem aleatória (`-p random_order` ou `pytest-randomly`, se adotado, ou duas ordens fixas); golden falha se um kwarg mudar sem atualização explícita.
+Inclui: `DummyReader` de `tests/unit/test_otel_setup.py` trocado por `InMemoryMetricReader` real (some o ruído de atexit); `test_create_async` sem conexão real ao Mongo (hoje leva 30s).
 Testes exigidos: os próprios golden; teste que prova que importar `src.infrastructure.logging.config` não configura logging.

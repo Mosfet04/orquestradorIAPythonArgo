@@ -3,14 +3,13 @@ import sys
 import types
 from types import SimpleNamespace
 
-
 from src.infrastructure.logging.structlog_logger import (
     DataSanitizer,
+    LoggerFactory,
     add_correlation_id,
     add_otel_trace_context,
     sanitize_log_data,
     setup_structlog,
-    LoggerFactory,
 )
 
 

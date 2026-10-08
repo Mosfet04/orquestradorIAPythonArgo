@@ -34,13 +34,13 @@ src/presentation    controllers/rotas.
 ```bash
 .venv/bin/python -m pytest -m "not live"            # suíte
 .venv/bin/python -m pytest -m unit --cov            # unit com cobertura
-.venv/bin/ruff check src tests
+.venv/bin/ruff check src tests app.py
 .venv/bin/mypy
 .venv/bin/lint-imports
 .venv/bin/bandit -q -c pyproject.toml -r src
 .venv/bin/pip-audit -r requirements.lock --require-hashes --disable-pip
 ```
-Antes da F0-01 só o `pytest` existe.
+Dependências: `requirements.in`/`requirements-dev.in` → locks com hash (`pip-compile`, ver CONTRIBUTING). Nunca edite o lock à mão.
 
 ## Gates por fase (bloqueantes no gate final do /dev-cycle)
 | Fase | Gates |

@@ -2,37 +2,31 @@
 Módulo de logging seguro para o Orquestrador IA usando structlog.
 """
 
+from .decorators import log_ai_interaction, log_execution, log_http_request, log_performance
 from .structlog_logger import (
-    StructlogLogger,
-    LoggerFactory,
     DataSanitizer,
-    LogLevel,
     LogContext,
+    LoggerFactory,
+    LogLevel,
+    StructlogLogger,
     app_logger,
-    setup_structlog
-)
-
-from .decorators import (
-    log_execution,
-    log_performance,
-    log_ai_interaction,
-    log_http_request
+    setup_structlog,
 )
 
 # Manter compatibilidade com código existente
 SecureLogger = StructlogLogger
 
 __all__ = [
-    'StructlogLogger',
-    'SecureLogger',  # Alias para compatibilidade
-    'LoggerFactory',
     'DataSanitizer',
-    'LogLevel',
     'LogContext',
+    'LogLevel',
+    'LoggerFactory',
+    'SecureLogger',  # Alias para compatibilidade
+    'StructlogLogger',
     'app_logger',
-    'setup_structlog',
-    'log_execution',
-    'log_performance',
     'log_ai_interaction',
-    'log_http_request'
+    'log_execution',
+    'log_http_request',
+    'log_performance',
+    'setup_structlog'
 ]

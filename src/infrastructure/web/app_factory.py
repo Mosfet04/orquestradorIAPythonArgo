@@ -6,6 +6,8 @@ import re
 from contextlib import asynccontextmanager
 from typing import Optional
 
+from agno.os import AgentOS
+from agno.os.interfaces.agui import AGUI
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -14,13 +16,11 @@ from src.infrastructure.config.app_config import AppConfig
 from src.infrastructure.dependency_injection import DependencyContainer
 from src.infrastructure.logging.logger_adapter import StructlogLoggerAdapter
 from src.infrastructure.telemetry import (
+    TelemetryMetrics,
     setup_telemetry,
     shutdown_telemetry,
-    TelemetryMetrics,
 )
 from src.infrastructure.web.metrics_middleware import MetricsMiddleware
-from agno.os import AgentOS
-from agno.os.interfaces.agui import AGUI
 
 # Regex: /agents/{agent_id}/sessions/… → /sessions/…
 _AGENT_SESSION_RE = re.compile(r"^/agents/[^/]+(/sessions/.*)$")

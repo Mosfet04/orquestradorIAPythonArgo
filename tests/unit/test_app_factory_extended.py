@@ -8,11 +8,10 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from src.infrastructure.web.app_factory import (
-    AppFactory,
     _AGENT_SESSION_RE,
+    AppFactory,
     create_app,
 )
-
 
 # ── _PlaygroundPrefixMiddleware ──────────────────────────────────────
 

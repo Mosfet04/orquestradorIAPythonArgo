@@ -1,6 +1,7 @@
 """Testes unitários para a entidade AgentConfig."""
 
 import pytest
+
 from src.domain.entities.agent_config import AgentConfig
 
 

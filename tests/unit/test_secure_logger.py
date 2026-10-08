@@ -1,6 +1,6 @@
 import logging
 
-from src.infrastructure.logging.secure_logger import SecureLogger, DataSanitizer
+from src.infrastructure.logging.secure_logger import DataSanitizer, SecureLogger
 
 
 def test_secure_logger_basic_methods(caplog, tmp_path, monkeypatch):

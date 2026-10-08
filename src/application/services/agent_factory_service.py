@@ -10,12 +10,12 @@ from agno.db.mongo import MongoDb as MongoAgentDb
 from agno.knowledge import Knowledge
 from agno.vectordb.mongodb import MongoDb as MongoVectorDb
 
-from src.domain.entities.agent_config import AgentConfig
-from src.domain.entities.rag_config import SearchStrategy
-from src.domain.ports import ILogger, IModelFactory, IEmbedderFactory, IToolFactory
-from src.domain.repositories.tool_repository import IToolRepository
 from src.application.services.document_indexing_service import DocumentIndexingService
 from src.application.services.knowledge_search_factory import KnowledgeSearchFactory
+from src.domain.entities.agent_config import AgentConfig
+from src.domain.entities.rag_config import SearchStrategy
+from src.domain.ports import IEmbedderFactory, ILogger, IModelFactory, IToolFactory
+from src.domain.repositories.tool_repository import IToolRepository
 from src.infrastructure.tools.hierarchical_search_tool import (
     create_hierarchical_search_tool,
 )

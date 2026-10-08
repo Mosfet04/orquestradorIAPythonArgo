@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import patch
 
-from starlette.testclient import TestClient
+import pytest
 from fastapi import FastAPI
+from starlette.testclient import TestClient
 
 from src.infrastructure.web.metrics_middleware import MetricsMiddleware
 

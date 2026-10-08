@@ -3,18 +3,19 @@ Sistema de logging seguro usando structlog para o Orquestrador IA.
 Otimizado para ambientes cloud (AWS CloudWatch, ELK Stack, etc.).
 """
 
-import structlog
+import hashlib
 import logging
-import re
-import traceback
 import os
+import re
 import sys
-from typing import Any, Dict, Optional, List
+import traceback
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from enum import Enum
-from dataclasses import dataclass, asdict
-import hashlib
 from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+import structlog
 
 
 class LogLevel(Enum):

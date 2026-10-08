@@ -1,9 +1,11 @@
 """Ponto de entrada da aplicação FastAPI."""
 
-from dotenv import load_dotenv
 import asyncio
 import sys
+
 import uvloop
+from dotenv import load_dotenv
+
 load_dotenv()  # carrega .env antes de qualquer acesso a os.getenv()
 
 from src.infrastructure.logging import setup_structlog
@@ -20,6 +22,7 @@ if sys.platform == "win32":
 
 if __name__ == "__main__":
     import uvicorn
+
     from src.infrastructure.logging import app_logger
 
     uvicorn_config = {

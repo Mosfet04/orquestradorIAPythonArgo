@@ -1,6 +1,6 @@
+import logging
 import sys
 import types
-import logging
 
 from src.infrastructure.telemetry import otel_setup
 
@@ -36,6 +36,10 @@ def test__setup_tracing_and_metrics(monkeypatch):
             return None
 
         def _set_collect_callback(self, *a, **k):
+            pass
+
+        # opentelemetry-sdk >= 1.4x chama este hook no MeterProvider.__init__
+        def _set_meter_provider(self, *a, **k):
             pass
 
     monkeypatch.setattr(otel_setup, "OTLPSpanExporter", DummyExporter)

@@ -4,16 +4,16 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from src.application.services.search_strategies.hierarchical_search_strategy import (
+    HierarchicalSearchStrategy,
+)
+from src.application.services.search_strategies.semantic_search_strategy import (
+    SemanticSearchStrategy,
+)
 from src.domain.entities.rag_config import RagConfig, SearchStrategy
 from src.domain.ports.document_tree_repository_port import IDocumentTreeRepository
 from src.domain.ports.knowledge_search_port import IKnowledgeSearchStrategy
 from src.domain.ports.logger_port import ILogger
-from src.application.services.search_strategies.semantic_search_strategy import (
-    SemanticSearchStrategy,
-)
-from src.application.services.search_strategies.hierarchical_search_strategy import (
-    HierarchicalSearchStrategy,
-)
 
 
 class KnowledgeSearchFactory:

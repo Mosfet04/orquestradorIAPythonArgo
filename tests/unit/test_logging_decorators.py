@@ -1,4 +1,5 @@
 import time
+
 import pytest
 
 from src.infrastructure.logging.decorators import log_execution, log_performance

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import pytest
-
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from src.infrastructure.telemetry.metrics import TelemetryMetrics
 from src.infrastructure.telemetry.otel_setup import (
@@ -12,7 +12,6 @@ from src.infrastructure.telemetry.otel_setup import (
     setup_telemetry,
     shutdown_telemetry,
 )
-
 
 # ── _build_resource ─────────────────────────────────────────────────
 

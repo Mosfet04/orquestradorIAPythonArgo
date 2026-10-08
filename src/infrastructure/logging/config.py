@@ -2,8 +2,8 @@
 Configuração de logging para a aplicação Orquestrador IA.
 """
 
-import os
 import logging.config
+import os
 from pathlib import Path
 
 # Criar diretório de logs se não existir
