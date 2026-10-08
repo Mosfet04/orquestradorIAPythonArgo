@@ -419,10 +419,35 @@ Add screenshots for UI changes.
 
 ### Review Process
 
-1. **Automated checks** must pass (CI/CD)
+1. **Automated checks** must pass (CI/CD, see below)
 2. **Code review** by at least one maintainer
 3. **Manual testing** for significant changes
 4. **Documentation review** if docs are updated
+
+### Continuous integration
+
+`.github/workflows/ci.yml` runs on every push to the tracked branches and on every PR:
+
+| Job | Runs | Blocking |
+|---|---|---|
+| `lint` (py3.12) | `ruff check src tests app.py`, `mypy`, `lint-imports` | yes |
+| `test` (py3.11, py3.12) | `pytest -m "not live"` with coverage | yes |
+| `security` (py3.12) | `bandit -c pyproject.toml -r src`, `pip-audit -r requirements.lock --require-hashes --disable-pip` | not yet: `continue-on-error` until phase F1 |
+| `codacy-coverage` | uploads the py3.12 `coverage.xml` to Codacy | push or same-repo PR only |
+
+Rules (checked by `tests/unit/test_ci_workflow.py`): triggers only `push` and `pull_request`
+(no `pull_request_target`/`workflow_run`); `permissions: contents: read` at the top;
+every `uses:` pinned to a 40-hex commit SHA with a `# vX.Y.Z` comment; `persist-credentials: false`
+on checkout; dependencies installed only from the hash-checked locks; no `curl | bash`.
+`CODACY_API_TOKEN` exists only in the env of the upload step, in a job that never checks out
+or installs the repository code. To bump an action, resolve the tag to its commit
+(`git ls-remote https://github.com/<owner>/<repo> refs/tags/<tag>`) and update SHA and comment.
+To bump the Codacy reporter, change `REPORTER_VERSION` and `REPORTER_SHA256` together (check the
+hash against the release's `.SHA512SUM`/asset digest). The upload uses `--prefix src/` because
+`[tool.coverage.run] source = ["src"]` makes `coverage.xml` list paths relative to `src/`, and the
+upload job has no `.git` for the reporter to match them; keep both in sync if `source` changes. Validate locally with
+[`actionlint`](https://github.com/rhysd/actionlint) and [`zizmor`](https://docs.zizmor.sh/)
+(`pipx run zizmor --offline .github/workflows/`); neither is part of the dev lock.
 
 ## Issue Reporting
 
