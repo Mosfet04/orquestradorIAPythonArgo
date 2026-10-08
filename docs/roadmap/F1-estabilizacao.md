@@ -1,0 +1,39 @@
+# F1 — Estabilização e higiene de borda
+
+Corrige o que o README promete e não funciona e fecha a exposição de borda **sem mudar a arquitetura**. Todo defeito começa com teste vermelho.
+
+## F1-01 — Telemetria (WIP corrigido) — B12
+Objetivo: trazer o WIP de `wip/telemetria` (commit único) para `feat/plug-and-play` e corrigi-lo.
+Escopo: aplicar o WIP (`git cherry-pick wip/telemetria` é feito pela thread principal **antes** do dev começar); `_AgnoErrorSpanProcessor` lê os atributos que o OpenInference realmente emite (`agno.agent.id`, `agno.team.id`, `llm.model_name`; conferir em `openinference/instrumentation/agno/`); sem contagem dupla de erro entre spans aninhados e o middleware (uma fonte por métrica); `record_agent_active(-1)` em `finally` no middleware ASGI; instrumentação FastAPI única (`instrument_app`, sem `FastAPIInstrumentor().instrument()` global); linha em branco faltando no controller (E301).
+Critérios de aceite: teste reproduz `agent_id="unknown"` antes e passa depois; `CancelledError`/exceção durante a requisição não deixa `agents_active` > 0; uma falha de run gera exatamente um incremento de erro.
+Testes exigidos: unit do span processor com spans reais do SDK OTel (InMemorySpanExporter), unit do middleware com app ASGI mínima.
+
+## F1-02 — Higiene de container — S4, S5, B10
+Escopo: `.dockerignore` (excluir `.env*` exceto `.env.example`, `.venv`, `.git`, `logs`, `tests`, caches) e remover a regra `.dockerignore` do `.gitignore`; Dockerfile instala pelo lock, roda como usuário não-root, HEALTHCHECK sem `curl` (Python stdlib) em `/livez` (criado na F1-03; até lá `/admin/health`); `app.py` usa `APP_HOST`/`APP_PORT` do `AppConfig` (default `127.0.0.1` fora do container; o Dockerfile define `APP_HOST=0.0.0.0`); `OLLAMA_BASE_URL` consumido pela factory do Ollama; compose sem credenciais fixas (vêm de variáveis com `${VAR:?}`), portas do Mongo/Ollama/mongo-express só no perfil `dev`, imagens com tag fixa; `.env.development` sem valores reais (placeholders) e `.env.example` com todas as chaves lidas pelo código; remover do `.env.example` as variáveis que nenhum código lê.
+Critérios de aceite: teste lê `.dockerignore` e garante exclusão de `.env`, `.git`, `.venv`; teste lê o compose e garante ausência de senha literal e portas de banco fora do perfil `dev`; `AppConfig` expõe `app_host`/`ollama_base_url` e eles são usados (teste); `docker build` validado se o Docker estiver disponível (senão, registrado como não verificado).
+Testes exigidos: unit/static conforme acima.
+
+## F1-03 — Higiene de borda — S6, S8, S10, B13
+Escopo: `AGNO_TELEMETRY=false` definido no startup (sem sobrescrever valor explícito do usuário) e `telemetry=False` em `AgentOS`, `Agent` e `Team`; CORS por env (`CORS_ALLOWED_ORIGINS`, lista separada por vírgula; default = origens atuais), `allow_methods`/`allow_headers` explícitos; `/docs`/`/redoc`/`/openapi.json` desligáveis por `ENABLE_DOCS` (default ligado só em development); `/livez` público mínimo (`{"status":"ok"}`); `/admin/health` devolve 503 quando algo está unhealthy e **sem** texto de exceção; `ENVIRONMENT` lido no `AppConfig` (`development|test|staging|production`, valor inválido = erro); `uvloop` com import guardado em `app.py`.
+Critérios de aceite: teste falha se Agent/Team/AgentOS forem criados com telemetria ligada; health 503 com Mongo fora e corpo sem stack/mensagem de exceção; CORS respeita a env; `/docs` some com `ENABLE_DOCS=false`.
+
+## F1-04 — Auth fail-closed — S1
+Escopo: middleware ASGI puro (`http` **e** `websocket`) com duas chaves: `API_KEY_RUN` e `API_KEY_ADMIN` (comparação com `hmac.compare_digest`; header `Authorization: Bearer <chave>` ou `X-API-Key`). Rotas públicas: `/livez` e preflight `OPTIONS` com `Origin` (o middleware fica **dentro** do CORS). Rotas admin (só chave admin): `/admin/*`, `/metrics/*`, `POST /databases/*`, `DELETE` em `/sessions*` e `/memories*`, escrita (`POST|PUT|PATCH|DELETE`) em `/knowledge*`, docs quando habilitados fora de development. Demais rotas: chave run ou admin. Sem chaves configuradas: o app só inicia se `APP_HOST` for loopback **e** `ENVIRONMENT` ∈ {development, test} (log de aviso); senão recusa iniciar com erro claro. 401 sem credencial, 403 com credencial insuficiente, corpo sem detalhes.
+Critérios de aceite: sem token → 401 (inclui `/agui` e WebSocket); chave run em rota admin → 403; preflight CORS → 200 sem token; bind `0.0.0.0` sem chaves → falha no startup; chaves nunca aparecem em log.
+Testes exigidos: `security` + unit do classificador de rotas.
+
+## F1-05 — Tools HTTP: schema e seed — B2, B3
+Escopo: cada tool HTTP vira uma `Function` com `parameters` = JSON Schema gerado de `Tool.parameters` (nome, tipo, descrição, `required`) e instruções da tool no prompt (`add_instructions=True` ou equivalente conferido no Agno 2.5.8); `mongo-init/init-db.js` semeia tools no formato que `MongoToolRepository` lê (sem passar API key como parâmetro do LLM); tool referenciada por um agente e não encontrada/inválida gera log de erro com o id (não some em silêncio).
+Critérios de aceite: teste inspeciona o schema que chega ao modelo (nomes, tipos, `required`); teste carrega os documentos do seed (parse do JS ou JSON extraído) com o mapper do repositório sem perder tools.
+
+## F1-06 — Providers e identidade — B1, B11
+Escopo: Groq corrigido (`agno.models.groq` → classe `Groq`, conferir no pacote); `anthropic`/`groq` como extras com mensagem de erro que diz qual pacote instalar; `user_id="ava"` removido de Agent/Team: o `user_id` vem da requisição; sem `user_id` a rota REST do AgentOS já gera/aceita o do form — garantir que nenhum valor fixo compartilhado seja usado (memórias por usuário).
+Critérios de aceite: matriz de provedores: cada provider conhecido ou instancia ou falha com mensagem que nomeia o pacote; nenhum Agent/Team é criado com `user_id` fixo.
+
+## F1-07 — RAG: isolamento e correções — B6, B8, B9, S3
+Escopo: coleção vetorial por agente (`rag_<agent_id>` sanitizado); `LLMSummaryGenerator` usa a API correta do modelo Agno 2.5.8 (conferir `Model.response`/`aresponse` e `Message`) de forma assíncrona; limiar de confiança da busca hierárquica tem efeito; embeddings e leitura de arquivo fora do event loop (`asyncio.to_thread`); `doc_name` confinado a `docs/` (resolve e checa `relative_to`; rejeita absoluto, `..`, symlink para fora).
+Critérios de aceite: dois agentes com documentos diferentes usam coleções diferentes; resumo usa o modelo (fake) e não o fallback; limiar filtra resultados abaixo dele; `doc_name="../.env"` é rejeitado com erro claro sem ler o arquivo.
+
+## F1-08 — AG-UI por agente e robustez de carga — B4, B7, B5-doc
+Escopo: cada agente/team acessível por AG-UI em rota própria `/agui/{id}` (prefixo por entidade ou router próprio; conferir `AGUI(prefix=...)` no 2.5.8); `/agui` mantido como alias da primeira entidade por um release (documentado como deprecated); a resposta SSE não pode carregar `Access-Control-Allow-Origin: *` (o CORS do app decide); um documento de agente/team inválido no Mongo isola só aquele item (log de erro com id) e não derruba o startup; README corrigido: `/admin/refresh-cache` recarrega o cache, mas novas rotas exigem restart.
+Critérios de aceite: mount real com 2 agentes fakes: ambos acessíveis por `/agui/{id}`; resposta sem `ACAO: *` para origem não permitida; documento inválido não derruba o startup e os válidos carregam.
