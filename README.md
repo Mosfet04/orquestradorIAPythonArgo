@@ -37,10 +37,13 @@ python app.py
 
 Dependencies are declared in `requirements.in` / `requirements-dev.in` and locked with hashes by `pip-compile` (`requirements.txt` is just `-r requirements.lock`). The lock is generated on Linux/CPython 3.12 and validated for Linux 3.11/3.12. Optional providers (`anthropic`, `groq`, `mcp`, `PyJWT`) are not installed by default. How to regenerate the lock: [CONTRIBUTING.md](CONTRIBUTING.md#dependencies-and-lock-files).
 
-**Or with Docker:**
+**Or with Docker** (credentials come only from `.env`):
 ```bash
-docker-compose up -d
+cp .env.example .env    # fill MONGO_CONNECTION_STRING (+ MONGO_ROOT_*, MONGO_EXPRESS_* for dev)
+docker compose up -d    # app only (external MongoDB/Ollama)
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d   # + local MongoDB, Ollama, mongo-express (ports on 127.0.0.1)
 ```
+Details: [README.en.md](README.en.md#with-docker-compose).
 
 **Access:**
 - 🌐 API Docs: http://localhost:7777/docs

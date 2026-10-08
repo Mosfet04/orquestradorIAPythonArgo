@@ -128,6 +128,41 @@ class TestDependencyContainer:
         created = {c.kwargs["name"] for c in repo_collection.create_index.await_args_list}
         assert created == {"idx_doc_level", "idx_parent", "idx_node_id"}
 
+    @pytest.mark.parametrize(
+        ("env", "expected_host"),
+        [({"OLLAMA_BASE_URL": "http://ollama:11434"}, "http://ollama:11434"), ({}, None)],
+    )
+    @patch("src.infrastructure.dependency_injection.AsyncIOMotorClient")
+    async def test_ollama_base_url_chega_as_factories(self, mock_motor_cls, monkeypatch, env, expected_host):
+        """OLLAMA_BASE_URL do AppConfig é injetado nas factories; sem ele, vale o default do agno."""
+        from src.infrastructure import dependency_injection as di
+        from src.infrastructure.config.app_config import AppConfig
+
+        mock_client = MagicMock()
+        mock_client.admin.command = AsyncMock(return_value={"ok": 1})
+        mock_motor_cls.return_value = mock_client
+
+        built: dict[str, object] = {}
+
+        def _recording(cls):
+            def _build(**kwargs):
+                instance = cls(**kwargs)
+                built[cls.__name__] = instance
+                return instance
+            return _build
+
+        monkeypatch.setattr(di, "ModelFactory", _recording(di.ModelFactory))
+        monkeypatch.setattr(di, "EmbedderModelFactory", _recording(di.EmbedderModelFactory))
+
+        with patch.dict("os.environ", env, clear=True):
+            config = AppConfig.load()
+        await DependencyContainer.create_async(config)
+
+        model = built["ModelFactory"].create_model("ollama", "llama3.2:latest")
+        embedder = built["EmbedderModelFactory"].create_model("ollama", "nomic-embed-text")
+        assert model.host == expected_host
+        assert embedder.host == expected_host
+
     @patch("src.infrastructure.dependency_injection.AsyncIOMotorClient")
     async def test_create_async_mongo_unavailable(self, mock_motor_cls):
         mock_client = MagicMock()

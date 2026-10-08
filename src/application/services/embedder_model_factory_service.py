@@ -30,8 +30,10 @@ class EmbedderModelFactory:
         ),
     }
 
-    def __init__(self, logger: ILogger) -> None:
+    def __init__(self, logger: ILogger, ollama_host: str | None = None) -> None:
+        """``ollama_host``: URL do servidor Ollama (``OLLAMA_BASE_URL``); ``None`` usa o default do cliente."""
         self._logger = logger
+        self._ollama_host = ollama_host
 
     # ── public ──────────────────────────────────────────────────────
 
@@ -44,6 +46,8 @@ class EmbedderModelFactory:
 
         filtered = {k: v for k, v in kwargs.items() if k != "api_key"}
         if ft == "ollama":
+            if self._ollama_host:
+                filtered.setdefault("host", self._ollama_host)
             return model_class(id=model_id, **filtered)
         if not api_key:
             raise ValueError(f"{ft.upper()}_API_KEY não configurado")

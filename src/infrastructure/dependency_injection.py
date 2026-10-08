@@ -139,8 +139,11 @@ class DependencyContainer:
         conn = self.config.mongo_connection_string
         db = self.config.mongo_database_name
 
-        model_factory = ModelFactory(logger=self._logger)
-        embedder_factory = EmbedderModelFactory(logger=self._logger)
+        ollama_host = self.config.ollama_base_url
+        model_factory = ModelFactory(logger=self._logger, ollama_host=ollama_host)
+        embedder_factory = EmbedderModelFactory(
+            logger=self._logger, ollama_host=ollama_host
+        )
         tool_factory = HttpToolFactory(logger=self._logger)
 
         agent_config_repo = MongoAgentConfigRepository(

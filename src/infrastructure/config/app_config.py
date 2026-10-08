@@ -17,7 +17,8 @@ class AppConfig:
     app_host: str
     app_port: int
     log_level: str
-    ollama_base_url: str
+    # None = defaults do cliente ollama/agno (OLLAMA_HOST, localhost ou Ollama Cloud com chave)
+    ollama_base_url: Optional[str]
     openai_api_key: Optional[str] = None
 
     # ── OpenTelemetry / Observabilidade ──────────────────────────────
@@ -35,10 +36,11 @@ class AppConfig:
             ),
             mongo_database_name=os.getenv("MONGO_DATABASE_NAME", "agno"),
             app_title=os.getenv("APP_TITLE", "Orquestrador IA Otimizado"),
-            app_host=os.getenv("APP_HOST", "127.0.0.1"),
+            # Vazio/em branco cai no loopback: host "" faria bind em todas as interfaces.
+            app_host=(os.getenv("APP_HOST") or "").strip() or "127.0.0.1",
             app_port=int(os.getenv("APP_PORT", "7777")),
             log_level=os.getenv("LOG_LEVEL", "INFO"),
-            ollama_base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
+            ollama_base_url=(os.getenv("OLLAMA_BASE_URL") or "").strip() or None,
             openai_api_key=os.getenv("OPENAI_API_KEY"),
             otel_enabled=os.getenv("OTEL_ENABLED", "true").lower() in ("true", "1", "yes"),
             otel_exporter_endpoint=os.getenv(

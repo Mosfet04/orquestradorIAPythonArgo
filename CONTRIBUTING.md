@@ -125,20 +125,27 @@ Notes:
 - `uvloop` is declared with `sys_platform != "win32"`. Note: `app.py` still imports `uvloop` unconditionally, so it fails on native Windows until roadmap item F1-03.
 - Optional extras are **not installed by default** and stay out of the lock: `PyJWT` (AgentOS JWT auth), `mcp` (MCP tools), `anthropic`, `groq` (model providers). To adopt one, add it to `requirements.in` with a minimum version and regenerate.
 - A new dependency needs a justification in the PR (license, maintenance, discarded alternatives).
-- Upper bounds in `requirements.in` are deliberate and explained next to each one: `fastapi<0.137` (agno 2.5.8 breaks with the `_IncludedRouter` introduced in 0.137), major caps on SDKs consumed by agno (`openai<3`, `google-genai<2`, `ag-ui-protocol<0.2`, `openinference-instrumentation-agno<0.2`) until the agno migration (F3), and `numpy<2.5` (2.5 dropped Python 3.11, still used by the Docker image and CI). Do not lift them in a routine `--upgrade`.
+- Upper bounds in `requirements.in` are deliberate and explained next to each one: `fastapi<0.137` (agno 2.5.8 breaks with the `_IncludedRouter` introduced in 0.137), major caps on SDKs consumed by agno (`openai<3`, `google-genai<2`, `ag-ui-protocol<0.2`, `openinference-instrumentation-agno<0.2`) until the agno migration (F3). Do not lift them in a routine `--upgrade`.
 
 ### Using Docker
 
+Credentials come only from `.env` (see `.env.example`); required variables use `${VAR:?}` and compose refuses to start without them. The base file needs only `MONGO_CONNECTION_STRING` (still required with the dev override); the dev override also needs `MONGO_ROOT_*`/`MONGO_EXPRESS_*` (URL-safe values).
+
 ```bash
-# Start all services
-docker-compose up -d
+# App only (MongoDB/Ollama external, from .env)
+docker compose up -d
+
+# Development: app + local MongoDB, Ollama and mongo-express (ports bound to 127.0.0.1)
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 
 # View logs
-docker-compose logs -f app
+docker compose logs -f app
 
 # Stop services
-docker-compose down
+docker compose -f docker-compose.yml -f docker-compose.dev.yml down
 ```
+
+`.env.development` is versioned and holds placeholders only (`CHANGE_ME`); never put a real secret in it.
 
 ## Contributing Guidelines
 

@@ -23,17 +23,12 @@ if sys.platform == "win32":
 if __name__ == "__main__":
     import uvicorn
 
+    from src.infrastructure.config.app_config import AppConfig
     from src.infrastructure.logging import app_logger
+    from src.infrastructure.web.server_settings import build_uvicorn_settings
 
-    uvicorn_config = {
-        "app": "app:app",
-        "host": "127.0.0.1",
-        "port": 7777,
-        "reload": True,
-        "workers": 1,
-        "access_log": False,
-        "log_level": "info",
-    }
+    # APP_HOST/APP_PORT do ambiente (default 127.0.0.1:7777; o Dockerfile usa 0.0.0.0)
+    uvicorn_config = build_uvicorn_settings(AppConfig.load())
 
     try:
         asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())

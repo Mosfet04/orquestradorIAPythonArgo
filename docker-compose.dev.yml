@@ -1,0 +1,69 @@
+# Override de DESENVOLVIMENTO: MongoDB, Ollama e mongo-express locais.
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+# Portas publicadas só no loopback do host (127.0.0.1). Credenciais só do .env, via
+# ${VAR:?}. MONGO_ROOT_PASSWORD entra numa URL mongodb://: use senha URL-safe.
+# Teste: tests/unit/test_container_hygiene.py
+
+services:
+  # O app (definido no docker-compose.yml) passa a usar os serviços locais pela rede
+  # do compose, independentemente do que o .env usa para rodar o app no host.
+  app:
+    environment:
+      MONGO_CONNECTION_STRING: mongodb://${MONGO_ROOT_USERNAME:?defina MONGO_ROOT_USERNAME no .env}:${MONGO_ROOT_PASSWORD:?defina MONGO_ROOT_PASSWORD no .env}@mongodb:27017/${MONGO_DATABASE_NAME:-agno}?authSource=admin
+      OLLAMA_BASE_URL: http://ollama:11434
+    depends_on:
+      - mongodb
+      - ollama
+
+  mongodb:
+    image: mongo:7.0.43-jammy
+    container_name: orquestrador-mongodb
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:?defina MONGO_ROOT_USERNAME no .env}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?defina MONGO_ROOT_PASSWORD no .env}
+      MONGO_INITDB_DATABASE: ${MONGO_DATABASE_NAME:-agno}
+    volumes:
+      - mongodb_data:/data/db
+      - ./mongo-init:/docker-entrypoint-initdb.d
+    networks:
+      - orquestrador-network
+
+  ollama:
+    image: ollama/ollama:0.40.1
+    container_name: orquestrador-ollama
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - orquestrador-network
+    # Opcional: baixar modelos na subida
+    # command: /bin/bash -c "ollama serve & sleep 10 && ollama pull llama3.2 && wait"
+
+  # Interface web de administração do MongoDB
+  mongo-express:
+    image: mongo-express:1.0.2-20-alpine3.19
+    container_name: orquestrador-mongo-express
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8081:8081"
+    environment:
+      ME_CONFIG_MONGODB_ADMINUSERNAME: ${MONGO_ROOT_USERNAME:?defina MONGO_ROOT_USERNAME no .env}
+      ME_CONFIG_MONGODB_ADMINPASSWORD: ${MONGO_ROOT_PASSWORD:?defina MONGO_ROOT_PASSWORD no .env}
+      ME_CONFIG_MONGODB_URL: mongodb://${MONGO_ROOT_USERNAME:?defina MONGO_ROOT_USERNAME no .env}:${MONGO_ROOT_PASSWORD:?defina MONGO_ROOT_PASSWORD no .env}@mongodb:27017/
+      ME_CONFIG_BASICAUTH_USERNAME: ${MONGO_EXPRESS_USERNAME:?defina MONGO_EXPRESS_USERNAME no .env}
+      ME_CONFIG_BASICAUTH_PASSWORD: ${MONGO_EXPRESS_PASSWORD:?defina MONGO_EXPRESS_PASSWORD no .env}
+    depends_on:
+      - mongodb
+    networks:
+      - orquestrador-network
+
+volumes:
+  mongodb_data:
+    driver: local
+  ollama_data:
+    driver: local

@@ -56,3 +56,26 @@ class TestModelFactory:
     def test_alias_google_to_gemini(self, factory):
         result = factory.validate_model_config("google", "gemini-pro")
         assert result["factory_type"] == "gemini"
+
+
+class TestOllamaHost:
+    """OLLAMA_BASE_URL (via composition root) chega ao modelo Ollama do agno."""
+
+    def test_ollama_usa_host_configurado(self, mock_logger):
+        factory = ModelFactory(logger=mock_logger, ollama_host="http://ollama:11434")
+        model = factory.create_model("ollama", "llama3.2:latest")
+        assert model.host == "http://ollama:11434"
+
+    def test_host_explicito_do_chamador_prevalece(self, mock_logger):
+        factory = ModelFactory(logger=mock_logger, ollama_host="http://ollama:11434")
+        model = factory.create_model("ollama", "llama3.2:latest", host="http://outro:11434")
+        assert model.host == "http://outro:11434"
+
+    def test_sem_host_configurado_mantem_default_do_cliente(self, factory):
+        model = factory.create_model("ollama", "llama3.2:latest")
+        assert model.host is None
+
+    def test_host_nao_vaza_para_outros_providers(self, mock_logger):
+        factory = ModelFactory(logger=mock_logger, ollama_host="http://ollama:11434")
+        model = factory.create_model("openai", "gpt-4o-mini", api_key="sk-test-fake")
+        assert not hasattr(model, "host") or model.host != "http://ollama:11434"

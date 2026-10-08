@@ -42,3 +42,21 @@ class TestEmbedderModelFactory:
         assert EmbedderModelFactory.is_supported_model("ollama") is True
         assert EmbedderModelFactory.is_supported_model("OPENAI") is True
         assert EmbedderModelFactory.is_supported_model("nonexistent") is False
+
+
+class TestOllamaHost:
+    """OLLAMA_BASE_URL (via composition root) chega ao OllamaEmbedder do agno."""
+
+    def test_ollama_embedder_usa_host_configurado(self, mock_logger):
+        factory = EmbedderModelFactory(logger=mock_logger, ollama_host="http://ollama:11434")
+        embedder = factory.create_model("ollama", "nomic-embed-text")
+        assert embedder.host == "http://ollama:11434"
+
+    def test_host_explicito_do_chamador_prevalece(self, mock_logger):
+        factory = EmbedderModelFactory(logger=mock_logger, ollama_host="http://ollama:11434")
+        embedder = factory.create_model("ollama", "nomic-embed-text", host="http://outro:11434")
+        assert embedder.host == "http://outro:11434"
+
+    def test_sem_host_configurado_mantem_default_do_cliente(self, factory):
+        embedder = factory.create_model("ollama", "nomic-embed-text")
+        assert embedder.host is None

@@ -9,6 +9,8 @@ import pytest
 
 from src.infrastructure.config.app_config import AppConfig
 
+ALL_INTERFACES = "0.0.0.0"  # noqa: S104 - valor de APP_HOST dentro do container
+
 
 class TestAppConfig:
     def test_load_with_defaults(self):
@@ -32,6 +34,39 @@ class TestAppConfig:
         assert config.mongo_connection_string == "mongodb://custom:9999"
         assert config.app_port == 8888
         assert config.log_level == "DEBUG"
+
+    def test_host_padrao_e_loopback_fora_do_container(self):
+        with patch.dict(os.environ, {}, clear=True):
+            config = AppConfig.load()
+        assert config.app_host == "127.0.0.1"
+
+    @pytest.mark.parametrize("value", ["", "   "])
+    def test_app_host_vazio_ou_em_branco_cai_no_loopback(self, value):
+        with patch.dict(os.environ, {"APP_HOST": value}, clear=True):
+            config = AppConfig.load()
+        assert config.app_host == "127.0.0.1"
+
+    def test_app_host_e_ollama_sem_espacos_nas_pontas(self):
+        env = {"APP_HOST": " 10.0.0.5 ", "OLLAMA_BASE_URL": " http://ollama:11434 "}
+        with patch.dict(os.environ, env, clear=True):
+            config = AppConfig.load()
+        assert config.app_host == "10.0.0.5"
+        assert config.ollama_base_url == "http://ollama:11434"
+
+    @pytest.mark.parametrize("env", [{}, {"OLLAMA_BASE_URL": ""}, {"OLLAMA_BASE_URL": "   "}])
+    def test_sem_ollama_base_url_preserva_defaults_do_cliente(self, env):
+        """Sem valor, o agno/ollama decide (OLLAMA_HOST, localhost ou Ollama Cloud com chave)."""
+        with patch.dict(os.environ, env, clear=True):
+            config = AppConfig.load()
+        assert config.ollama_base_url is None
+
+    def test_host_e_ollama_vem_do_ambiente(self):
+        env = {"APP_HOST": ALL_INTERFACES, "APP_PORT": "9000", "OLLAMA_BASE_URL": "http://ollama:11434"}
+        with patch.dict(os.environ, env, clear=True):
+            config = AppConfig.load()
+        assert config.app_host == ALL_INTERFACES
+        assert config.app_port == 9000
+        assert config.ollama_base_url == "http://ollama:11434"
 
     def test_frozen_cannot_change(self):
         config = AppConfig.load()

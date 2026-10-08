@@ -110,13 +110,28 @@ python app.py
 
 ### With Docker Compose
 
+No credential lives in the compose files: everything comes from `.env`, and required variables (`${VAR:?}`) make compose refuse to start when they are empty.
+
 ```bash
 git clone https://github.com/Mosfet04/orquestradorIAPythonArgo.git
 cd orquestradorIAPythonArgo
-docker-compose up -d
+cp .env.example .env   # fill MONGO_CONNECTION_STRING (and MONGO_ROOT_*/MONGO_EXPRESS_* for dev mode)
+
+# Application only (port 7777), with external MongoDB/Ollama set in .env.
+# Requires only MONGO_CONNECTION_STRING.
+docker compose up -d
+
+# Development: application + local MongoDB + Ollama + mongo-express
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 ```
 
-This brings up **MongoDB** (port 27017), **Ollama** (port 11434), **Grafana LGTM** (port 3000), and the **application** (port 7777).
+- The containerized app receives provider keys, `ENVIRONMENT`, `USE_TLS` etc. from `.env` (pure pass-through: a variable missing from `.env` stays unset in the container); `APP_HOST`/`APP_PORT` stay with the Dockerfile.
+- `docker-compose.yml` has only the app, hardened (`no-new-privileges`, `cap_drop: ALL`, `read_only` with `/tmp` on tmpfs, no bind mount) and no database port.
+- `docker-compose.dev.yml` adds MongoDB (27017), Ollama (11434) and mongo-express (8081), publishing ports on `127.0.0.1` only, and points the containerized app at them (`mongodb://...@mongodb:27017`, `OLLAMA_BASE_URL=http://ollama:11434`) regardless of what `.env` uses to run the app on the host. `MONGO_ROOT_USERNAME`/`MONGO_ROOT_PASSWORD` go into a URL: use URL-safe values.
+- An empty `OLLAMA_BASE_URL` lets the ollama/agno client decide (`OLLAMA_HOST`, `http://localhost:11434`, or Ollama Cloud when only `OLLAMA_API_KEY` is set).
+- The image (Python 3.12) installs only from the hash-checked `requirements.lock`, runs as unprivileged UID/GID 10001, binds `0.0.0.0` (`APP_HOST` in the Dockerfile) and has a HEALTHCHECK on `/admin/health`. Outside the container `APP_HOST` defaults to `127.0.0.1`.
+- `.dockerignore` is an allowlist: only `app.py`, `src/`, `docs/` (minus `docs/roadmap` and `docs/qa`) and `requirements.lock` enter the build context (no `.env*`, `*.env`, `.envrc`, `*.log` or `__pycache__`, in subfolders too). A new file the image needs must be re-included there.
+- Grafana LGTM is not part of this compose: point `OTEL_EXPORTER_OTLP_ENDPOINT` to your collector (or set `OTEL_ENABLED=false`).
 
 ### Verification
 

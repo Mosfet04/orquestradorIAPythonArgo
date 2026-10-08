@@ -23,8 +23,10 @@ class ModelFactory:
         "azure": ("agno.models.azure.openai_chat", "AzureOpenAI", "openai", "Azure OpenAI"),
     }
 
-    def __init__(self, logger: ILogger) -> None:
+    def __init__(self, logger: ILogger, ollama_host: str | None = None) -> None:
+        """``ollama_host``: URL do servidor Ollama (``OLLAMA_BASE_URL``); ``None`` usa o default do cliente."""
         self._logger = logger
+        self._ollama_host = ollama_host
 
     # ── public ──────────────────────────────────────────────────────
 
@@ -133,6 +135,8 @@ class ModelFactory:
         filtered = {k: v for k, v in extra.items() if k != "api_key"}
 
         if factory_type == "ollama":
+            if self._ollama_host:
+                filtered.setdefault("host", self._ollama_host)
             return model_class(id=model_id, **filtered)
 
         if factory_type == "azure":

@@ -99,7 +99,7 @@ jobs:
           retention-days: 14
 
   # Informativo na F0: bandit acusa 2 achados LOW herdados e pip-audit acusa
-  # vulnerabilidades sem correção (agno, chromadb). Vira BLOQUEANTE na F1
+  # vulnerabilidades sem correção (agno; o chromadb saiu no F1-02). Vira BLOQUEANTE na F1
   # (CLAUDE.md, "Gates por fase"): remover o `continue-on-error` abaixo.
   security:
     name: Segurança (bandit, pip-audit)

@@ -39,7 +39,8 @@ openai>=1.60.0,<3  # 3.x troca httpx por httpx2; agno 2.5.8 não foi validado co
 google-genai>=1.0.0,<2  # major nova não validada com agno 2.5.8
 
 # === Knowledge / RAG ===
-chromadb>=1.0.0
+# chromadb saiu no F1-02: nenhum código de src/ o usa e ele trazia CVEs sem correção.
+# Volta com o vector store plugável (F7).
 pypdf>=5.0.0
 
 # === HTTP Client ===
@@ -65,11 +66,6 @@ importlib-metadata>=8.0.0
 
 # === AG-UI Protocol (interface AGUI para os.agno.com) ===
 ag-ui-protocol>=0.1.13,<0.2  # 1.0 é major nova; agno.os.interfaces.agui 2.5.8 usa a 0.1.x
-
-# === Compatibilidade com Python 3.11 (Dockerfile python:3.11 e CI) ===
-# O lock é gerado em 3.12; numpy >= 2.5 exige Python >= 3.12 (transitivo de
-# chromadb/onnxruntime). Remover quando o projeto abandonar o 3.11.
-numpy<2.5
 
 # === Portabilidade do lock (Windows) ===
 # click, tqdm e uvicorn[standard] exigem colorama SÓ no Windows. O pip-compile roda
