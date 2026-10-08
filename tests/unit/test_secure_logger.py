@@ -1,13 +1,34 @@
 import logging
+from collections.abc import Iterator
+from pathlib import Path
+
+import pytest
 
 from src.infrastructure.logging.secure_logger import DataSanitizer, SecureLogger
 
+_LOGGER_NAME = "test_secure"
 
-def test_secure_logger_basic_methods(caplog, tmp_path, monkeypatch):
+
+@pytest.fixture
+def isolated_log_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+    """SecureLogger abre ``logs/app.log`` relativo ao cwd: cwd vira tmp_path e os handlers são fechados."""
+    (tmp_path / "logs").mkdir()
+    monkeypatch.chdir(tmp_path)
+    std_logger = logging.getLogger(_LOGGER_NAME)
+    previous = list(std_logger.handlers)
+    std_logger.handlers.clear()  # força SecureLogger a criar os handlers dentro de tmp_path
+    yield tmp_path / "logs"
+    for handler in list(std_logger.handlers):
+        std_logger.removeHandler(handler)
+        handler.close()
+    std_logger.handlers.extend(previous)
+
+
+def test_secure_logger_basic_methods(caplog, isolated_log_dir: Path):
     # Garantir nível de captura amplo
     caplog.set_level(logging.DEBUG)
 
-    logger = SecureLogger("test_secure")
+    logger = SecureLogger(_LOGGER_NAME)
     logger.set_context(user_id="u1", request_id="r1")
 
     # Métodos de logging não devem lançar exceção
@@ -28,6 +49,7 @@ def test_secure_logger_basic_methods(caplog, tmp_path, monkeypatch):
     # Deve haver registros capturados
     assert any("\"level\":\"ERROR\"" in rec.message or '"level":"ERROR"' in rec.message for rec in caplog.records)
     assert any("\"level\":\"CRITICAL\"" in rec.message or '"level":"CRITICAL"' in rec.message for rec in caplog.records)
+    assert '"level":"ERROR"' in (isolated_log_dir / "app.log").read_text(encoding="utf-8")
 
 
 def test_data_sanitizer_masks_sensitive_fields():

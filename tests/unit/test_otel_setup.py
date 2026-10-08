@@ -2,6 +2,11 @@ import logging
 import sys
 import types
 
+import pytest
+from opentelemetry import metrics, trace
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
 from src.infrastructure.telemetry import otel_setup
 
 
@@ -16,45 +21,61 @@ def test__build_resource_fields():
     assert "service.namespace" in attrs
 
 
+@pytest.mark.usefixtures("reset_otel_providers")
 def test__setup_tracing_and_metrics(monkeypatch):
-    class DummyExporter:
-        def __init__(self, **kwargs):
-            pass
+    """Providers viram globais e exportam pelo exporter/reader configurados (em memória, sem rede)."""
+    span_exporter = InMemorySpanExporter()
+    metric_reader = InMemoryMetricReader()
+    created = {}
 
-        def shutdown(self):
-            pass
+    def fake_span_exporter(**kwargs):
+        created["span_exporter"] = kwargs
+        return span_exporter
 
-    class DummyReader:
-        def __init__(self, *a, **k):
-            pass
+    def fake_metric_exporter(**kwargs):
+        created["metric_exporter"] = kwargs
+        return object()
 
-        def _instrument_class_temporality(self, *a, **k):
-            pass
+    def fake_periodic_reader(exporter, **kwargs):
+        created["reader"] = kwargs
+        return metric_reader
 
-        @property
-        def _instrument_class_aggregation(self):
-            return None
+    monkeypatch.setattr(otel_setup, "OTLPSpanExporter", fake_span_exporter)
+    monkeypatch.setattr(otel_setup, "OTLPMetricExporter", fake_metric_exporter)
+    monkeypatch.setattr(otel_setup, "PeriodicExportingMetricReader", fake_periodic_reader)
 
-        def _set_collect_callback(self, *a, **k):
-            pass
+    class Cfg:
+        otel_service_name = "svc-teste"
 
-        # opentelemetry-sdk >= 1.4x chama este hook no MeterProvider.__init__
-        def _set_meter_provider(self, *a, **k):
-            pass
+    resource = otel_setup._build_resource(Cfg())
 
-    monkeypatch.setattr(otel_setup, "OTLPSpanExporter", DummyExporter)
-    monkeypatch.setattr(otel_setup, "OTLPMetricExporter", DummyExporter)
-    monkeypatch.setattr(otel_setup, "PeriodicExportingMetricReader", DummyReader)
+    tp = otel_setup._setup_tracing(resource, "http://x")
+    mp = otel_setup._setup_metrics(resource, "http://x")
 
-    class DummyResource:
+    assert trace.get_tracer_provider() is tp
+    assert metrics.get_meter_provider() is mp
+    assert created["span_exporter"] == {"endpoint": "http://x", "insecure": True}
+    assert created["metric_exporter"] == {"endpoint": "http://x", "insecure": True}
+    assert created["reader"] == {"export_interval_millis": 30_000}
+
+    with trace.get_tracer("teste").start_as_current_span("operacao"):
         pass
+    tp.force_flush()
+    (span,) = span_exporter.get_finished_spans()
+    assert span.name == "operacao"
+    assert span.resource.attributes["service.name"] == "svc-teste"
 
-    # Tracing
-    tp = otel_setup._setup_tracing(DummyResource(), "http://x")
-    assert tp is not None
-    # Metrics
-    mp = otel_setup._setup_metrics(DummyResource(), "http://x")
-    assert mp is not None
+    metrics.get_meter("teste").create_counter("chamadas").add(2)
+    data = metric_reader.get_metrics_data()
+    points = [
+        point.value
+        for rm in data.resource_metrics
+        for sm in rm.scope_metrics
+        for metric in sm.metrics
+        if metric.name == "chamadas"
+        for point in metric.data.data_points
+    ]
+    assert points == [2]
 
 
 def test__instrument_frameworks_all_fail(monkeypatch, caplog):

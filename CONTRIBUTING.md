@@ -262,10 +262,25 @@ We use **pytest** with the following test types:
 
 ```
 tests/
-├── unit/           # Fast, isolated tests
-├── integration/    # Tests with external dependencies
-└── e2e/           # End-to-end tests
+├── unit/           # Fast, isolated tests                       -> marker `unit`
+├── golden/         # Snapshots of the kwargs passed to agno Agent/Team -> marker `unit`
+├── contract/       # Same suite for every implementation of a port -> marker `contract`
+├── integration/    # Tests across layers                        -> marker `integration`
+└── fakes/          # FakeChatModel, FakeEmbedder, in-memory repositories, RecordingLogger
 ```
+
+- Layer markers (`unit`, `contract`, `integration`, `security`, `eval`) are applied **by directory**
+  in `tests/conftest.py`; do not decorate files with them. A test in an unmapped directory fails
+  collection. `live` (needs a real external service) is set on the test itself and never runs in CI.
+- No real LLM, network or MongoDB in tests: use `tests/fakes/` (`FakeChatModel` is an
+  `agno.models.base.Model`, so it can be passed straight to `Agent`/`Team`).
+- Tests that configure OpenTelemetry providers use the `reset_otel_providers` fixture.
+- **Random order** (`pytest-randomly`): every run shuffles the tests and prints
+  `Using --randomly-seed=N`. Reproduce a failure with `-p randomly --randomly-seed=N`;
+  use `-p no:randomly` for the file order.
+- **Golden tests**: if a kwarg passed to `Agent`/`Team` changes, `tests/golden` fails with a diff.
+  When the change is intentional, regenerate and review the JSON diff in the commit:
+  `pytest tests/golden --update-golden`.
 
 ### Writing Tests
 
@@ -307,7 +322,7 @@ def test_agent_config_validation():
 import pytest
 from src.infrastructure.repositories.mongo_agent_config_repository import MongoAgentConfigRepository
 
-@pytest.mark.integration
+# no @pytest.mark.integration needed: the directory sets the marker
 def test_get_active_agents(mongo_client):
     repository = MongoAgentConfigRepository(mongo_client, "test_db")
     agents = repository.get_active_agents()
@@ -321,11 +336,13 @@ def test_get_active_agents(mongo_client):
 # All tests
 pytest
 
-# Unit tests only
-pytest tests/unit/ -v
+# Default CI run (everything but `live`)
+pytest -m "not live"
 
-# Integration tests only
-pytest tests/integration/ -v
+# One layer only
+pytest -m unit
+pytest -m contract
+pytest -m integration
 
 # With coverage
 pytest --cov=src --cov-report=html

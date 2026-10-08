@@ -98,7 +98,7 @@ graph TB
 - 💾 **Smart Memory** — User long-term memory + session summaries
 📡 **Observability via Grafana LGTM** — Traces, metrics, and logs are now sent to Grafana (Tempo, Loki, Prometheus) using OpenTelemetry. MongoDB is no longer used for observability.
 - 🌐 **AgentOS + AG-UI** — Web UI via [os.agno.com](https://os.agno.com) with SSE streaming
-- 🧪 **345 Tests** — Comprehensive unit test coverage (~88%)
+- 🧪 **Tests** — Unit, contract and golden tests (~93% branch coverage)
 - 🏗️ **Onion Architecture** — Clean separation with SOLID principles
 ## 📊 Observability (Grafana LGTM)
 
@@ -125,7 +125,7 @@ Choose your language for the complete guide (architecture, configuration, databa
 ## 🤝 Contributing
 
 1. Fork → Branch → Commit (conventional) → PR
-2. Run `pytest` (345 tests must pass)
+2. Run `pytest` (all tests must pass)
 3. Follow Onion Architecture — no infrastructure imports in domain
 
 ## 📄 License

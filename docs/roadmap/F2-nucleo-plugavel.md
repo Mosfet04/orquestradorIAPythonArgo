@@ -12,4 +12,5 @@ Campos opcionais novos: `model_params`, `base_url`, `api_key_ref`.
 ## F2-05 — `AgnoRuntime`: montagem de agents/teams; `application` e controller deixam de importar Agno
 ## F2-06 — `AgnoRuntime`: ciclo de vida do AgentOS (`db=`, lifespans que rodam — B15), router AG-UI
 ## F2-07 — `ConfigStore`: Mongo + YAML
+Pendência herdada da F0-03: a suíte de `tests/contract/` hoje roda só contra os repositórios em memória; neste item ela passa a rodar também contra o adapter Mongo (marker `integration`/`contract` com Mongo real ou efêmero) e o contrato define (a) a semântica de id duplicado (erro, sobrescrita ou ignorado) e (b) a ordem entre lotes de `save_nodes` (chamadas sucessivas preservam ou não a ordem de inserção na leitura).
 ## F2-08 — `lint-imports` sem baseline em `domain`/`application` e reescrita dos testes acoplados ao Agno

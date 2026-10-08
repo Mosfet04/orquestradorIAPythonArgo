@@ -54,7 +54,7 @@ O **Orquestrador de Agentes IA** é uma aplicação que gerencia e orquestra mú
 | **Observabilidade via Grafana LGTM** | Traces, métricas e logs agora são enviados ao Grafana (Tempo, Loki, Prometheus) usando OpenTelemetry. O MongoDB não é mais utilizado para observabilidade.|
 | **AgentOS + AG-UI** | Interface web via [os.agno.com](https://os.agno.com) com streaming SSE |
 | **Arquitetura limpa** | Camadas Domain → Application → Infrastructure → Presentation |
-| **345 testes unitários** | Cobertura ~88% de todas as camadas |
+| **Testes unitários, de contrato e golden** | Cobertura ~93% (branch) de todas as camadas |
 
 ---
 
@@ -100,7 +100,7 @@ python app.py
 |---|---|
 | `requirements.in` | Dependências diretas de runtime (`agno==2.5.8` exato) |
 | `requirements.lock` | Gerado por `pip-compile --generate-hashes`; versões exatas + hashes |
-| `requirements-dev.in` / `requirements-dev.lock` | Testes e ferramentas de qualidade (pytest, ruff, mypy, import-linter, bandit, pip-audit, diff-cover, respx, pip-tools) |
+| `requirements-dev.in` / `requirements-dev.lock` | Testes e ferramentas de qualidade (pytest, pytest-randomly, ruff, mypy, import-linter, bandit, pip-audit, diff-cover, respx, pip-tools) |
 | `requirements.txt` | Só compatibilidade: `-r requirements.lock` |
 
 - O lock é gerado em Linux/CPython 3.12 e validado para Linux CPython 3.11/3.12 (Docker e CI). No Windows nativo, se o `--require-hashes` falhar, use WSL/Docker ou regenere o lock localmente.
@@ -293,8 +293,11 @@ orquestradorIAPythonArgo/
 │       └── orquestrador_controller.py # Cache inteligente de agentes/teams + warm-up
 │
 └── tests/
-    ├── conftest.py                 # Fixtures compartilhadas (pytest)
-    └── unit/                       # 345 testes unitários
+    ├── conftest.py                 # Fixtures compartilhadas; markers por diretório; --update-golden
+    ├── fakes/                      # FakeChatModel, FakeEmbedder, repositórios em memória
+    ├── golden/                     # Snapshot dos kwargs de Agent/Team (atualiza só com --update-golden)
+    ├── contract/                   # Mesma suíte para toda implementação de uma porta
+    └── unit/                       # Testes unitários
         ├── test_agent_config.py
         ├── test_agent_factory_service.py
         ├── test_agent_factory_extended.py
@@ -1027,7 +1030,7 @@ LOG_LEVEL=DEBUG python app.py
 ### Antes de submeter
 
 ```bash
-# Execute os testes (345 devem passar)
+# Execute os testes (todos devem passar)
 pytest
 
 # Verifique a cobertura

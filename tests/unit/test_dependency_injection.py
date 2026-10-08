@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.infrastructure.dependency_injection import DependencyContainer, HealthService
+from src.infrastructure.repositories import mongo_base
 
 # ── HealthService ───────────────────────────────────────────────────
 
@@ -89,8 +90,23 @@ class TestHealthService:
 
 
 class TestDependencyContainer:
+    @pytest.fixture(autouse=True)
+    def repo_collection(self, monkeypatch):
+        """Os repositórios Mongo usam o cliente compartilhado de ``mongo_base`` (cache global por URL).
+
+        Sem isto o primeiro teste tentava conectar de verdade (30 s de serverSelectionTimeout em
+        ``ensure_indexes``) e os seguintes herdavam um cliente preso a outro event loop.
+        """
+        collection = MagicMock()
+        collection.create_index = AsyncMock(side_effect=lambda keys, **kw: kw["name"])
+        client = MagicMock()
+        client.__getitem__.return_value.__getitem__.return_value = collection
+        monkeypatch.setattr(mongo_base.MongoClientFactory, "_instances", {})
+        monkeypatch.setattr(mongo_base, "AsyncIOMotorClient", MagicMock(return_value=client))
+        return collection
+
     @patch("src.infrastructure.dependency_injection.AsyncIOMotorClient")
-    async def test_create_async(self, mock_motor_cls):
+    async def test_create_async(self, mock_motor_cls, repo_collection):
         mock_client = MagicMock()
         mock_client.admin.command = AsyncMock(return_value={"ok": 1})
         mock_client.close = MagicMock(return_value=None)
@@ -108,6 +124,9 @@ class TestDependencyContainer:
         assert container.health_service is not None
         controller = container.get_orquestrador_controller()
         assert controller is not None
+        mock_client.admin.command.assert_awaited_once_with("ping")
+        created = {c.kwargs["name"] for c in repo_collection.create_index.await_args_list}
+        assert created == {"idx_doc_level", "idx_parent", "idx_node_id"}
 
     @patch("src.infrastructure.dependency_injection.AsyncIOMotorClient")
     async def test_create_async_mongo_unavailable(self, mock_motor_cls):

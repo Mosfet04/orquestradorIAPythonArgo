@@ -43,25 +43,34 @@ class TestSetupTelemetry:
         # Não deve lançar exceção
         setup_telemetry(config)
 
-    @patch("src.infrastructure.telemetry.otel_setup._instrument_frameworks")
-    @patch("src.infrastructure.telemetry.otel_setup._setup_log_export")
-    @patch("src.infrastructure.telemetry.otel_setup._setup_metrics")
-    @patch("src.infrastructure.telemetry.otel_setup._setup_tracing")
-    def test_setup_enabled_calls_subsystems(
-        self, mock_tracing, mock_metrics, mock_logs, mock_instruments
-    ):
-        """Se otel_enabled=True, deve configurar todos os subsistemas."""
+    def test_setup_enabled_calls_subsystems(self, monkeypatch: pytest.MonkeyPatch):
+        """Se otel_enabled=True, deve configurar todos os subsistemas (sem rede, sem vazar globais)."""
+        import src.infrastructure.telemetry.otel_setup as mod
+
+        # setup_telemetry grava os providers nos globais do módulo: monkeypatch os devolve no fim
+        monkeypatch.setattr(mod, "_tracer_provider", None)
+        monkeypatch.setattr(mod, "_meter_provider", None)
+        connectivity = MagicMock(return_value=True)  # sem socket real para o endpoint
+        monkeypatch.setattr(mod, "_check_otlp_connectivity", connectivity)
+        mock_tracing, mock_metrics, mock_logs, mock_instruments = (MagicMock() for _ in range(4))
+        monkeypatch.setattr(mod, "_setup_tracing", mock_tracing)
+        monkeypatch.setattr(mod, "_setup_metrics", mock_metrics)
+        monkeypatch.setattr(mod, "_setup_log_export", mock_logs)
+        monkeypatch.setattr(mod, "_instrument_frameworks", mock_instruments)
         config = MagicMock()
         config.otel_enabled = True
-        config.otel_exporter_endpoint = "http://localhost:4317"
+        config.otel_exporter_endpoint = "http://otel.invalid:4317"
         config.otel_service_name = "test-svc"
 
         setup_telemetry(config)
 
+        connectivity.assert_called_once_with("http://otel.invalid:4317")
         mock_tracing.assert_called_once()
         mock_metrics.assert_called_once()
         mock_logs.assert_called_once()
         mock_instruments.assert_called_once()
+        assert mod._tracer_provider is mock_tracing.return_value
+        assert mod._meter_provider is mock_metrics.return_value
 
 
 # ── shutdown_telemetry ──────────────────────────────────────────────

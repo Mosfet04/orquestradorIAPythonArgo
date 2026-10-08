@@ -76,7 +76,13 @@ def test_markers_usados_nos_testes_estao_declarados(pyproject):
     declared = {m.split(":", 1)[0].strip() for m in pyproject["tool"]["pytest"]["ini_options"]["markers"]}
     undeclared = _marks_used_in_tests() - declared - BUILTIN_MARKS
     assert not undeclared, f"markers usados mas não declarados no pyproject.toml: {sorted(undeclared)}"
-    assert {"unit", "integration", "slow"} <= declared
+    assert {"unit", "contract", "integration", "security", "eval", "live", "slow"} <= declared
+
+
+def test_teste_em_tests_unit_recebe_marker_unit_pelo_conftest(request):
+    """O marker vem do diretório (tests/conftest.py), não de decorator no arquivo."""
+    layer_marks = {m.name for m in request.node.iter_markers()} & {"unit", "contract", "integration"}
+    assert layer_marks == {"unit"}
 
 
 def test_cobertura_so_mede_src(pyproject):

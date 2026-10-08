@@ -1,14 +1,13 @@
 """
 Configuração de logging para a aplicação Orquestrador IA.
+
+Importar este módulo não tem efeito colateral: quem quiser este esquema de
+arquivos rotativos em ``logs/`` chama ``setup_logging()`` no ponto de entrada.
 """
 
 import logging.config
 import os
 from pathlib import Path
-
-# Criar diretório de logs se não existir
-log_dir = Path("logs")
-log_dir.mkdir(exist_ok=True)
 
 # Configuração do sistema de logging
 LOGGING_CONFIG = {
@@ -138,7 +137,3 @@ def setup_logging():
 
     # Configurar logging
     logging.config.dictConfig(LOGGING_CONFIG)
-
-
-# Configurar logging automaticamente na importação do módulo
-setup_logging()

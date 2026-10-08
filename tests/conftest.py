@@ -3,9 +3,49 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+TESTS_DIR = Path(__file__).resolve().parent
+
+# Diretório de primeiro nível em tests/ -> marker da pirâmide aplicado a todo teste dele.
+_LAYER_BY_DIR = {
+    "unit": "unit",
+    "golden": "unit",
+    "contract": "contract",
+    "integration": "integration",
+    "security": "security",
+    "eval": "eval",
+}
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    # Fica aqui (raiz de tests/) porque pytest só registra opções de conftest carregado
+    # na inicialização; em tests/golden/conftest.py a opção não existiria em `pytest tests/unit`.
+    parser.addoption(
+        "--update-golden",
+        action="store_true",
+        default=False,
+        help="Regrava os snapshots de tests/golden/snapshots em vez de comparar.",
+    )
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Marca cada teste pela camada do diretório em que está (ver ``_LAYER_BY_DIR``)."""
+    for item in items:
+        try:
+            top = item.path.resolve().relative_to(TESTS_DIR).parts[0]
+        except ValueError:
+            continue  # teste fora de tests/ (ex.: pytester)
+        layer = _LAYER_BY_DIR.get(top)
+        if layer is None:
+            raise pytest.UsageError(
+                f"{item.nodeid}: diretório tests/{top} sem camada; mova o teste ou mapeie em _LAYER_BY_DIR"
+            )
+        item.add_marker(layer)
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -21,6 +61,33 @@ def setup_test_environment():
     }
     with patch.dict(os.environ, test_env):
         yield
+
+
+@pytest.fixture
+def reset_otel_providers(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Isola os providers globais do OpenTelemetry para testes que os configuram.
+
+    A API do OTel só aceita ``set_*_provider`` uma vez por processo e liga os proxies
+    globais ao provider real. Aqui cada teste começa com globais e proxies novos; no fim
+    os providers criados são desligados (o que também remove o handler de atexit) e o
+    monkeypatch devolve os globais originais. Mesmo procedimento de
+    ``opentelemetry.test.globals_test`` (pacote opentelemetry-test-utils, não instalado).
+    """
+    from opentelemetry import trace
+    from opentelemetry.metrics import _internal as metrics_api
+    from opentelemetry.util._once import Once
+
+    monkeypatch.setattr(trace, "_TRACER_PROVIDER_SET_ONCE", Once())
+    monkeypatch.setattr(trace, "_TRACER_PROVIDER", None)
+    monkeypatch.setattr(trace, "_PROXY_TRACER_PROVIDER", trace.ProxyTracerProvider())
+    monkeypatch.setattr(metrics_api, "_METER_PROVIDER_SET_ONCE", Once())
+    monkeypatch.setattr(metrics_api, "_METER_PROVIDER", None)
+    monkeypatch.setattr(metrics_api, "_PROXY_METER_PROVIDER", metrics_api._ProxyMeterProvider())
+    yield
+    for provider in (trace._TRACER_PROVIDER, metrics_api._METER_PROVIDER):
+        shutdown = getattr(provider, "shutdown", None)
+        if callable(shutdown):
+            shutdown()
 
 
 @pytest.fixture

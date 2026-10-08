@@ -1,0 +1,90 @@
+{
+  "Agent": [
+    {
+      "add_datetime_to_context": true,
+      "add_history_to_context": true,
+      "db": {
+        "__type__": "agno.db.mongo.mongo.MongoDb",
+        "db_name": "golden_db",
+        "db_url": "mongodb://mongo.golden.invalid:27017",
+        "memory_table_name": "agno_memories",
+        "session_table_name": "agno_sessions"
+      },
+      "description": "Descrição de rag-hierarchical",
+      "enable_agentic_memory": false,
+      "enable_session_summaries": false,
+      "enable_user_memories": false,
+      "id": "rag-hierarchical",
+      "instructions": "Você é o rag-hierarchical.",
+      "knowledge": null,
+      "markdown": true,
+      "model": {
+        "__type__": "fake",
+        "id": "gpt-4o-mini",
+        "provider": "openai"
+      },
+      "name": "Agente rag-hierarchical",
+      "num_history_runs": 5,
+      "read_chat_history": false,
+      "reasoning": false,
+      "search_knowledge": false,
+      "store_events": true,
+      "store_history_messages": true,
+      "store_tool_messages": true,
+      "tools": [
+        {
+          "__type__": "agno.tools.toolkit.Toolkit",
+          "add_instructions": false,
+          "functions": [
+            {
+              "async": true,
+              "description": "Busca informações relevantes no knowledge base hierárquico.",
+              "external_execution": false,
+              "name": "search_knowledge",
+              "parameters": {
+                "properties": {
+                  "query": {
+                    "description": "(None) A pergunta ou termo de busca.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "query"
+                ],
+                "type": "object"
+              },
+              "requires_confirmation": false
+            }
+          ],
+          "instructions": "Busca informações no knowledge base hierárquico do agente.",
+          "name": "hierarchical_search"
+        }
+      ],
+      "user_id": "ava"
+    }
+  ],
+  "Team": [],
+  "factory_calls": {
+    "embedder": [
+      {
+        "kwargs": {},
+        "model_id": "text-embedding-3-small",
+        "provider": "openai"
+      },
+      {
+        "kwargs": {},
+        "model_id": "text-embedding-3-small",
+        "provider": "openai"
+      }
+    ],
+    "model": [
+      {
+        "kwargs": {},
+        "model_id": "gpt-4o-mini",
+        "provider": "openai"
+      }
+    ]
+  },
+  "knowledge_inserts": [],
+  "log_warnings_errors": []
+}

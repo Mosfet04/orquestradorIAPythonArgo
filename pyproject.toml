@@ -10,9 +10,15 @@ testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+# unit/contract/integration/security/eval são aplicados por diretório em
+# tests/conftest.py (não decore arquivo a arquivo); live é marcado no próprio teste.
 markers = [
-    "unit: marca testes unitários",
-    "integration: marca testes de integração",
+    "unit: testes unitários, sem I/O real (tests/unit, tests/golden)",
+    "contract: mesma suíte para toda implementação de uma porta (tests/contract)",
+    "integration: testes de integração entre camadas (tests/integration)",
+    "security: testes de segurança (tests/security)",
+    "eval: avaliações determinísticas com modelo roteirizado (tests/eval)",
+    "live: depende de serviço externo real; nunca roda na CI padrão",
     "slow: marca testes que demoram para executar",
 ]
 # Com pytest 9.0.2, `--strict-markers` em addopts (como estava no pytest.ini) não era

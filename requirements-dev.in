@@ -15,6 +15,9 @@ pytest>=8.4.0
 pytest-asyncio>=0.25.0
 pytest-cov>=6.0.0
 respx>=0.22.0
+# Ordem aleatória a cada execução (seed no cabeçalho; reproduza com -p randomly --randomly-seed=N,
+# desligue com -p no:randomly). MIT, pytest-dev, sem dependências além do pytest.
+pytest-randomly>=4.0.0
 
 # === Qualidade / arquitetura ===
 ruff>=0.15.0
