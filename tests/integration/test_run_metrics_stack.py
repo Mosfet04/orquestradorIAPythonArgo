@@ -18,7 +18,7 @@ from src.infrastructure.web import metrics_middleware
 from src.infrastructure.web.app_factory import AppFactory
 from tests.fakes import FakeChatModel, RecordingTelemetryMetrics
 
-ORIGIN = "http://localhost:3000"  # origem permitida em AppFactory._ALLOWED_ORIGINS
+ORIGIN = "http://localhost:3000"  # origem do default de CORS_ALLOWED_ORIGINS (AppConfig)
 
 
 @pytest.fixture

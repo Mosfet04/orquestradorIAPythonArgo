@@ -122,10 +122,9 @@ known-first-party = ["src", "tests"]
 "src/domain/repositories/tool_repository.py" = ["UP006", "UP035"]
 "src/infrastructure/cache/model_cache_service.py" = ["BLE001", "UP006", "UP017", "UP035", "UP045"]
 "src/infrastructure/config/app_config.py" = ["UP045"]
-"src/infrastructure/dependency_injection.py" = ["BLE001", "E501", "S101", "S110", "UP045"]
+"src/infrastructure/dependency_injection.py" = ["BLE001", "UP045"]
 "src/infrastructure/http/http_tool_factory.py" = ["BLE001", "UP006", "UP035"]
 "src/infrastructure/logging/decorators.py" = ["BLE001", "G004", "UP006", "UP035"]
-"src/infrastructure/logging/secure_logger.py" = ["RUF012", "UP006", "UP017", "UP035", "UP045"]
 "src/infrastructure/logging/structlog_logger.py" = ["B023", "RUF012", "UP006", "UP017", "UP035", "UP045"]
 "src/infrastructure/parsers/text_document_parser.py" = ["UP006", "UP035", "UP045"]
 "src/infrastructure/repositories/mongo_agent_config_repository.py" = ["UP006", "UP035"]
@@ -173,10 +172,8 @@ module = [
     "src.domain.entities.tool",
     "src.infrastructure.cache.model_cache_service",
     "src.infrastructure.dependency_injection",
-    "src.infrastructure.logging.config",
     "src.infrastructure.logging.decorators",
     "src.infrastructure.logging.logger_adapter",
-    "src.infrastructure.logging.secure_logger",
     "src.infrastructure.logging.structlog_logger",
     "src.infrastructure.repositories.mongo_agent_config_repository",
     "src.infrastructure.repositories.mongo_base",

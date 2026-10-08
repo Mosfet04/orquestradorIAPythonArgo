@@ -15,8 +15,7 @@ def build_uvicorn_settings(config: AppConfig) -> dict[str, object]:
         "app": "app:app",
         "host": config.app_host,
         "port": config.app_port,
-        # Sem efeito com uvicorn.Server.serve() (o reloader vive em uvicorn.run);
-        # ligar por ENVIRONMENT fica para o F1-03.
+        # Sem efeito com uvicorn.Server.serve() (o reloader vive em uvicorn.run).
         "reload": False,
         "workers": 1,
         "access_log": False,

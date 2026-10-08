@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import re
+from collections.abc import Sequence
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -10,6 +12,7 @@ from agno.os import AgentOS
 from agno.os.interfaces.agui import AGUI
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from src.infrastructure.config.app_config import AppConfig
@@ -24,6 +27,28 @@ from src.infrastructure.web.metrics_middleware import MetricsMiddleware
 
 # Regex: /agents/{agent_id}/sessions/… → /sessions/…
 _AGENT_SESSION_RE = re.compile(r"^/agents/[^/]+(/sessions/.*)$")
+
+# CORS explícito (nada de "*"): o que o AgentOS/os.agno.com e o AG-UI usam. O Starlette
+# soma os headers CORS-safelisted (Accept, Accept-Language, Content-Language, Content-Type).
+_CORS_ALLOW_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
+_CORS_ALLOW_HEADERS = ("Authorization", "Content-Type", "X-API-Key")
+
+# Rotas fora do tracing. O OTel faz re.search em ``scheme://<Host><path>`` (sem query;
+# opentelemetry/instrumentation/asgi/__init__.py, get_host_port_url_tuple): a regex
+# ancora o path inteiro logo após o host, senão um ``Host: livez`` apagaria o span de
+# qualquer rota.
+_OTEL_EXCLUDED_URLS = ",".join(
+    rf"^[a-z]+://[^/]+{path}$" for path in ("/admin/health", "/livez", "/metrics/cache")
+)
+
+
+def _disable_agno_telemetry_by_default() -> None:
+    """Telemetria do Agno desligada por padrão; valor explícito do usuário prevalece.
+
+    O Agno lê ``AGNO_TELEMETRY`` (agno/agent/_init.py, agno/team/_init.py) e, quando ele
+    existe, sobrepõe o kwarg ``telemetry`` de Agent/Team.
+    """
+    os.environ.setdefault("AGNO_TELEMETRY", "false")
 
 
 class _PlaygroundPrefixMiddleware(BaseHTTPMiddleware):
@@ -55,28 +80,30 @@ class AppFactory:
     (DI, agentes, AgentOS) acontece dentro do *lifespan*.
     """
 
-    _ALLOWED_ORIGINS = [
-        "https://app.agno.com",
-        "https://www.agno.com",
-        "http://localhost:3000",
-        "http://localhost:7777",
-        "https://os.agno.com",
-    ]
-
     def __init__(self) -> None:
         self._container: Optional[DependencyContainer] = None
+        self._config: Optional[AppConfig] = None
         self._logger = StructlogLoggerAdapter("app_factory")
 
     def create_app(self) -> FastAPI:
-        """Cria a aplicação FastAPI — **síncrono** (module-level safe)."""
+        """Cria a aplicação FastAPI — **síncrono** (module-level safe).
+
+        Lê o ``AppConfig`` aqui (configuração inválida falha no startup, antes do bind).
+        """
+        _disable_agno_telemetry_by_default()
+        self._config = AppConfig.load()
+        docs = self._config.enable_docs
         base_app = FastAPI(
             title="Orquestrador de Agentes IA",
             description="Sistema de orquestração de agentes IA",
             version="2.0.0",
             lifespan=self._lifespan,
+            # Com base_app, o AgentOS não cria rotas de docs: valem só estas.
+            docs_url="/docs" if docs else None,
+            redoc_url="/redoc" if docs else None,
+            openapi_url="/openapi.json" if docs else None,
         )
 
-        self._add_cors(base_app)
         # self._add_playground_rewrite(base_app)
         self._add_metrics_middleware(base_app)
         # Antes do primeiro evento ASGI (o lifespan inclusive), que monta a pilha de
@@ -84,6 +111,9 @@ class AppFactory:
         self._instrument_fastapi(base_app)
         self._add_admin_endpoints(base_app)
         # self._add_playground_compat_endpoints(base_app)
+        # Por último: add_middleware insere na frente, então o CORS fica o mais externo
+        # (preflight e headers CORS valem também para respostas de erro dos demais).
+        self._apply_cors(base_app, self._config.cors_allowed_origins)
         return base_app
 
     # ── middleware ───────────────────────────────────────────────────
@@ -98,24 +128,40 @@ class AppFactory:
         """Adiciona middleware de métricas de negócio (agents/teams)."""
         app.add_middleware(MetricsMiddleware)
 
-    @classmethod
-    def _add_cors(cls, app: FastAPI) -> None:
+    @staticmethod
+    def _apply_cors(app: FastAPI, origins: Sequence[str]) -> None:
+        """(Re)instala o único ``CORSMiddleware`` do app com origens/métodos/headers explícitos.
+
+        O ``AgentOS.get_app()`` troca o CORS do base_app por um com métodos e headers ``*``
+        e origens mescladas (agno/os/utils.py, ``update_cors_middleware``); por isso esta
+        função roda de novo depois da montagem.
+        """
+        app.user_middleware = [m for m in app.user_middleware if m.cls is not CORSMiddleware]
+        app.middleware_stack = None  # reconstruída no próximo request
         app.add_middleware(
             CORSMiddleware,
-            allow_origins=cls._ALLOWED_ORIGINS,
+            allow_origins=list(origins),
             allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
-            expose_headers=["*"],
+            allow_methods=list(_CORS_ALLOW_METHODS),
+            allow_headers=list(_CORS_ALLOW_HEADERS),
+            # expose_headers no default (nenhum): o navegador só lê os headers
+            # CORS-safelisted da resposta.
         )
 
     # ── admin endpoints ─────────────────────────────────────────────
 
     def _add_admin_endpoints(self, app: FastAPI) -> None:
+        @app.get("/livez")
+        async def liveness():
+            """Processo vivo. Sem dependências (Mongo/OTel): é o alvo do HEALTHCHECK."""
+            return {"status": "ok"}
+
         @app.get("/admin/health")
         async def health_check():
             if self._container and self._container.health_service:
-                return await self._container.health_service.check_async()
+                result = await self._container.health_service.check_async()
+                status_code = 200 if result.get("status") == "healthy" else 503
+                return JSONResponse(result, status_code=status_code)
             return {"status": "healthy"}
 
         @app.get("/metrics/cache")
@@ -140,7 +186,9 @@ class AppFactory:
         if self._container:
             return
         self._logger.info("Lifespan: carregando AppConfig...")
-        config = AppConfig.load()
+        if self._config is None:
+            self._config = AppConfig.load()
+        config = self._config
         self._logger.info(
             "Lifespan: criando DependencyContainer...",
             mongo_db=config.mongo_database_name,
@@ -185,7 +233,7 @@ class AppFactory:
 
             FastAPIInstrumentor.instrument_app(
                 app,
-                excluded_urls="admin/health,metrics/cache",
+                excluded_urls=_OTEL_EXCLUDED_URLS,
             )
         except Exception as exc:
             self._logger.warning(
@@ -202,16 +250,25 @@ class AppFactory:
             "Lifespan: montando AgentOS com interfaces AG-UI",
             interface_count=len(interfaces),
         )
+        if self._config is None:
+            raise RuntimeError("AppConfig não carregado: chame create_app() antes")
+        origins = self._config.cors_allowed_origins
         agent_os = AgentOS(
             agents=agents,
             teams=teams or None,
             interfaces=interfaces,
-            cors_allowed_origins=self._ALLOWED_ORIGINS,
+            cors_allowed_origins=list(origins),
             base_app=app,
             on_route_conflict="preserve_base_app",
             tracing=False,
+            telemetry=False,
         )
-        agent_os.get_app()
+        try:
+            agent_os.get_app()
+        finally:
+            # get_app() troca o CORS por um com "*" (update_cors_middleware): mesmo se
+            # falhar depois disso, o app não pode ficar com ele.
+            self._apply_cors(app, origins)
         app.openapi_schema = None
         self._logger.info(
             "AgentOS montado com sucesso",

@@ -272,8 +272,8 @@ def test_healthcheck_com_python_stdlib_sem_curl(dockerfile):
     (healthcheck,) = _args(dockerfile, "HEALTHCHECK")
     assert "curl" not in healthcheck and "wget" not in healthcheck
     assert "python" in healthcheck and "urllib.request" in healthcheck
-    # /livez chega na F1-03; até lá o health é o /admin/health.
-    assert "/admin/health" in healthcheck or "/livez" in healthcheck
+    # /livez: público e sem dependências (o /admin/health dá 503 com o Mongo fora).
+    assert "/livez" in healthcheck and "/admin/health" not in healthcheck
 
 
 def test_imagem_sem_compilador(dockerfile):
@@ -391,3 +391,29 @@ def test_compose_imagens_com_tag_fixa(path):
         _repo, sep, tag = image.rpartition(":")
         assert sep and "/" not in tag, f"{name}: imagem {image} sem tag"
         assert tag != "latest" and re.search(r"\d+\.\d+", tag), f"{name}: tag {tag} não é fixa"
+
+
+# ── ENVIRONMENT (F1-03) ────────────────────────────────────────────
+
+
+def test_imagem_assume_production(dockerfile):
+    """Docs desligados e log JSON por padrão no container; development é opt-in."""
+    envs = " ".join(_args(dockerfile, "ENV"))
+    assert re.search(r"\bENVIRONMENT=production\b", envs)
+
+
+def test_compose_base_nao_fixa_environment(compose):
+    """Repasse puro: sem ENVIRONMENT no .env/shell, vale o production da imagem."""
+    assert compose["services"]["app"]["environment"]["ENVIRONMENT"] is None
+
+
+def test_compose_dev_roda_o_app_em_development(compose_dev):
+    assert _environment(compose_dev["services"]["app"])["ENVIRONMENT"] == "development"
+
+
+def test_env_example_nao_sobrescreve_o_environment_da_imagem():
+    """Linha ativa no .env seria repassada pelo compose e venceria o ENV da imagem."""
+    lines = (ROOT / ".env.example").read_text(encoding="utf-8").splitlines()
+    active = [line for line in lines if re.match(r"\s*ENVIRONMENT\s*=", line)]
+    documented = [line for line in lines if re.match(r"\s*#\s*ENVIRONMENT\s*=", line)]
+    assert not active and documented

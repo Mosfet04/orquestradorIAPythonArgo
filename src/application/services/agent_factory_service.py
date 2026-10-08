@@ -245,4 +245,6 @@ class AgentFactoryService:
             knowledge=knowledge,
             search_knowledge=bool(knowledge),
             read_chat_history=bool(knowledge),
+            # Sem envio de telemetria à Agno (AGNO_TELEMETRY explícito ainda prevalece).
+            telemetry=False,
         )

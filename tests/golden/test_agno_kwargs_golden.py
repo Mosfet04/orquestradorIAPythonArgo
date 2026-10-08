@@ -277,6 +277,19 @@ async def test_kwargs_do_team_batem_com_o_golden(agno_calls: AgnoCalls, golden: 
     )
 
 
+@pytest.mark.usefixtures("workdir")
+async def test_agent_e_team_nunca_sao_criados_com_telemetria_ligada(agno_calls: AgnoCalls):
+    """F1-03: telemetria da Agno explícita e desligada em toda montagem (não só pelo env)."""
+    assembly = _Assembly.build()
+    agents = [await assembly.agents.create_agent(cfg) for cfg in AGENT_SCENARIOS.values()]
+    for cfg in TEAM_CONFIGS:
+        assembly.teams.create_team(cfg, agents)
+
+    calls = agno_calls.of("Agent") + agno_calls.of("Team")
+    assert len(calls) == len(AGENT_SCENARIOS) + len(TEAM_CONFIGS)
+    assert [call.get("telemetry") for call in calls] == [False] * len(calls)
+
+
 # ── o próprio mecanismo de golden ───────────────────────────────────
 
 

@@ -13,15 +13,11 @@ from .structlog_logger import (
     setup_structlog,
 )
 
-# Manter compatibilidade com código existente
-SecureLogger = StructlogLogger
-
 __all__ = [
     'DataSanitizer',
     'LogContext',
     'LogLevel',
     'LoggerFactory',
-    'SecureLogger',  # Alias para compatibilidade
     'StructlogLogger',
     'app_logger',
     'log_ai_interaction',

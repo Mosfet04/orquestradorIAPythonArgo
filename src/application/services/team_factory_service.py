@@ -71,6 +71,8 @@ class TeamFactoryService:
             store_tool_messages=True,
             store_events=True,
             store_member_responses=True,
+            # Sem envio de telemetria à Agno (AGNO_TELEMETRY explícito ainda prevalece).
+            telemetry=False,
         )
         self._logger.info(
             "Team criado",

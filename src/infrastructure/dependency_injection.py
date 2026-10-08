@@ -35,10 +35,17 @@ from src.presentation.controllers.orquestrador_controller import OrquestradorCon
 
 
 class HealthService:
-    """Serviço de health check."""
+    """Serviço de health check.
 
-    def __init__(self, mongo_client: AsyncIOMotorClient) -> None:
+    O corpo devolvido vai ao cliente HTTP: só status e métricas, nunca texto de exceção.
+    O detalhe da falha fica no log interno, pelo tipo da exceção.
+    """
+
+    _CHECK_NAMES = ("mongodb", "memory", "otlp")
+
+    def __init__(self, mongo_client: AsyncIOMotorClient, logger: ILogger) -> None:
         self._mongo_client = mongo_client
+        self._logger = logger
 
     async def check_async(self) -> dict:
         start = asyncio.get_event_loop().time()
@@ -50,19 +57,22 @@ class HealthService:
         )
         elapsed = asyncio.get_event_loop().time() - start
 
-        def _ok(c: Any) -> bool:
-            return not isinstance(c, Exception) and c.get("status") not in (
-                "error",
-                "unhealthy",
-            )
+        results: dict[str, dict] = {}
+        for name, check in zip(self._CHECK_NAMES, checks, strict=True):
+            if isinstance(check, BaseException):
+                self._logger.error(
+                    "Health check falhou com exceção inesperada",
+                    check=name,
+                    error_type=type(check).__name__,
+                )
+                results[name] = {"status": "error"}
+            else:
+                results[name] = check
 
+        healthy = all(r.get("status") not in ("error", "unhealthy") for r in results.values())
         return {
-            "status": "healthy" if all(_ok(c) for c in checks) else "unhealthy",
-            "checks": {
-                "mongodb": checks[0] if not isinstance(checks[0], Exception) else {"status": "error", "error": str(checks[0])},
-                "memory": checks[1] if not isinstance(checks[1], Exception) else {"status": "error", "error": str(checks[1])},
-                "otlp": checks[2] if not isinstance(checks[2], Exception) else {"status": "error", "error": str(checks[2])},
-            },
+            "status": "healthy" if healthy else "unhealthy",
+            "checks": results,
             "response_time_ms": round(elapsed * 1000, 2),
         }
 
@@ -71,7 +81,10 @@ class HealthService:
             await self._mongo_client.admin.command("ping")
             return {"status": "healthy"}
         except Exception as exc:
-            return {"status": "unhealthy", "error": str(exc)}
+            self._logger.warning(
+                "Health check: MongoDB indisponível", error_type=type(exc).__name__
+            )
+            return {"status": "unhealthy"}
 
     @staticmethod
     async def _check_memory() -> dict:
@@ -89,17 +102,17 @@ class HealthService:
 
     @staticmethod
     async def _check_otlp() -> dict:
-        """Verifica se o endpoint OTLP (Grafana LGTM) está acessível."""
-        try:
-            from opentelemetry import trace
+        """Informa se há um TracerProvider de SDK configurado (OTLP ligado).
 
-            provider = trace.get_tracer_provider()
-            if provider and hasattr(provider, "force_flush"):
-                provider.force_flush(timeout_millis=2000)
-                return {"status": "healthy", "provider": type(provider).__name__}
-            return {"status": "not_configured"}
-        except Exception as exc:
-            return {"status": "warning", "error": str(exc)}
+        Sem ``force_flush``: ele é síncrono (bloquearia o event loop por até 2 s), exporta
+        spans como efeito colateral e o retorno nunca era usado, então não media alcance.
+        """
+        from opentelemetry import trace
+
+        provider = trace.get_tracer_provider()
+        if hasattr(provider, "force_flush"):
+            return {"status": "configured", "provider": type(provider).__name__}
+        return {"status": "not_configured"}
 
 
 class DependencyContainer:
@@ -133,7 +146,7 @@ class DependencyContainer:
                 "MongoDB não disponível na inicialização", error=str(exc)
             )
 
-        self._health_service = HealthService(self._mongo_client)
+        self._health_service = HealthService(self._mongo_client, self._logger)
 
         # ── Wiring ──────────────────────────────────────────────────
         conn = self.config.mongo_connection_string
@@ -215,7 +228,8 @@ class DependencyContainer:
         )
 
     def get_orquestrador_controller(self) -> OrquestradorController:
-        assert self._controller is not None, "Container não inicializado"
+        if self._controller is None:
+            raise RuntimeError("Container não inicializado: chame create_async() antes")
         return self._controller
 
     @property
@@ -228,5 +242,8 @@ class DependencyContainer:
                 result: Any = self._mongo_client.close()
                 if asyncio.iscoroutine(result):
                     await result
-            except Exception:
-                pass
+            except Exception as exc:
+                # Shutdown segue mesmo se o driver falhar ao fechar; o tipo vai ao log.
+                self._logger.warning(
+                    "Falha ao fechar o cliente MongoDB", error_type=type(exc).__name__
+                )

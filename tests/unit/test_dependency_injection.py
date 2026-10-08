@@ -8,6 +8,7 @@ import pytest
 
 from src.infrastructure.dependency_injection import DependencyContainer, HealthService
 from src.infrastructure.repositories import mongo_base
+from tests.fakes import RecordingLogger
 
 # ── HealthService ───────────────────────────────────────────────────
 
@@ -21,7 +22,7 @@ class TestHealthService:
 
     @pytest.fixture
     def health_service(self, mock_mongo_client):
-        return HealthService(mock_mongo_client)
+        return HealthService(mock_mongo_client, RecordingLogger())
 
     async def test_check_async_healthy(self, health_service):
         with patch("src.infrastructure.dependency_injection.HealthService._check_memory", new_callable=AsyncMock) as mock_mem:
@@ -34,7 +35,7 @@ class TestHealthService:
 
     async def test_check_async_mongodb_unhealthy(self, mock_mongo_client):
         mock_mongo_client.admin.command = AsyncMock(side_effect=Exception("connection refused"))
-        service = HealthService(mock_mongo_client)
+        service = HealthService(mock_mongo_client, RecordingLogger())
         with patch("src.infrastructure.dependency_injection.HealthService._check_memory", new_callable=AsyncMock) as mock_mem:
             mock_mem.return_value = {"status": "healthy", "usage_percent": 50, "available_gb": 8.0}
             result = await service.check_async()
@@ -47,10 +48,9 @@ class TestHealthService:
 
     async def test_check_mongodb_ping_failure(self, mock_mongo_client):
         mock_mongo_client.admin.command = AsyncMock(side_effect=Exception("fail"))
-        service = HealthService(mock_mongo_client)
+        service = HealthService(mock_mongo_client, RecordingLogger())
         result = await service._check_mongodb()
-        assert result["status"] == "unhealthy"
-        assert "error" in result
+        assert result == {"status": "unhealthy"}  # sem texto da exceção
 
     async def test_check_memory_with_psutil(self, health_service):
         mock_mem = MagicMock()
@@ -79,11 +79,26 @@ class TestHealthService:
     async def test_check_async_with_exception_in_gather(self, mock_mongo_client):
         """Quando gather retorna exceção, o resultado deve marcar como error."""
         mock_mongo_client.admin.command = AsyncMock(side_effect=RuntimeError("boom"))
-        service = HealthService(mock_mongo_client)
+        service = HealthService(mock_mongo_client, RecordingLogger())
         with patch("src.infrastructure.dependency_injection.HealthService._check_memory", new_callable=AsyncMock) as mock_mem:
             mock_mem.return_value = {"status": "healthy", "usage_percent": 30, "available_gb": 10.0}
             result = await service.check_async()
-        assert result["checks"]["mongodb"]["status"] in ("unhealthy", "error")
+        assert result["checks"]["mongodb"] == {"status": "unhealthy"}
+        assert "boom" not in str(result)
+
+    async def test_excecao_inesperada_num_check_vira_error_sem_mensagem(self, mock_mongo_client):
+        """Exceção que escapa de um check (gather) não leva ``str(exc)`` ao corpo; só ao log, pelo tipo."""
+        logger = RecordingLogger()
+        service = HealthService(mock_mongo_client, logger)
+        with patch.object(HealthService, "_check_memory", new_callable=AsyncMock) as mock_mem:
+            mock_mem.side_effect = OSError("/proc/meminfo: detalhe interno")
+            result = await service.check_async()
+        assert result["status"] == "unhealthy"
+        assert result["checks"]["memory"] == {"status": "error"}
+        assert "detalhe interno" not in str(result)
+        assert [(r.level, r.context) for r in logger.records] == [
+            ("error", {"check": "memory", "error_type": "OSError"})
+        ]
 
 
 # ── DependencyContainer ─────────────────────────────────────────────
@@ -229,5 +244,46 @@ class TestDependencyContainer:
         }, clear=True):
             config = AppConfig.load()
         container = DependencyContainer(config)
-        with pytest.raises(AssertionError, match="Container não inicializado"):
+        with pytest.raises(RuntimeError, match="Container não inicializado"):
             container.get_orquestrador_controller()
+
+
+async def test_cleanup_com_erro_no_close_loga_e_nao_propaga():
+    """Antes: ``except Exception: pass`` (bandit B110). Agora o erro vai ao log pelo tipo."""
+    from src.infrastructure.config.app_config import AppConfig
+
+    with patch.dict("os.environ", {}, clear=True):
+        container = DependencyContainer(AppConfig.load())
+    logger = RecordingLogger()
+    container._logger = logger
+    mongo_client = MagicMock()
+    mongo_client.close = MagicMock(side_effect=RuntimeError("detalhe interno do driver"))
+    container._mongo_client = mongo_client
+
+    await container.cleanup()
+
+    assert [(r.level, r.context) for r in logger.records] == [("warning", {"error_type": "RuntimeError"})]
+
+
+@pytest.mark.usefixtures("reset_otel_providers")
+async def test_check_otlp_nao_faz_flush_bloqueante_no_event_loop():
+    """``force_flush`` é síncrono (até 2 s) e exporta spans: não roda dentro do health."""
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+
+    flushes: list[int] = []
+
+    class _RecordingProvider(TracerProvider):
+        def force_flush(self, timeout_millis: int = 30000) -> bool:
+            flushes.append(timeout_millis)
+            return True
+
+    trace.set_tracer_provider(_RecordingProvider())
+    client = MagicMock()
+    client.admin.command = AsyncMock(return_value={"ok": 1})
+
+    result = await HealthService(client, RecordingLogger()).check_async()
+
+    assert flushes == []
+    assert result["checks"]["otlp"] == {"status": "configured", "provider": "_RecordingProvider"}
+    assert result["status"] == "healthy"

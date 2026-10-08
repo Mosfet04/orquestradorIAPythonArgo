@@ -104,7 +104,7 @@ python app.py
 | `requirements.txt` | Só compatibilidade: `-r requirements.lock` |
 
 - O lock é gerado em Linux/CPython 3.12 e validado para Linux CPython 3.11/3.12 (Docker e CI). No Windows nativo, se o `--require-hashes` falhar, use WSL/Docker ou regenere o lock localmente.
-- `uvloop` só é instalado fora do Windows (`sys_platform != "win32"`); o `app.py` ainda o importa sem guarda, então falha no Windows nativo até o item F1-03 do roadmap.
+- `uvloop` só é instalado fora do Windows (`sys_platform != "win32"`); o `app.py` o importa com guarda e só o usa fora do Windows (no Windows, loop padrão).
 - Extras opcionais, **não instalados por padrão** (fora do lock): `PyJWT` (auth JWT do AgentOS), `mcp` (tools MCP), `anthropic` e `groq` (providers de modelo). Para adotar um deles, acrescente-o ao `requirements.in` e regenere o lock.
 - Nunca edite um `.lock` à mão. Comandos de regeneração: [CONTRIBUTING.md](CONTRIBUTING.md#dependencies-and-lock-files).
 
@@ -129,7 +129,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 - `docker-compose.yml` só tem o app, endurecido (`no-new-privileges`, `cap_drop: ALL`, `read_only` com `/tmp` em tmpfs, sem bind mount) e sem porta de banco.
 - `docker-compose.dev.yml` acrescenta MongoDB (27017), Ollama (11434) e mongo-express (8081), com porta publicada só em `127.0.0.1`, e aponta o app do container para eles (`mongodb://...@mongodb:27017`, `OLLAMA_BASE_URL=http://ollama:11434`), independente do que o `.env` usa para rodar o app no host. `MONGO_ROOT_USERNAME`/`MONGO_ROOT_PASSWORD` entram numa URL: use valores URL-safe.
 - `OLLAMA_BASE_URL` vazio deixa o cliente ollama/agno decidir (`OLLAMA_HOST`, `http://localhost:11434` ou Ollama Cloud com só a `OLLAMA_API_KEY`).
-- A imagem (Python 3.12) instala só pelo `requirements.lock` com hash, roda como UID/GID 10001 sem privilégios, faz bind em `0.0.0.0` (`APP_HOST` do Dockerfile) e tem HEALTHCHECK em `/admin/health`. Fora do container o default de `APP_HOST` é `127.0.0.1`.
+- A imagem (Python 3.12) instala só pelo `requirements.lock` com hash, roda como UID/GID 10001 sem privilégios, faz bind em `0.0.0.0` (`APP_HOST` do Dockerfile) e tem HEALTHCHECK em `/livez` (público, sem dependências). Fora do container o default de `APP_HOST` é `127.0.0.1`.
 - O `.dockerignore` é uma allowlist: só `app.py`, `src/`, `docs/` (sem `docs/roadmap` e `docs/qa`) e `requirements.lock` entram no contexto de build (sem `.env*`, `*.env`, `.envrc`, `*.log` e `__pycache__`, inclusive em subpastas). Arquivo novo que a imagem precise tem de ser reincluído lá.
 - O Grafana LGTM não faz parte deste compose: aponte `OTEL_EXPORTER_OTLP_ENDPOINT` para o seu coletor (ou `OTEL_ENABLED=false`).
 
@@ -140,7 +140,7 @@ Após iniciar, acesse:
 | URL | Descrição |
 |---|---|
 | http://localhost:7777/health | Health check (AgentOS nativo) |
-| http://localhost:7777/docs | Documentação OpenAPI / Swagger |
+| http://localhost:7777/docs | Documentação OpenAPI / Swagger (por padrão só com `ENVIRONMENT=development`; ver `ENABLE_DOCS`) |
 | http://localhost:7777/config | Configuração do AgentOS (agentes, databases) |
 | http://localhost:7777/agents | Lista de agentes ativos |
 | http://localhost:3000 | UI Grafana (dashboards, traces, métricas, logs) |
@@ -290,10 +290,8 @@ orquestradorIAPythonArgo/
 │   │   ├── http/
 │   │   │   └── http_tool_factory.py #   Cria agno Toolkits a partir de configs HTTP
 │   │   ├── logging/
-│   │   │   ├── config.py           #   Configura structlog
-│   │   │   ├── structlog_logger.py #   Implementação do logger
+│   │   │   ├── structlog_logger.py #   Configuração única do logging (structlog) + sanitização
 │   │   │   ├── logger_adapter.py   #   Adapter: structlog → ILogger
-│   │   │   ├── secure_logger.py    #   Sanitização de dados sensíveis
 │   │   │   └── decorators.py       #   Decorators de logging
 │   │   ├── repositories/
 │   │   │   ├── mongo_base.py       #   Classe base para repos MongoDB
@@ -342,7 +340,6 @@ orquestradorIAPythonArgo/
         ├── test_http_tool_factory_extended.py
         ├── test_knowledge_search_factory.py
         ├── test_logger_adapter.py
-        ├── test_logging_config.py
         ├── test_logging_decorators.py
         ├── test_logging_decorators_extended.py
         ├── test_metrics_middleware.py
@@ -359,7 +356,6 @@ orquestradorIAPythonArgo/
         ├── test_otel_setup.py
         ├── test_rag_config_strategy.py
         ├── test_search_result.py
-        ├── test_secure_logger.py
         ├── test_structlog_logger.py
         ├── test_structlog_logger_extended.py
         ├── test_team_config.py
@@ -484,8 +480,17 @@ OLLAMA_BASE_URL=http://localhost:11434
 OTEL_ENABLED=true
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317   # Docker: http://grafana-lgtm:4317
 OTEL_SERVICE_NAME=orquestrador-ia
-# AGNO_TELEMETRY=false
+
+# ═══ Borda HTTP ═══
+# ENVIRONMENT=development      # development | test | staging | production (outro valor: o app não inicia); ausente = development no host, production na imagem Docker
+# ENABLE_DOCS=true             # /docs, /redoc, /openapi.json; vazio = ligado só em development
+# CORS_ALLOWED_ORIGINS=https://os.agno.com,http://localhost:3000   # vírgula; vazio = default; cada item é http(s)://host[:porta] (sem barra final/path); "*" e null são recusados
+# AGNO_TELEMETRY=false         # o app assume false se ausente (Agent/Team/AgentOS já usam telemetry=False)
 ```
+
+> **CORS**: métodos `GET, POST, PUT, PATCH, DELETE, OPTIONS` e headers `Authorization, Content-Type, X-API-Key` (mais os CORS-safelisted); nenhum header de resposta é exposto. O AgentOS recebe a mesma lista de origens; o CORS do app é reaplicado depois da montagem (inclusive se ela falhar) e é sempre o middleware mais externo, então as origens padrão do Agno não entram.
+
+> **Telemetria do Agno**: `AGNO_TELEMETRY=true` explícito religa a telemetria de Agent/Team (o Agno 2.5.8 deixa a variável sobrepor o `telemetry=False`); o AgentOS continua desligado. Resíduo conhecido: os evals criados pela rota `/eval-runs` do AgentOS (`agno/os/routers/evals/utils.py`) usam o default `telemetry=True` do Agno e ignoram `AGNO_TELEMETRY`; revisão prevista na F3 (Agno 3.x).
 
 > **Convenção de API Keys**: o orquestrador busca automaticamente `{PROVIDER}_API_KEY` no ambiente. Exemplo: para `factoryIaModel: "gemini"`, busca `GEMINI_API_KEY`.
 
@@ -526,13 +531,14 @@ Após o AgentOS montar as rotas, a aplicação expõe ~75 endpoints. Os principa
 
 | Método | Rota | Descrição |
 |--------|------|-----------|
-| `GET` | `/admin/health` | Health check detalhado (MongoDB + memória do sistema) |
+| `GET` | `/livez` | Liveness público e mínimo (`{"status":"ok"}`), sem dependências; alvo do HEALTHCHECK |
+| `GET` | `/admin/health` | Health check detalhado (MongoDB + memória + OTLP): 200 se `healthy`, **503** se algo está `unhealthy`/`error`; o corpo nunca traz texto de exceção (o detalhe fica no log, pelo tipo) |
 | `GET` | `/metrics/cache` | Estatísticas do cache de agentes |
 | `POST` | `/admin/refresh-cache` | Força recarga dos agentes do MongoDB |
 
 ### Documentação Interativa
 
-Acesse **http://localhost:7777/docs** para a documentação Swagger completa com todas as rotas.
+Acesse **http://localhost:7777/docs** para a documentação Swagger completa com todas as rotas. `/docs`, `/redoc` e `/openapi.json` só existem com `ENABLE_DOCS` ligado (default: só em `ENVIRONMENT=development`).
 
 ---
 
@@ -891,11 +897,9 @@ tests/
     ├── test_mongo_team_config_repository_extended.py # Infrastructure: repo teams (extended)
     ├── test_mongo_tool_repository_extended.py # Infrastructure: repo tools
     ├── test_mongo_base.py                 # Infrastructure: repo base MongoDB
-    ├── test_logging_config.py             # Infrastructure: logging
     ├── test_logging_decorators.py         # Infrastructure: logging decorators
     ├── test_logging_decorators_extended.py # Infrastructure: logging (extended)
     ├── test_logger_adapter.py             # Infrastructure: logger adapter
-    ├── test_secure_logger.py              # Infrastructure: sanitização
     ├── test_structlog_logger.py           # Infrastructure: structlog
     ├── test_structlog_logger_extended.py   # Infrastructure: structlog (extended)
     ├── test_metrics_middleware.py          # Infrastructure: middleware de métricas

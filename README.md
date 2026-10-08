@@ -46,7 +46,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d   # + local
 Details: [README.en.md](README.en.md#with-docker-compose).
 
 **Access:**
-- 🌐 API Docs: http://localhost:7777/docs
+- 🌐 API Docs: http://localhost:7777/docs (`ENVIRONMENT=development` or `ENABLE_DOCS=true`)
 - 🤖 Agents: http://localhost:7777/agents
 - ❤️ Health: http://localhost:7777/health
 - 🖥️ Frontend: [os.agno.com](https://os.agno.com) → Endpoint: `http://localhost:7777`

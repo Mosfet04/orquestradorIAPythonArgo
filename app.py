@@ -3,7 +3,6 @@
 import asyncio
 import sys
 
-import uvloop
 from dotenv import load_dotenv
 
 load_dotenv()  # carrega .env antes de qualquer acesso a os.getenv()
@@ -30,11 +29,15 @@ if __name__ == "__main__":
     # APP_HOST/APP_PORT do ambiente (default 127.0.0.1:7777; o Dockerfile usa 0.0.0.0)
     uvicorn_config = build_uvicorn_settings(AppConfig.load())
 
-    try:
-        asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-        uvicorn_config["loop"] = "uvloop"
-    except ImportError:
-        app_logger.info("uvloop não disponível, usando loop padrão")
+    # uvloop não existe no Windows (nem é instalado lá): import guardado, só fora dele.
+    if sys.platform != "win32":
+        try:
+            import uvloop
+
+            asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+            uvicorn_config["loop"] = "uvloop"
+        except ImportError:
+            app_logger.info("uvloop não disponível, usando loop padrão")
 
     config = uvicorn.Config(**uvicorn_config)
     server = uvicorn.Server(config)

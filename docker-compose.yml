@@ -27,8 +27,12 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://grafana-lgtm:4317}
       OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-orquestrador-ia}
       # Repasse puro (sem valor): vem do .env/shell se definida; se não, fica ausente no
-      # container e vale o default do código. APP_HOST/APP_PORT ficam com o Dockerfile.
+      # container e vale o default do código (ENVIRONMENT: o production do Dockerfile).
+      # APP_HOST/APP_PORT ficam com o Dockerfile.
       ENVIRONMENT:
+      ENABLE_DOCS:
+      CORS_ALLOWED_ORIGINS:
+      AGNO_TELEMETRY:
       AWS_REGION:
       USE_TLS:
       TLS_ALLOW_INVALID_CERTIFICATES:

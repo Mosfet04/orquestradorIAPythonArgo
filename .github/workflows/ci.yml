@@ -98,14 +98,12 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  # Informativo na F0: bandit acusa 2 achados LOW herdados e pip-audit acusa
-  # vulnerabilidades sem correção (agno; o chromadb saiu no F1-02). Vira BLOQUEANTE na F1
-  # (CLAUDE.md, "Gates por fase"): remover o `continue-on-error` abaixo.
+  # Bloqueante desde o F1-03 (CLAUDE.md, "Gates por fase"): bandit sem achado e
+  # pip-audit só com a exceção documentada no passo abaixo.
   security:
     name: Segurança (bandit, pip-audit)
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    continue-on-error: true
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -127,9 +125,12 @@ jobs:
       - name: bandit
         run: bandit -c pyproject.toml -r src
 
+      # Exceção única, até a F3: PYSEC-2026-2333 (agno) está no backend ClickHouse do
+      # agno, que este projeto não usa; sem versão corrigida. Qualquer outra vulnerabilidade
+      # falha o job. Remover o --ignore-vuln quando o agno for atualizado (F3).
       - name: pip-audit
         if: ${{ !cancelled() }}
-        run: pip-audit -r requirements.lock --require-hashes --disable-pip
+        run: pip-audit -r requirements.lock --require-hashes --disable-pip --ignore-vuln PYSEC-2026-2333
 
   # Job isolado: o segredo nunca divide o runner com checkout, `pip install` ou
   # código do repositório. Só roda em push ou PR do próprio repositório (em PR de

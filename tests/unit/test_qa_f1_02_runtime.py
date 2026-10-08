@@ -195,7 +195,7 @@ def test_healthcheck_usa_app_port_customizado_e_a_rota_de_health(health_server):
     assert port != 7777
     result = _run_healthcheck(port)
     assert result.returncode == 0, result.stderr
-    assert handler.paths == ["/admin/health"]
+    assert handler.paths == ["/livez"]
 
 
 def test_healthcheck_falha_quando_a_resposta_e_5xx(health_server):

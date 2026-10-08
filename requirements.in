@@ -25,8 +25,7 @@ uvicorn>=0.34.0
 python-dotenv>=1.0.0
 # Starlette é importada diretamente (src/infrastructure/web/).
 starlette>=1.3.1  # piso = primeira versão sem os CVEs PYSEC-2026-248/249/2280/2281
-# uvloop não existe para Windows. ATENÇÃO: app.py ainda importa uvloop sem guarda,
-# então no Windows o app.py falha até o F1-03 corrigir esse import.
+# uvloop não existe para Windows; o app.py o importa com guarda e só o usa fora dele.
 uvloop>=0.21.0; sys_platform != "win32"
 
 # === Database ===

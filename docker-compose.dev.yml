@@ -11,6 +11,8 @@ services:
     environment:
       MONGO_CONNECTION_STRING: mongodb://${MONGO_ROOT_USERNAME:?defina MONGO_ROOT_USERNAME no .env}:${MONGO_ROOT_PASSWORD:?defina MONGO_ROOT_PASSWORD no .env}@mongodb:27017/${MONGO_DATABASE_NAME:-agno}?authSource=admin
       OLLAMA_BASE_URL: http://ollama:11434
+      # A imagem assume production (docs desligados); no dev, development.
+      ENVIRONMENT: development
     depends_on:
       - mongodb
       - ollama

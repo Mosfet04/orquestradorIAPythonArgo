@@ -34,7 +34,7 @@ def test_default_fora_do_container_e_loopback():
 
 
 def test_reload_desligado():
-    """reload não tem efeito com uvicorn.Server.serve(); quem quiser liga por ENVIRONMENT (F1-03)."""
+    """reload não tem efeito com uvicorn.Server.serve(); fica desligado em qualquer ENVIRONMENT."""
     assert build_uvicorn_settings(_config())["reload"] is False
 
 
@@ -50,3 +50,23 @@ def test_app_py_usa_as_settings_do_config_sem_host_fixo():
     literals = {node.value for node in ast.walk(tree) if isinstance(node, ast.Constant)}
     assert "127.0.0.1" not in literals and ALL_INTERFACES not in literals
     assert 7777 not in literals
+
+
+def test_uvloop_importado_com_guarda_e_so_fora_do_windows():
+    """uvloop não existe no Windows: import sem guarda derrubava o app.py (F1-03)."""
+    tree = ast.parse((ROOT / "app.py").read_text(encoding="utf-8"))
+    guarded: list[ast.Import] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Try):
+            handled = {
+                h.type.id for h in node.handlers if isinstance(h.type, ast.Name)
+            }
+            if "ImportError" in handled or "ModuleNotFoundError" in handled:
+                guarded += [n for stmt in node.body for n in ast.walk(stmt) if isinstance(n, ast.Import)]
+    all_imports = [
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.Import) and any(a.name == "uvloop" for a in n.names)
+    ]
+    assert all_imports, "app.py deveria tentar usar uvloop fora do Windows"
+    assert all(n in guarded for n in all_imports), "import de uvloop fora de try/except ImportError"
+    assert "win32" in (ROOT / "app.py").read_text(encoding="utf-8")

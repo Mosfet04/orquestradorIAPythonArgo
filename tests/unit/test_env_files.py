@@ -38,7 +38,7 @@ def _is_environ(node: ast.expr) -> bool:
 
 
 def _env_vars_read_by_code() -> set[str]:
-    """Nomes literais em os.getenv("X"), os.environ.get("X") e os.environ["X"]."""
+    """Nomes literais em os.getenv("X"), os.environ.get/setdefault("X") e os.environ["X"]."""
     names: set[str] = set()
     for path in CODE_FILES:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -49,7 +49,9 @@ def _env_vars_read_by_code() -> set[str]:
                 is_getenv = (isinstance(func, ast.Attribute) and func.attr == "getenv") or (
                     isinstance(func, ast.Name) and func.id == "getenv"
                 )
-                is_environ_get = isinstance(func, ast.Attribute) and func.attr == "get" and _is_environ(func.value)
+                is_environ_get = (
+                    isinstance(func, ast.Attribute) and func.attr in ("get", "setdefault") and _is_environ(func.value)
+                )
                 if is_getenv or is_environ_get:
                     arg = node.args[0]
             elif isinstance(node, ast.Subscript) and _is_environ(node.value):
@@ -89,6 +91,8 @@ def test_scanner_enxerga_as_leituras_conhecidas():
     """Sanidade do scanner: se ele parar de ver leituras, o teste seguinte vira vazio."""
     read = _env_vars_read_by_code()
     assert {"MONGO_CONNECTION_STRING", "APP_HOST", "APP_PORT", "OLLAMA_BASE_URL", "GEMINI_API_KEY"} <= read
+    # F1-03: borda e telemetria (AGNO_TELEMETRY via os.environ.setdefault)
+    assert {"ENVIRONMENT", "ENABLE_DOCS", "CORS_ALLOWED_ORIGINS", "AGNO_TELEMETRY"} <= read
 
 
 def test_env_example_lista_toda_variavel_lida_pelo_codigo():

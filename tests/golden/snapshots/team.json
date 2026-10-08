@@ -41,6 +41,7 @@
       "store_history_messages": true,
       "store_member_responses": true,
       "store_tool_messages": true,
+      "telemetry": false,
       "user_id": "ava"
     },
     {
@@ -79,6 +80,7 @@
       "store_history_messages": true,
       "store_member_responses": true,
       "store_tool_messages": true,
+      "telemetry": false,
       "user_id": "ava"
     }
   ],

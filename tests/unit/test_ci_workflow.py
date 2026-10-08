@@ -186,7 +186,17 @@ def test_gates_da_fase_f0(ci):
     security = " ".join(s.get("run", "") for s in jobs["security"]["steps"])
     assert "bandit -c pyproject.toml -r src" in security
     assert "pip-audit -r requirements.lock --require-hashes --disable-pip" in security
-    # bandit/pip-audit só viram bloqueantes na F1 (CLAUDE.md, gates por fase)
-    assert jobs["security"].get("continue-on-error") is True
-    for job_id in ("lint", "test"):
+    # F1-03: bandit zerado; o job de segurança é bloqueante como os demais.
+    for job_id in ("lint", "test", "security"):
         assert not jobs[job_id].get("continue-on-error"), job_id
+        for step in jobs[job_id]["steps"]:
+            assert not step.get("continue-on-error"), (job_id, step.get("name"))
+
+
+def test_pip_audit_ignora_so_a_vulnerabilidade_conhecida_do_agno(ci):
+    """Única exceção aceita até a F3: PYSEC-2026-2333 (agno, backend ClickHouse não usado)."""
+    security = " ".join(s.get("run", "") for s in ci["jobs"]["security"]["steps"])
+    assert re.findall(r"--ignore-vuln\s+(\S+)", security) == ["PYSEC-2026-2333"]
+    raw = CI_WORKFLOW.read_text(encoding="utf-8")
+    comment = raw[: raw.index("--ignore-vuln PYSEC-2026-2333")].rsplit("- name: bandit", 1)[-1]
+    assert "agno" in comment and "F3" in comment, "a exceção precisa de justificativa e prazo comentados"

@@ -69,7 +69,7 @@ class TestAdminEndpointsWithContainer:
         controller.refresh_agents = AsyncMock()
         container.get_orquestrador_controller.return_value = controller
         container.health_service = MagicMock()
-        container.health_service.check_async = AsyncMock(return_value={"status": "ok", "db": "connected"})
+        container.health_service.check_async = AsyncMock(return_value={"status": "healthy", "db": "connected"})
         container.cleanup = AsyncMock()
         factory._container = container
         return factory
@@ -81,7 +81,18 @@ class TestAdminEndpointsWithContainer:
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/admin/health")
             assert resp.status_code == 200
-            assert resp.json()["status"] == "ok"
+            assert resp.json()["status"] == "healthy"
+
+    async def test_health_unhealthy_responde_503(self, factory_with_container):
+        factory_with_container._container.health_service.check_async = AsyncMock(
+            return_value={"status": "unhealthy", "checks": {"mongodb": {"status": "unhealthy"}}}
+        )
+        app = factory_with_container.create_app()
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/admin/health")
+        assert resp.status_code == 503
+        assert resp.json() == {"status": "unhealthy", "checks": {"mongodb": {"status": "unhealthy"}}}
 
     async def test_cache_metrics_with_container(self, factory_with_container):
         app = factory_with_container.create_app()
@@ -202,8 +213,7 @@ class TestMountAgentOS:
         mock_os_instance.get_app.return_value = MagicMock()
         mock_os_cls.return_value = mock_os_instance
 
-        from fastapi import FastAPI
-        app = FastAPI()
+        app = factory.create_app()  # carrega o AppConfig (origens do CORS)
         agents = [MagicMock(), MagicMock()]
         teams = [MagicMock()]
 
@@ -220,12 +230,18 @@ class TestMountAgentOS:
         mock_os_instance.get_app.return_value = MagicMock()
         mock_os_cls.return_value = mock_os_instance
 
-        from fastapi import FastAPI
-        app = FastAPI()
+        app = factory.create_app()
         factory._mount_agent_os(app, [MagicMock()], [])
         # teams=[] → deve enviar None
         call_kwargs = mock_os_cls.call_args[1]
         assert call_kwargs.get("teams") is None
+
+
+    def test_mount_sem_config_carregado_falha_com_mensagem_clara(self):
+        from fastapi import FastAPI
+
+        with pytest.raises(RuntimeError, match="create_app"):
+            AppFactory()._mount_agent_os(FastAPI(), [MagicMock()], [])
 
 
 # ── _lifespan ────────────────────────────────────────────────────────
