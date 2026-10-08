@@ -204,7 +204,7 @@ All tool configuration lives in `pyproject.toml`. Run before committing:
 .venv/bin/ruff check src tests app.py  # lint (incl. import sorting); `ruff format` is not adopted yet
 .venv/bin/mypy                          # strict by default; legacy modules listed with ignore_errors
 .venv/bin/lint-imports                  # onion layer contracts
-.venv/bin/python -m pytest --cov        # tests + coverage (source = src, branch = true)
+.venv/bin/python -m pytest -n auto --cov  # tests + coverage (source = src, branch = true)
 ```
 
 The legacy findings are recorded as an explicit baseline (`per-file-ignores` in ruff,
@@ -285,6 +285,19 @@ tests/
 - **Random order** (`pytest-randomly`): every run shuffles the tests and prints
   `Using --randomly-seed=N`. Reproduce a failure with `-p randomly --randomly-seed=N`;
   use `-p no:randomly` for the file order.
+- **Parallel** (`pytest-xdist`): `-n auto` runs one worker per physical core (CI does this); every worker
+  uses the same random seed and `pytest-cov` combines their coverage. It is opt-in (not in
+  `addopts`), so `--pdb` and single-test runs stay serial. Tests must be safe in parallel:
+  write only under `tmp_path`, never in the repository/cwd; bind servers to port `0` and hand the
+  still-open socket to the server (see `_serve` in `tests/integration/test_qa_f1_04_auth_stack.py`)
+  instead of "find a free port, close it, bind again". Process-global state of a library is
+  reset per test in `tests/conftest.py` (e.g. agno's run cancellation manager).
+- **Shared app fixtures**: mounting the real AgentOS costs ~0.5 s. A `scope="module"` app is
+  allowed only for tests whose request never runs a stateful handler (rejected by auth, answered
+  by CORS, unmatched route, `/livez`); build it inside `pytest.MonkeyPatch.context()` so the env
+  is restored right after `create_app`, and give each test a new `TestClient`. Anything that
+  runs a model or a mutating route uses a fresh app (see `shared_prod_app` in
+  `tests/security/test_api_key_auth.py`, whose teardown asserts the model was never called).
 - **Golden tests**: if a kwarg passed to `Agent`/`Team` changes, `tests/golden` fails with a diff.
   When the change is intentional, regenerate and review the JSON diff in the commit:
   `pytest tests/golden --update-golden`.
@@ -343,15 +356,15 @@ def test_get_active_agents(mongo_client):
 # All tests
 pytest
 
-# Default CI run (everything but `live`)
-pytest -m "not live"
+# Default CI run (everything but `live`), in parallel (8 workers: ~30 s; serial ~95 s)
+pytest -m "not live" -n auto
 
 # One layer only
 pytest -m unit
 pytest -m contract
 pytest -m integration
 
-# With coverage
+# With coverage (works with -n auto too)
 pytest --cov=src --cov-report=html
 
 # Specific test file
@@ -455,7 +468,7 @@ Add screenshots for UI changes.
 | Job | Runs | Blocking |
 |---|---|---|
 | `lint` (py3.12) | `ruff check src tests app.py`, `mypy`, `lint-imports` | yes |
-| `test` (py3.11, py3.12) | `pytest -m "not live"` with coverage | yes |
+| `test` (py3.11, py3.12) | `pytest -m "not live" -n auto` with coverage | yes |
 | `security` (py3.12) | `bandit -c pyproject.toml -r src`, `pip-audit -r requirements.lock --require-hashes --disable-pip` | not yet: `continue-on-error` until phase F1 |
 | `codacy-coverage` | uploads the py3.12 `coverage.xml` to Codacy | push or same-repo PR only |
 

@@ -205,11 +205,13 @@ def test_healthcheck_falha_quando_a_resposta_e_5xx(health_server):
 
 
 def test_healthcheck_falha_com_a_porta_fechada(health_server):
-    del health_server  # sem servidor ouvindo na porta efêmera livre abaixo
+    del health_server  # sem servidor ouvindo na porta efêmera abaixo
+    # Socket ligado e SEM listen(), aberto durante o teste: a porta fica reservada (nenhum
+    # outro worker do xdist a pega) e o connect leva "connection refused".
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         closed = s.getsockname()[1]
-    assert _run_healthcheck(closed).returncode != 0
+        assert _run_healthcheck(closed).returncode != 0
 
 
 def test_healthcheck_sem_app_port_cai_no_default_7777_da_imagem():

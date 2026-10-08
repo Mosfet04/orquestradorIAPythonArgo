@@ -11,7 +11,7 @@ import os
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -63,30 +63,62 @@ def _bearer(key: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {key}"}
 
 
+def _make_app(mp: pytest.MonkeyPatch, *, agent: Agent | None, **env: str) -> FastAPI:
+    """App com as variáveis pedidas (ambiente limpo); com ``agent`` monta o AgentOS como o lifespan."""
+    for name in _ENV_NAMES:
+        mp.delenv(name, raising=False)
+    mp.setenv("AGNO_TELEMETRY", "false")
+    mp.setenv("CORS_ALLOWED_ORIGINS", ALLOWED)
+    for name, value in env.items():
+        mp.setenv(name, value)
+    factory = AppFactory()
+    app = factory.create_app()
+    if agent is not None:
+        factory._mount_agent_os(app, [agent], [])
+    return app
+
+
 @pytest.fixture
 def build_app(monkeypatch: pytest.MonkeyPatch) -> Callable[..., FastAPI]:
     """App com as variáveis pedidas (ambiente limpo); ``with_agent_os`` monta como o lifespan."""
 
     def _build(*, with_agent_os: bool = True, **env: str) -> FastAPI:
-        for name in _ENV_NAMES:
-            monkeypatch.delenv(name, raising=False)
-        monkeypatch.setenv("AGNO_TELEMETRY", "false")
-        monkeypatch.setenv("CORS_ALLOWED_ORIGINS", ALLOWED)
-        for name, value in env.items():
-            monkeypatch.setenv(name, value)
-        factory = AppFactory()
-        app = factory.create_app()
-        if with_agent_os:
-            factory._mount_agent_os(app, [_agent()], [])
-        return app
+        return _make_app(monkeypatch, agent=_agent() if with_agent_os else None, **env)
 
     return _build
 
 
+# Produção típica: bind em todas as interfaces, chaves configuradas.
+PROD_ENV = {"APP_HOST": "0.0.0.0", "ENVIRONMENT": "production", **KEYS}  # noqa: S104
+
+
 @pytest.fixture
 def client(build_app: Callable[..., FastAPI]) -> TestClient:
-    """Produção típica: bind em todas as interfaces, chaves configuradas."""
-    return TestClient(build_app(APP_HOST="0.0.0.0", ENVIRONMENT="production", **KEYS))  # noqa: S104
+    """App de produção novo a cada teste (para quem passa da auth e executa handler)."""
+    return TestClient(build_app(**PROD_ENV))
+
+
+@pytest.fixture(scope="module")
+def shared_prod_app() -> Iterator[FastAPI]:
+    """O mesmo app de ``client``, montado uma vez por módulo (e por worker do xdist).
+
+    Só para testes cujo request não executa handler com estado: a auth recusa (401/403/1008),
+    o CORS responde (preflight), o roteador não casa (404) ou a rota é pública e sem estado
+    (``/livez``). Auth e CORS são imutáveis depois do ``create_app`` (as chaves são lidas só
+    ali) e o env é restaurado logo após a montagem. A guarda do teardown prova que nenhum
+    teste deste app chegou ao modelo.
+    """
+    agent = _agent()
+    with pytest.MonkeyPatch.context() as mp:
+        app = _make_app(mp, agent=agent, **PROD_ENV)
+    yield app
+    assert agent.model.calls == [], "teste com o app compartilhado executou o modelo: use a fixture `client`"  # type: ignore[union-attr]
+
+
+@pytest.fixture
+def rejecting_client(shared_prod_app: FastAPI) -> TestClient:
+    """Cliente novo (sem cookies herdados) sobre ``shared_prod_app``; ver as restrições de lá."""
+    return TestClient(shared_prod_app)
 
 
 def _assert_unauthorized(response: object) -> None:
@@ -113,14 +145,14 @@ NO_TOKEN_REQUESTS = [
 
 
 @pytest.mark.parametrize(("method", "path"), NO_TOKEN_REQUESTS)
-def test_sem_credencial_responde_401_generico(client: TestClient, method: str, path: str):
-    _assert_unauthorized(client.request(method, path))
+def test_sem_credencial_responde_401_generico(rejecting_client: TestClient, method: str, path: str):
+    _assert_unauthorized(rejecting_client.request(method, path))
 
 
-def test_rota_desconhecida_sem_credencial_e_401_e_nao_404(client: TestClient):
+def test_rota_desconhecida_sem_credencial_e_401_e_nao_404(rejecting_client: TestClient):
     """Sem chave não dá para enumerar rotas: 401 antes do roteamento."""
-    _assert_unauthorized(client.get("/nao-existe"))
-    assert client.get("/nao-existe", headers=_bearer(RUN_KEY)).status_code == 404
+    _assert_unauthorized(rejecting_client.get("/nao-existe"))
+    assert rejecting_client.get("/nao-existe", headers=_bearer(RUN_KEY)).status_code == 404
 
 
 @pytest.mark.parametrize(
@@ -152,9 +184,9 @@ def test_rota_desconhecida_sem_credencial_e_401_e_nao_404(client: TestClient):
         "header-errado",
     ],
 )
-def test_credencial_invalida_responde_401(client: TestClient, headers: dict[str, str]):
+def test_credencial_invalida_responde_401(rejecting_client: TestClient, headers: dict[str, str]):
     form = {"message": "oi", "stream": "false"}
-    _assert_unauthorized(client.post("/agents/agente-1/runs", data=form, headers=headers))
+    _assert_unauthorized(rejecting_client.post("/agents/agente-1/runs", data=form, headers=headers))
 
 
 # ── 403 com chave run em rota admin ─────────────────────────────────
@@ -182,8 +214,8 @@ ADMIN_REQUESTS = [
 
 
 @pytest.mark.parametrize(("method", "path"), ADMIN_REQUESTS)
-def test_chave_run_em_rota_admin_responde_403(client: TestClient, method: str, path: str):
-    response = client.request(method, path, headers=_bearer(RUN_KEY))
+def test_chave_run_em_rota_admin_responde_403(rejecting_client: TestClient, method: str, path: str):
+    response = rejecting_client.request(method, path, headers=_bearer(RUN_KEY))
 
     assert response.status_code == 403
     assert response.json() == FORBIDDEN
@@ -242,9 +274,9 @@ def test_bearer_tem_precedencia_sobre_x_api_key(client: TestClient):
 
 
 @pytest.mark.parametrize("path", ["/livez", "/livez/"])
-def test_livez_e_publico(client: TestClient, path: str):
+def test_livez_e_publico(rejecting_client: TestClient, path: str):
     """``/livez/`` também: o TrailingSlashMiddleware do AgentOS leva o request à mesma rota."""
-    response = client.get(path)
+    response = rejecting_client.get(path)
 
     assert response.status_code == 200 and response.json() == {"status": "ok"}
 
@@ -253,26 +285,26 @@ def test_livez_e_publico(client: TestClient, path: str):
 
 
 @pytest.mark.parametrize("path", ["/agents/agente-1/runs", "/agui", "/admin/health"])
-def test_preflight_cors_passa_sem_token(client: TestClient, path: str):
-    response = client.options(path, headers={"Origin": ALLOWED, "Access-Control-Request-Method": "POST"})
+def test_preflight_cors_passa_sem_token(rejecting_client: TestClient, path: str):
+    response = rejecting_client.options(path, headers={"Origin": ALLOWED, "Access-Control-Request-Method": "POST"})
 
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == ALLOWED
 
 
-def test_401_de_origem_permitida_leva_headers_cors(client: TestClient):
+def test_401_de_origem_permitida_leva_headers_cors(rejecting_client: TestClient):
     """Auth dentro do CORS: o navegador consegue ler o 401 (e pedir a chave)."""
-    response = client.post("/agui", json=AGUI_BODY, headers={"Origin": ALLOWED})
+    response = rejecting_client.post("/agui", json=AGUI_BODY, headers={"Origin": ALLOWED})
 
     _assert_unauthorized(response)
     assert response.headers["access-control-allow-origin"] == ALLOWED
     assert response.headers["access-control-allow-credentials"] == "true"
 
 
-def test_options_sem_cabecalhos_de_preflight_exige_chave(client: TestClient):
+def test_options_sem_cabecalhos_de_preflight_exige_chave(rejecting_client: TestClient):
     """Só o preflight de verdade (Origin + Access-Control-Request-Method) é público."""
-    _assert_unauthorized(client.options("/agents/agente-1/runs"))
-    _assert_unauthorized(client.options("/agents/agente-1/runs", headers={"Origin": ALLOWED}))
+    _assert_unauthorized(rejecting_client.options("/agents/agente-1/runs"))
+    _assert_unauthorized(rejecting_client.options("/agents/agente-1/runs", headers={"Origin": ALLOWED}))
 
 
 # ── WebSocket ───────────────────────────────────────────────────────
@@ -283,9 +315,11 @@ def test_options_sem_cabecalhos_de_preflight_exige_chave(client: TestClient):
     [{}, _bearer(WRONG_KEY), {"X-API-Key": WRONG_KEY}],
     ids=["sem-chave", "bearer-errada", "x-api-key-errada"],
 )
-def test_websocket_sem_credencial_valida_fecha_com_1008_antes_de_aceitar(client: TestClient, headers: dict[str, str]):
+def test_websocket_sem_credencial_valida_fecha_com_1008_antes_de_aceitar(
+    rejecting_client: TestClient, headers: dict[str, str]
+):
     with pytest.raises(WebSocketDisconnect) as exc:
-        with client.websocket_connect("/workflows/ws", headers=headers):
+        with rejecting_client.websocket_connect("/workflows/ws", headers=headers):
             pass  # pragma: no cover - a conexão nunca é aceita
 
     assert exc.value.code == 1008

@@ -32,7 +32,7 @@ src/presentation    controllers/rotas.
 
 ## Comandos (venv do projeto)
 ```bash
-.venv/bin/python -m pytest -m "not live"            # suíte
+.venv/bin/python -m pytest -m "not live" -n auto    # suíte (paralela; sem -n para depurar com --pdb)
 .venv/bin/python -m pytest -m unit --cov            # unit com cobertura
 .venv/bin/ruff check src tests app.py
 .venv/bin/mypy

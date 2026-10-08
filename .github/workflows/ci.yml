@@ -83,8 +83,10 @@ jobs:
       - name: Instalar dependências (locks com hash)
         run: python -m pip install --require-hashes -r requirements.lock -r requirements-dev.lock
 
+      # -n auto (pytest-xdist): um worker por núcleo físico; o pytest-cov combina a cobertura dos
+      # workers e o pytest-randomly usa a mesma seed em todos.
       - name: pytest com cobertura
-        run: python -m pytest -m "not live" --cov --cov-report=term-missing --cov-report=xml --cov-report=html
+        run: python -m pytest -m "not live" -n auto --cov --cov-report=term-missing --cov-report=xml --cov-report=html
 
       # Só a 3.12 publica cobertura (a mesma que vai para o Codacy).
       - name: Publicar relatório de cobertura

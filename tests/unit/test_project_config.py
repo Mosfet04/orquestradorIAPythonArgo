@@ -12,8 +12,11 @@ import tomllib
 from pathlib import Path
 
 import pytest
+from agno.run.cancel import get_cancellation_manager
 
 ROOT = Path(__file__).resolve().parents[2]
+# Capturado na importação (coleta), antes de qualquer fixture: o gerenciador global do processo.
+_AGNO_DEFAULT_CANCELLATION_MANAGER = get_cancellation_manager()
 TESTS_DIR = ROOT / "tests"
 
 # Markers embutidos do pytest e de plugins instalados (não precisam constar em `markers`).
@@ -83,6 +86,28 @@ def test_teste_em_tests_unit_recebe_marker_unit_pelo_conftest(request):
     """O marker vem do diretório (tests/conftest.py), não de decorator no arquivo."""
     layer_marks = {m.name for m in request.node.iter_markers()} & {"unit", "contract", "integration"}
     assert layer_marks == {"unit"}
+
+
+def test_cada_teste_recebe_um_gerenciador_de_cancelamento_novo_do_agno():
+    """Determinístico (independe de ordem e de worker): o gerenciador global capturado na
+    coleta não é o que o teste vê, e o do teste começa sem runs nem cancelamentos pendentes."""
+    current = get_cancellation_manager()
+
+    assert current is not _AGNO_DEFAULT_CANCELLATION_MANAGER
+    assert current.get_active_runs() == {}
+
+
+@pytest.mark.parametrize("vez", ["primeira", "segunda"])
+def test_cancelamento_de_run_do_agno_nao_vaza_entre_testes(vez: str):
+    """O agno guarda cancelamentos num gerenciador global do processo: um cancel de run que
+    nunca executou (ex.: ``POST /agents/x/runs/r1/cancel``) cancelaria o próximo run ``r1``
+    de outro teste no mesmo processo (worker do xdist). O conftest isola o gerenciador por
+    teste; sem isso, em série, a segunda execução falha."""
+    from agno.run import cancel
+
+    assert not cancel.is_cancelled("run-do-teste-de-isolamento")
+    cancel.cancel_run("run-do-teste-de-isolamento")
+    assert cancel.is_cancelled("run-do-teste-de-isolamento")
 
 
 def test_cobertura_so_mede_src(pyproject):

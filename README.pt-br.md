@@ -101,7 +101,7 @@ python app.py
 |---|---|
 | `requirements.in` | Dependências diretas de runtime (`agno==2.5.8` exato) |
 | `requirements.lock` | Gerado por `pip-compile --generate-hashes`; versões exatas + hashes |
-| `requirements-dev.in` / `requirements-dev.lock` | Testes e ferramentas de qualidade (pytest, pytest-randomly, ruff, mypy, import-linter, bandit, pip-audit, diff-cover, respx, pip-tools) |
+| `requirements-dev.in` / `requirements-dev.lock` | Testes e ferramentas de qualidade (pytest, pytest-randomly, pytest-xdist, ruff, mypy, import-linter, bandit, pip-audit, diff-cover, respx, pip-tools) |
 | `requirements.txt` | Só compatibilidade: `-r requirements.lock` |
 
 - O lock é gerado em Linux/CPython 3.12 e validado para Linux CPython 3.11/3.12 (Docker e CI). No Windows nativo, se o `--require-hashes` falhar, use WSL/Docker ou regenere o lock localmente.
@@ -867,6 +867,9 @@ sequenceDiagram
 ```bash
 # Todos os testes
 pytest
+
+# Suíte padrão em paralelo, como na CI (um worker por núcleo físico, pytest-xdist)
+pytest -m "not live" -n auto
 
 # Com output verboso
 pytest -v

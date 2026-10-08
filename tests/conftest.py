@@ -67,6 +67,25 @@ def setup_test_environment():
         yield
 
 
+@pytest.fixture(autouse=True)
+def isolated_agno_run_cancellation() -> Iterator[None]:
+    """Gerenciador de cancelamento de run do agno novo a cada teste.
+
+    O agno 2.5.8 guarda cancelamentos num gerenciador global do processo e um cancel de
+    run inexistente fica como intenção pendente. Sem isto, ``POST /agents/x/runs/r1/cancel``
+    num teste cancela o próximo run ``r1`` de outro teste no mesmo processo (ordem
+    aleatória, workers do xdist). Usa a API pública ``get_/set_cancellation_manager`` e
+    devolve o gerenciador original no teardown.
+    """
+    from agno.run import cancel
+    from agno.run.cancellation_management.in_memory_cancellation_manager import InMemoryRunCancellationManager
+
+    previous = cancel.get_cancellation_manager()
+    cancel.set_cancellation_manager(InMemoryRunCancellationManager())
+    yield
+    cancel.set_cancellation_manager(previous)
+
+
 @pytest.fixture
 def reset_otel_providers(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Isola os providers globais do OpenTelemetry para testes que os configuram.

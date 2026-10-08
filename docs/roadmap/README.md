@@ -25,6 +25,7 @@ Ordem de execução = numeração. Cada item passa por `/dev-cycle <item> --comm
 | F1-02 | concluído |
 | F1-03 | concluído |
 | F1-04 | concluído |
+| F1-09 | concluído |
 | F1-05 … F1-08 | pendente |
 
 ## Molde de item (lido pelo `/dev-cycle`)

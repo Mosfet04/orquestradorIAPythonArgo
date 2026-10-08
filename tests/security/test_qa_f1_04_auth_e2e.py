@@ -9,7 +9,7 @@ valores de teste, não segredos.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from types import SimpleNamespace
 from typing import Any
 
@@ -57,21 +57,25 @@ def _entities(answer: str = "resposta do agente") -> tuple[Agent, Team]:
     return agent, team
 
 
+def _make_app(mp: pytest.MonkeyPatch, entities: tuple[Agent, Team] | None, **env: str) -> FastAPI:
+    for name in _ENV_NAMES:
+        mp.delenv(name, raising=False)
+    mp.setenv("AGNO_TELEMETRY", "false")
+    mp.setenv("CORS_ALLOWED_ORIGINS", ALLOWED)
+    for name, value in env.items():
+        mp.setenv(name, value)
+    factory = AppFactory()
+    app = factory.create_app()
+    if entities is not None:
+        agent, team = entities
+        factory._mount_agent_os(app, [agent], [team])
+    return app
+
+
 @pytest.fixture
 def build_app(monkeypatch: pytest.MonkeyPatch) -> Callable[..., FastAPI]:
     def _build(*, mount: bool = True, **env: str) -> FastAPI:
-        for name in _ENV_NAMES:
-            monkeypatch.delenv(name, raising=False)
-        monkeypatch.setenv("AGNO_TELEMETRY", "false")
-        monkeypatch.setenv("CORS_ALLOWED_ORIGINS", ALLOWED)
-        for name, value in env.items():
-            monkeypatch.setenv(name, value)
-        factory = AppFactory()
-        app = factory.create_app()
-        if mount:
-            agent, team = _entities()
-            factory._mount_agent_os(app, [agent], [team])
-        return app
+        return _make_app(monkeypatch, _entities() if mount else None, **env)
 
     return _build
 
@@ -96,7 +100,32 @@ CREDENTIALS = {
 
 @pytest.fixture
 def prod(build_app: Callable[..., FastAPI]) -> TestClient:
+    """App de produção novo a cada teste (para quem passa da auth e executa handler)."""
     return TestClient(build_app(**PROD), raise_server_exceptions=False)
+
+
+@pytest.fixture(scope="module")
+def shared_prod_app() -> Iterator[FastAPI]:
+    """O mesmo app de ``prod``, montado uma vez por módulo (e por worker do xdist).
+
+    Só para testes cujo request não executa handler com estado: a auth recusa (401/403),
+    o CORS responde (preflight), o roteador não casa (404/405) ou é ``/livez``. Auth e
+    CORS são imutáveis depois do ``create_app`` (as chaves são lidas só ali) e o env é
+    restaurado logo após a montagem. A guarda do teardown prova que nenhum teste deste app
+    chegou a um modelo.
+    """
+    agent, team = _entities()
+    with pytest.MonkeyPatch.context() as mp:
+        app = _make_app(mp, (agent, team), **PROD)
+    yield app
+    calls = [*agent.model.calls, *team.model.calls]  # type: ignore[union-attr]
+    assert calls == [], "teste com o app compartilhado executou um modelo: use a fixture `prod`"
+
+
+@pytest.fixture
+def prod_rejecting(shared_prod_app: FastAPI) -> TestClient:
+    """Cliente novo (sem cookies herdados) sobre ``shared_prod_app``; ver as restrições de lá."""
+    return TestClient(shared_prod_app, raise_server_exceptions=False)
 
 
 @pytest.mark.parametrize("headers", CREDENTIALS.values(), ids=CREDENTIALS)
@@ -461,8 +490,10 @@ def test_chave_muito_longa_funciona(build_app: Callable[..., FastAPI]):
     ],
     ids=["bytes-nao-ascii", "x-api-key-binaria", "token-gigante", "bearer-vazio-e-chave-vazia"],
 )
-def test_credencial_binaria_ou_gigante_e_401_nunca_500(prod: TestClient, raw_headers: list[tuple[bytes, bytes]]):
-    response = prod.get("/agents", headers=raw_headers)
+def test_credencial_binaria_ou_gigante_e_401_nunca_500(
+    prod_rejecting: TestClient, raw_headers: list[tuple[bytes, bytes]]
+):
+    response = prod_rejecting.get("/agents", headers=raw_headers)
 
     assert response.status_code == 401 and response.json() == {"detail": "unauthorized"}
 
@@ -476,17 +507,18 @@ def test_primeiro_header_authorization_vale_e_duplicata_nao_ajuda(prod: TestClie
     assert prod.get("/agents", headers=right_then_wrong).status_code == 200
 
 
-def test_bearer_invalido_com_x_api_key_valida_nao_cai_no_x_api_key(prod: TestClient):
+def test_bearer_invalido_com_x_api_key_valida_nao_cai_no_x_api_key(prod_rejecting: TestClient):
     """Bearer presente e malformado do esquema Bearer mas com token errado: não faz fallback para X-API-Key."""
     headers = {"Authorization": "Bearer errada", "X-API-Key": RUN_KEY}
 
-    assert prod.get("/agents", headers=headers).status_code == 401
+    assert prod_rejecting.get("/agents", headers=headers).status_code == 401
 
 
-def test_chave_run_no_corpo_ou_na_query_nao_autentica(prod: TestClient):
-    assert prod.get("/agents", params={"api_key": RUN_KEY, "token": RUN_KEY}).status_code == 401
-    assert prod.post("/agents/agente-1/runs", data={"message": "oi", "api_key": RUN_KEY}).status_code == 401
-    assert prod.get("/agents", cookies={"api_key": RUN_KEY, "Authorization": f"Bearer {RUN_KEY}"}).status_code == 401
+def test_chave_run_no_corpo_ou_na_query_nao_autentica(prod_rejecting: TestClient):
+    assert prod_rejecting.get("/agents", params={"api_key": RUN_KEY, "token": RUN_KEY}).status_code == 401
+    assert prod_rejecting.post("/agents/agente-1/runs", data={"message": "oi", "api_key": RUN_KEY}).status_code == 401
+    cookies = {"api_key": RUN_KEY, "Authorization": f"Bearer {RUN_KEY}"}
+    assert prod_rejecting.get("/agents", cookies=cookies).status_code == 401
 
 
 # ── contorno do classificador por caminho ────────────────────────────
@@ -513,9 +545,9 @@ def test_chave_run_no_corpo_ou_na_query_nao_autentica(prod: TestClient):
         "/%6detrics/cache",
     ],
 )
-def test_run_key_nao_alcanca_rota_admin_por_caminho_disfarcado(prod: TestClient, path: str):
+def test_run_key_nao_alcanca_rota_admin_por_caminho_disfarcado(prod_rejecting: TestClient, path: str):
     """O que a chave run recebe nunca pode ser o corpo do handler admin (health/cache)."""
-    response = prod.get(path, headers=_bearer(RUN_KEY))
+    response = prod_rejecting.get(path, headers=_bearer(RUN_KEY))
 
     assert response.status_code in (403, 404, 400, 307, 308, 422)
     body = response.text
@@ -561,25 +593,25 @@ async def test_barra_dupla_no_inicio_nao_vira_admin_com_chave_run(build_app: Cal
 @pytest.mark.parametrize(
     "path", ["/livez/x", "/livez.json", "/livezz", "/livez;", "//livez", "/LIVEZ", "/livez/..", "/%6cvez"]
 )
-def test_livez_nao_e_curinga(prod: TestClient, path: str):
+def test_livez_nao_e_curinga(prod_rejecting: TestClient, path: str):
     """Só a rota exata `/livez` é pública (com ou sem barra final)."""
-    response = prod.get(path)
+    response = prod_rejecting.get(path)
 
     assert response.status_code == 401 or (path in ("/livez/..",) and response.status_code in (200, 401))
 
 
 @pytest.mark.parametrize("method", ["PUT", "PATCH", "TRACE", "CONNECT", "PROPFIND", "MKCOL"])
-def test_metodo_incomum_em_rota_admin_exige_admin(prod: TestClient, method: str):
-    response = prod.request(method, "/admin/refresh-cache", headers=_bearer(RUN_KEY))
+def test_metodo_incomum_em_rota_admin_exige_admin(prod_rejecting: TestClient, method: str):
+    response = prod_rejecting.request(method, "/admin/refresh-cache", headers=_bearer(RUN_KEY))
 
     assert response.status_code == 403
 
 
-def test_head_em_rota_get_admin_exige_admin(prod: TestClient):
-    assert prod.head("/admin/health", headers=_bearer(RUN_KEY)).status_code == 403
-    assert prod.head("/admin/health").status_code == 401
+def test_head_em_rota_get_admin_exige_admin(prod_rejecting: TestClient):
+    assert prod_rejecting.head("/admin/health", headers=_bearer(RUN_KEY)).status_code == 403
+    assert prod_rejecting.head("/admin/health").status_code == 401
     # passou da auth: o 405 é do roteador (a rota só aceita GET), não 401/403
-    assert prod.head("/admin/health", headers=_bearer(ADMIN_KEY)).status_code == 405
+    assert prod_rejecting.head("/admin/health", headers=_bearer(ADMIN_KEY)).status_code == 405
 
 
 @pytest.mark.parametrize(
@@ -590,14 +622,14 @@ def test_head_em_rota_get_admin_exige_admin(prod: TestClient):
         {"X-HTTP-Method": "GET"},
     ],
 )
-def test_method_override_nao_rebaixa_delete_para_get(prod: TestClient, override: dict[str, str]):
+def test_method_override_nao_rebaixa_delete_para_get(prod_rejecting: TestClient, override: dict[str, str]):
     """DELETE /sessions/s1 é admin; um header de override não pode mudar a classificação."""
-    response = prod.request("DELETE", "/sessions/s1", headers={**_bearer(RUN_KEY), **override})
+    response = prod_rejecting.request("DELETE", "/sessions/s1", headers={**_bearer(RUN_KEY), **override})
 
     assert response.status_code == 403
 
 
-def test_cabecalhos_de_forward_e_host_nao_mudam_a_exigencia_com_chaves(prod: TestClient):
+def test_cabecalhos_de_forward_e_host_nao_mudam_a_exigencia_com_chaves(prod_rejecting: TestClient):
     spoof = {
         "X-Forwarded-For": "127.0.0.1",
         "X-Real-IP": "127.0.0.1",
@@ -605,29 +637,29 @@ def test_cabecalhos_de_forward_e_host_nao_mudam_a_exigencia_com_chaves(prod: Tes
         "Host": "localhost",
     }
 
-    assert prod.get("/agents", headers=spoof).status_code == 401
-    assert prod.get("/admin/health", headers={**spoof, **_bearer(RUN_KEY)}).status_code == 403
+    assert prod_rejecting.get("/agents", headers=spoof).status_code == 401
+    assert prod_rejecting.get("/admin/health", headers={**spoof, **_bearer(RUN_KEY)}).status_code == 403
 
 
 # ── CORS e 401/403 ───────────────────────────────────────────────────
 
 
-def test_origem_nao_permitida_leva_401_sem_acao(prod: TestClient):
-    response = prod.get("/agents", headers={"Origin": "https://evil.example.com"})
+def test_origem_nao_permitida_leva_401_sem_acao(prod_rejecting: TestClient):
+    response = prod_rejecting.get("/agents", headers={"Origin": "https://evil.example.com"})
 
     assert response.status_code == 401
     assert "access-control-allow-origin" not in response.headers
 
 
-def test_403_de_origem_permitida_leva_headers_cors(prod: TestClient):
-    response = prod.get("/admin/health", headers={**_bearer(RUN_KEY), "Origin": ALLOWED})
+def test_403_de_origem_permitida_leva_headers_cors(prod_rejecting: TestClient):
+    response = prod_rejecting.get("/admin/health", headers={**_bearer(RUN_KEY), "Origin": ALLOWED})
 
     assert response.status_code == 403
     assert response.headers["access-control-allow-origin"] == ALLOWED
 
 
-def test_preflight_publico_inclusive_com_headers_de_chave(prod: TestClient):
-    response = prod.options(
+def test_preflight_publico_inclusive_com_headers_de_chave(prod_rejecting: TestClient):
+    response = prod_rejecting.options(
         "/agents/agente-1/runs",
         headers={
             "Origin": ALLOWED,
@@ -641,8 +673,8 @@ def test_preflight_publico_inclusive_com_headers_de_chave(prod: TestClient):
     assert "authorization" in allowed and "x-api-key" in allowed
 
 
-def test_preflight_de_origem_nao_permitida_nao_vaza_dado(prod: TestClient):
-    response = prod.options(
+def test_preflight_de_origem_nao_permitida_nao_vaza_dado(prod_rejecting: TestClient):
+    response = prod_rejecting.options(
         "/admin/health", headers={"Origin": "https://evil.example.com", "Access-Control-Request-Method": "GET"}
     )
 
@@ -653,9 +685,9 @@ def test_preflight_de_origem_nao_permitida_nao_vaza_dado(prod: TestClient):
 # ── 401/403 sem detalhe ──────────────────────────────────────────────
 
 
-def test_corpo_de_401_e_403_nao_carrega_detalhe(prod: TestClient):
-    unauthorized = prod.get("/admin/health")
-    forbidden = prod.get("/admin/health", headers=_bearer(RUN_KEY))
+def test_corpo_de_401_e_403_nao_carrega_detalhe(prod_rejecting: TestClient):
+    unauthorized = prod_rejecting.get("/admin/health")
+    forbidden = prod_rejecting.get("/admin/health", headers=_bearer(RUN_KEY))
 
     assert unauthorized.content == b'{"detail":"unauthorized"}'
     assert forbidden.content == b'{"detail":"forbidden"}'

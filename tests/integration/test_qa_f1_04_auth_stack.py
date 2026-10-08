@@ -237,12 +237,6 @@ def test_spans_nao_carregam_a_chave(
 # ── servidor uvicorn real ────────────────────────────────────────────
 
 
-def _free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
-
-
 def _raw_ws_handshake_status(port: int, *, host: str, address: str = "127.0.0.1") -> int:
     """Handshake WebSocket cru (o cliente `websockets` não deixa trocar o Host); devolve o status."""
     request = (
@@ -256,21 +250,29 @@ def _raw_ws_handshake_status(port: int, *, host: str, address: str = "127.0.0.1"
 
 @contextmanager
 def _serve(app: FastAPI, host: str) -> Iterator[int]:
-    port = _free_port()
+    """uvicorn real num socket já ligado a uma porta efêmera.
+
+    O socket é entregue ao uvicorn ainda aberto: sem a janela entre "achar porta livre" e
+    o bind do servidor, em que outro worker do pytest-xdist poderia tomar a mesma porta.
+    """
+    listener = socket.socket()
+    listener.bind((host, 0))
+    port = int(listener.getsockname()[1])
     config = uvicorn.Config(app, host=host, port=port, log_level="warning", lifespan="off", ws="websockets-sansio")
     server = uvicorn.Server(config)
-    thread = threading.Thread(target=lambda: asyncio.run(server.serve()), daemon=True)
-    thread.start()
-    deadline = time.monotonic() + 15
-    while not server.started:
-        if time.monotonic() > deadline or not thread.is_alive():
-            raise RuntimeError("uvicorn de teste não subiu")
-        time.sleep(0.02)
+    thread = threading.Thread(target=lambda: asyncio.run(server.serve(sockets=[listener])), daemon=True)
     try:
+        thread.start()
+        deadline = time.monotonic() + 15
+        while not server.started:
+            if time.monotonic() > deadline or not thread.is_alive():
+                raise RuntimeError("uvicorn de teste não subiu")
+            time.sleep(0.02)
         yield port
     finally:
         server.should_exit = True
         thread.join(timeout=15)
+        listener.close()
 
 
 @pytest.fixture

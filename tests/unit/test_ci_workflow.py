@@ -193,6 +193,21 @@ def test_gates_da_fase_f0(ci):
             assert not step.get("continue-on-error"), (job_id, step.get("name"))
 
 
+def test_job_de_teste_roda_em_paralelo_com_xdist_do_dev_lock(ci):
+    """F1-09: `-n auto` (pytest-xdist) no job de testes, e o plugin vem do dev lock com hash."""
+    commands = [c for s in ci["jobs"]["test"]["steps"] for c in _commands(s.get("run", "")) if "pytest" in c]
+    assert len(commands) == 1
+    args = shlex.split(commands[0])
+    assert "-n" in args and args[args.index("-n") + 1] == "auto", args
+    assert "--cov" in args  # a cobertura dos workers é combinada pelo pytest-cov
+
+    dev_in = (ROOT / "requirements-dev.in").read_text(encoding="utf-8")
+    dev_lock = (ROOT / "requirements-dev.lock").read_text(encoding="utf-8")
+    assert re.search(r"^pytest-xdist>=", dev_in, re.MULTILINE)
+    assert re.search(r"^pytest-xdist==\S+ \\\n\s+--hash=sha256:", dev_lock, re.MULTILINE)
+    assert re.search(r"^execnet==\S+ \\\n\s+--hash=sha256:", dev_lock, re.MULTILINE)
+
+
 def test_pip_audit_ignora_so_a_vulnerabilidade_conhecida_do_agno(ci):
     """Única exceção aceita até a F3: PYSEC-2026-2333 (agno, backend ClickHouse não usado)."""
     security = " ".join(s.get("run", "") for s in ci["jobs"]["security"]["steps"])

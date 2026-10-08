@@ -136,7 +136,7 @@ Choose your language for the complete guide (architecture, configuration, databa
 ## 🤝 Contributing
 
 1. Fork → Branch → Commit (conventional) → PR
-2. Run `pytest` (all tests must pass)
+2. Run `pytest -m "not live" -n auto` (all tests must pass)
 3. Follow Onion Architecture — no infrastructure imports in domain
 
 ## 📄 License
