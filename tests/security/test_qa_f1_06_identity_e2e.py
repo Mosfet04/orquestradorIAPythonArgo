@@ -1,7 +1,7 @@
 """QA F1-06 (B11): lacunas de ponta a ponta da identidade por ``user_id``.
 
 Cadeia real como em ``test_user_memory_isolation.py``: factories -> Agent/Team do agno ->
-``AppFactory._mount_agent_os`` (auth por chaves run/admin) -> REST. Modelo ``FakeChatModel``,
+``mount_agent_os`` (``AppFactory._mount_runtime``) (auth por chaves run/admin) -> REST. Modelo ``FakeChatModel``,
 db ``InMemoryDb`` compartilhado. Cobre o que o teste do dev não cobre: memória agêntica (o modelo
 chamando a tool de memória do agno), ``user_id`` explícito ``"default"`` (reservado), formatos hostis de
 ``user_id``, sessão compartilhada por dois usuários, team delegando a membro com memória e o que as
@@ -37,6 +37,7 @@ from tests.fakes import (
     InMemoryToolRepository,
     RecordingLogger,
 )
+from tests.fakes.web import mount_agent_os
 
 RUN_KEY = "qa6-run-key-" + "r" * 22
 ADMIN_KEY = "qa6-admin-key-" + "a" * 20
@@ -136,7 +137,7 @@ def client_for(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[..., TestCl
         monkeypatch.setenv("API_KEY_ADMIN", ADMIN_KEY)
         factory = AppFactory()
         app = factory.create_app()
-        factory._mount_agent_os(app, agents, teams or [])
+        mount_agent_os(factory, app, agents, teams or [])
         client = TestClient(app, raise_server_exceptions=False)
         clients.append(client)
         return client

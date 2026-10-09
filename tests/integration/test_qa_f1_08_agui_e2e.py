@@ -1,6 +1,6 @@
 """QA do F1-08: AG-UI por entidade de ponta a ponta (app real + chave run).
 
-Pilha: ``AppFactory.create_app`` (CORS + auth por chave) -> ``_mount_agent_os`` -> ``POST
+Pilha: ``AppFactory.create_app`` (CORS + auth por chave) -> ``mount_agent_os`` -> ``POST
 /agui/{id}``. Modelo = ``FakeChatModel`` roteirizado; tools HTTP com ``httpx.MockTransport``
 (nada sai da máquina). Todo stream é parseado com os modelos de ``ag_ui.core`` e confere as
 regras de sequência do protocolo (``tests/fakes/agui.py``). Chaves são valores de teste.
@@ -46,6 +46,7 @@ from src.infrastructure.runtime.agno.agent_factory_service import AgentFactorySe
 from src.infrastructure.web.app_factory import AppFactory
 from tests.fakes import FakeChatModel, FakeEmbedderFactory, InMemoryToolRepository, RecordingLogger
 from tests.fakes.agui import assert_valid_run, parse_agui_sse, text_of, types_of
+from tests.fakes.web import agno_runtime, mount_agent_os
 
 RUN_KEY = "qa8-run-key-" + "r" * 21
 ADMIN_KEY = "qa8-admin-key-" + "a" * 19
@@ -107,7 +108,7 @@ def _mount(monkeypatch: pytest.MonkeyPatch, agents: list[Agent], teams: list[Tea
         monkeypatch.setenv(name, value)
     factory = AppFactory()
     app = factory.create_app()
-    factory._mount_agent_os(app, agents, teams)
+    mount_agent_os(factory, app, agents, teams)
     return app
 
 
@@ -654,7 +655,7 @@ async def test_runs_concorrentes_em_entidades_diferentes_nao_misturam_respostas(
 
 
 def test_lifespan_real_monta_o_agui_por_entidade_e_desmonta_sem_resto(monkeypatch: pytest.MonkeyPatch):
-    """Startup pelo lifespan (não só ``_mount_agent_os``): carga de entidades -> rotas -> shutdown."""
+    """Startup pelo lifespan (não só ``mount_agent_os``): carga de entidades -> rotas -> shutdown."""
     from types import SimpleNamespace
 
     from src.infrastructure.web import app_factory
@@ -669,13 +670,18 @@ def test_lifespan_real_monta_o_agui_por_entidade_e_desmonta_sem_resto(monkeypatc
     app = factory.create_app()
     cleaned: list[bool] = []
 
-    async def ensure_container() -> None:
+    runtime = agno_runtime()
+
+    async def ensure_container() -> Any:
         async def cleanup() -> None:
             cleaned.append(True)
 
-        factory._container = SimpleNamespace(config=factory._config, cleanup=cleanup)  # type: ignore[assignment]
+        factory._container = SimpleNamespace(  # type: ignore[assignment]
+            config=factory._config, cleanup=cleanup, get_agent_runtime=lambda: runtime
+        )
+        return factory._container
 
-    async def load_all() -> tuple[list[Agent], list[Team]]:
+    async def load_all(_container: object) -> tuple[list[Agent], list[Team]]:
         return [agent, member], [team]
 
     monkeypatch.setattr(factory, "_ensure_container", ensure_container)

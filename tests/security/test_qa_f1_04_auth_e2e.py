@@ -22,9 +22,11 @@ from starlette.testclient import TestClient
 from starlette.types import ASGIApp
 
 from src.infrastructure.config.app_config import API_KEY_MIN_LENGTH
+from src.infrastructure.runtime.agno import AgnoRuntime
 from src.infrastructure.web.api_key_auth import RouteAccess, classify_route
 from src.infrastructure.web.app_factory import AppFactory
 from tests.fakes import FakeChatModel, loopback_client
+from tests.fakes.web import agno_runtime, mount_agent_os
 
 ALL_INTERFACES = "0.0.0" + ".0"  # bind recusado sem chaves: é o cenário sob teste
 RUN_KEY = "qa-run-key-" + "r" * 21
@@ -68,7 +70,7 @@ def _make_app(mp: pytest.MonkeyPatch, entities: tuple[Agent, Team] | None, **env
     app = factory.create_app()
     if entities is not None:
         agent, team = entities
-        factory._mount_agent_os(app, [agent], [team])
+        mount_agent_os(factory, app, [agent], [team])
     return app
 
 
@@ -207,7 +209,7 @@ def test_modelo_nao_e_chamado_quando_a_auth_recusa(monkeypatch: pytest.MonkeyPat
     agent, team = _entities()
     factory = AppFactory()
     app = factory.create_app()
-    factory._mount_agent_os(app, [agent], [team])
+    mount_agent_os(factory, app, [agent], [team])
     client = TestClient(app, raise_server_exceptions=False)
 
     client.post("/agents/agente-1/runs", data={"message": "oi", "stream": "false"})
@@ -255,7 +257,7 @@ def sweep_apps() -> dict[str, FastAPI]:
             factory = AppFactory()
             app = factory.create_app()
             agent, team = _entities()
-            factory._mount_agent_os(app, [agent], [team])
+            mount_agent_os(factory, app, [agent], [team])
             apps[label] = app
     return apps
 
@@ -308,6 +310,8 @@ def test_varredura_toda_rota_real_respeita_a_classe(sweep_apps: dict[str, FastAP
         ("GET", "/registry", {200}),
         ("GET", "/components", {503}),  # AgentOS sem db: stub 503 (e não 401/403)
         ("GET", "/schedules", {503}),
+        ("GET", "/approvals", {503}),  # F2-05: decisão sobre run de outro usuário é do operador
+        ("POST", "/approvals/qualquer/resolve", {503}),
         ("POST", "/optimize-memories", {422}),
         ("POST", "/knowledge/search", {422}),
         ("POST", "/knowledge/content", {400, 422}),
@@ -734,6 +738,7 @@ def _lifespan_client(monkeypatch: pytest.MonkeyPatch, env: dict[str, str]) -> tu
     for name, value in env.items():
         monkeypatch.setenv(name, value)
     agent, team = _entities()
+    runtime = agno_runtime()
 
     class _Container:
         def __init__(self, config: AppConfig) -> None:
@@ -742,6 +747,9 @@ def _lifespan_client(monkeypatch: pytest.MonkeyPatch, env: dict[str, str]) -> tu
 
         def get_orquestrador_controller(self) -> _Controller:
             return _Controller([agent], [team])
+
+        def get_agent_runtime(self) -> AgnoRuntime:
+            return runtime
 
         async def cleanup(self) -> None:
             return None
@@ -772,14 +780,13 @@ def test_lifespan_real_monta_o_agentos_com_a_auth_ativa(monkeypatch: pytest.Monk
 
 def test_lifespan_com_falha_ao_montar_o_agentos_continua_com_auth(monkeypatch: pytest.MonkeyPatch):
     """Falha na montagem: o app segue só com as rotas admin, e elas continuam atrás da auth."""
-    from src.infrastructure.web import app_factory
 
     class _Quebra:
         def __init__(self, **_: object) -> None:
             raise RuntimeError("montagem quebrou")
 
     client, _ = _lifespan_client(monkeypatch, PROD)
-    monkeypatch.setattr(app_factory, "AgentOS", _Quebra)
+    monkeypatch.setattr("src.infrastructure.runtime.agno.runtime.AgentOS", _Quebra)
 
     with client:
         assert client.get("/livez").status_code == 200

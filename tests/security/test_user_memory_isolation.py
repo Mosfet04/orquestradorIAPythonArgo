@@ -1,7 +1,7 @@
 """F1-06 (B11): memória de usuário isolada por ``user_id``, de ponta a ponta.
 
 Cadeia real: ``AgentFactoryService``/``TeamFactoryService`` -> ``Agent``/``Team`` do agno ->
-``AppFactory._mount_agent_os`` (AgentOS 2.5.8, auth com chave run) -> REST e AG-UI. O
+``mount_agent_os`` (``AppFactory._mount_runtime``) (AgentOS 2.5.8, auth com chave run) -> REST e AG-UI. O
 modelo é o ``FakeChatModel``; o db do agno é o ``InMemoryDb`` (sem Mongo), compartilhado
 por todos, como o Mongo em produção.
 
@@ -38,6 +38,7 @@ from tests.fakes import (
     InMemoryToolRepository,
     RecordingLogger,
 )
+from tests.fakes.web import mount_agent_os
 
 RUN_KEY = "qa-run-key-" + "r" * 21
 ADMIN_KEY = "qa-admin-key-" + "a" * 19
@@ -125,7 +126,7 @@ def client_for(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[..., TestCl
         monkeypatch.setenv("API_KEY_ADMIN", ADMIN_KEY)
         factory = AppFactory()
         app = factory.create_app()
-        factory._mount_agent_os(app, agents, teams or [])
+        mount_agent_os(factory, app, agents, teams or [])
         client = TestClient(app, raise_server_exceptions=False)
         clients.append(client)
         return client

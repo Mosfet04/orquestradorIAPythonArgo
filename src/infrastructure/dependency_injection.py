@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Optional
+from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorClient
 
@@ -83,7 +83,7 @@ class HealthService:
         try:
             await self._mongo_client.admin.command("ping")
             return {"status": "healthy"}
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - health reporta unhealthy; tipo no log
             self._logger.warning(
                 "Health check: MongoDB indisponível", error_type=type(exc).__name__
             )
@@ -124,14 +124,24 @@ class DependencyContainer:
     def __init__(self, config: AppConfig) -> None:
         self.config = config
         self._logger: ILogger = StructlogLoggerAdapter("app")
-        self._mongo_client: Optional[AsyncIOMotorClient] = None
-        self._health_service: Optional[HealthService] = None
-        self._controller: Optional[OrquestradorController] = None
+        self._mongo_client: AsyncIOMotorClient | None = None
+        self._health_service: HealthService | None = None
+        self._controller: OrquestradorController | None = None
+        self._runtime: AgnoRuntime | None = None
 
     @classmethod
     async def create_async(cls, config: AppConfig) -> DependencyContainer:
+        """Container pronto; se a inicialização falhar no meio, fecha o que já abriu e re-levanta.
+
+        Quem chama só recebe o container quando tudo deu certo, então não teria como fechar o
+        cliente Mongo de uma inicialização parcial (BUG-F2-03-QA-2).
+        """
         container = cls(config)
-        await container._initialize()
+        try:
+            await container._initialize()
+        except BaseException:
+            await container.cleanup()
+            raise
         return container
 
     async def _initialize(self) -> None:
@@ -150,7 +160,7 @@ class DependencyContainer:
         )
         try:
             await self._mongo_client.admin.command("ping")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - o app sobe sem Mongo (health reporta); logado
             self._logger.warning(
                 "MongoDB não disponível na inicialização", error=str(exc)
             )
@@ -177,7 +187,7 @@ class DependencyContainer:
         )
         try:
             await tree_repo.ensure_indexes()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - índices são otimização; logado
             self._logger.warning(
                 "Não foi possível criar índices da árvore de documentos",
                 error=str(exc),
@@ -216,6 +226,7 @@ class DependencyContainer:
             model_factory=providers,
         )
         runtime = AgnoRuntime(agent_factory=agent_factory, team_factory=team_factory)
+        self._runtime = runtime
 
         team_config_repo = MongoTeamConfigRepository(
             connection_string=conn, database_name=db, logger=self._logger
@@ -267,8 +278,14 @@ class DependencyContainer:
             raise RuntimeError("Container não inicializado: chame create_async() antes")
         return self._controller
 
+    def get_agent_runtime(self) -> AgnoRuntime:
+        """Runtime que monta as entidades e as serve no app (``mount``/``start``/``close``)."""
+        if self._runtime is None:
+            raise RuntimeError("Container não inicializado: chame create_async() antes")
+        return self._runtime
+
     @property
-    def health_service(self) -> Optional[HealthService]:
+    def health_service(self) -> HealthService | None:
         return self._health_service
 
     async def cleanup(self) -> None:
@@ -277,7 +294,7 @@ class DependencyContainer:
                 result: Any = self._mongo_client.close()
                 if asyncio.iscoroutine(result):
                     await result
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - shutdown segue; tipo no log
                 # Shutdown segue mesmo se o driver falhar ao fechar; o tipo vai ao log.
                 self._logger.warning(
                     "Falha ao fechar o cliente MongoDB", error_type=type(exc).__name__

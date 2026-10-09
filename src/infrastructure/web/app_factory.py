@@ -1,35 +1,37 @@
-"""Factory para criação da aplicação FastAPI com AgentOS (agno v2.5)."""
+"""Borda HTTP da aplicação: FastAPI, CORS, auth, métricas, rotas próprias e lifespan.
+
+O runtime de agentes (hoje o ``AgnoRuntime``, com o AgentOS do agno 2.5) é montado no lifespan:
+container -> entidades -> ``runtime.mount``/``start`` e, no shutdown, ``runtime.close``.
+"""
 
 from __future__ import annotations
 
 import os
+import time
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Any
 
-from agno.os import AgentOS
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from src.domain.ports import AgentHandle, TeamHandle
 from src.infrastructure.config.app_config import AppConfig
 from src.infrastructure.dependency_injection import DependencyContainer
 from src.infrastructure.logging.logger_adapter import StructlogLoggerAdapter
+from src.infrastructure.runtime.agno import AgnoRuntime
 from src.infrastructure.telemetry import (
     TelemetryMetrics,
     setup_telemetry,
     shutdown_telemetry,
 )
-from src.infrastructure.web.agui_router import build_agui_router
 from src.infrastructure.web.api_key_auth import (
     ApiKeyAuthMiddleware,
     ApiKeys,
     resolve_api_keys,
 )
 from src.infrastructure.web.metrics_middleware import MetricsMiddleware
-from src.infrastructure.web.run_cancellation import (
-    build_run_cancel_router,
-    install_run_cancellation_manager,
-)
 
 # CORS explícito (nada de "*"): o que o AgentOS/os.agno.com e o AG-UI usam. O Starlette
 # soma os headers CORS-safelisted (Accept, Accept-Language, Content-Language, Content-Type).
@@ -56,7 +58,7 @@ def _disable_agno_telemetry_by_default() -> None:
 
 
 class AppFactory:
-    """Cria e configura a aplicação FastAPI + AgentOS.
+    """Cria e configura a aplicação FastAPI (borda) e, no lifespan, o runtime de agentes.
 
     A app FastAPI é criada **sincronamente** para que ``uvicorn`` receba
     um objeto ASGI real (não uma coroutine).  Toda inicialização async
@@ -64,9 +66,10 @@ class AppFactory:
     """
 
     def __init__(self) -> None:
-        self._container: Optional[DependencyContainer] = None
-        self._config: Optional[AppConfig] = None
-        self._api_keys: Optional[ApiKeys] = None
+        self._container: DependencyContainer | None = None
+        self._config: AppConfig | None = None
+        self._api_keys: ApiKeys | None = None
+        self._lifespan_ran = False
         self._logger = StructlogLoggerAdapter("app_factory")
 
     def create_app(self) -> FastAPI:
@@ -119,15 +122,14 @@ class AppFactory:
     def _apply_edge_middleware(self, app: FastAPI) -> None:
         """(Re)instala CORS (mais externo) e, logo dentro dele, a auth por chave de API.
 
-        O ``AgentOS.get_app()`` troca o CORS do base_app por um com métodos e headers ``*``
-        e origens mescladas (agno/os/utils.py, ``update_cors_middleware``) e põe o
-        ``TrailingSlashMiddleware`` na frente; por isso esta função roda de novo depois da
-        montagem, deixando a ordem CORS -> auth -> demais.
+        A montagem do runtime troca o CORS do app por um com métodos e headers ``*`` e põe o
+        ``TrailingSlashMiddleware`` na frente (``AgnoRuntime.mount``); por isso esta função roda
+        de novo depois da montagem, deixando a ordem CORS -> auth -> demais.
         """
         if self._config is None:
             raise RuntimeError("AppConfig não carregado: chame create_app() antes")
         config = self._config
-        edge = (CORSMiddleware, ApiKeyAuthMiddleware)
+        edge: tuple[object, ...] = (CORSMiddleware, ApiKeyAuthMiddleware)
         app.user_middleware = [m for m in app.user_middleware if m.cls not in edge]
         app.middleware_stack = None  # reconstruída no próximo request
         app.add_middleware(
@@ -151,12 +153,12 @@ class AppFactory:
 
     def _add_admin_endpoints(self, app: FastAPI) -> None:
         @app.get("/livez")
-        async def liveness():
+        async def liveness() -> dict[str, str]:
             """Processo vivo. Sem dependências (Mongo/OTel): é o alvo do HEALTHCHECK."""
             return {"status": "ok"}
 
         @app.get("/admin/health")
-        async def health_check():
+        async def health_check() -> Any:
             if self._container and self._container.health_service:
                 result = await self._container.health_service.check_async()
                 status_code = 200 if result.get("status") == "healthy" else 503
@@ -164,14 +166,14 @@ class AppFactory:
             return {"status": "healthy"}
 
         @app.get("/metrics/cache")
-        async def cache_metrics():
+        async def cache_metrics() -> dict[str, Any]:
             if self._container:
                 ctrl = self._container.get_orquestrador_controller()
                 return ctrl.get_cache_stats()
             return {"status": "no_cache"}
 
         @app.post("/admin/refresh-cache")
-        async def refresh_cache():
+        async def refresh_cache() -> dict[str, str]:
             if self._container:
                 ctrl = self._container.get_orquestrador_controller()
                 await ctrl.refresh_agents()
@@ -180,10 +182,10 @@ class AppFactory:
 
     # ── lifespan ────────────────────────────────────────────────────
 
-    async def _ensure_container(self) -> None:
+    async def _ensure_container(self) -> DependencyContainer:
         """Garante que o DependencyContainer esteja inicializado."""
         if self._container:
-            return
+            return self._container
         self._logger.info("Lifespan: carregando AppConfig...")
         if self._config is None:
             self._config = AppConfig.load()
@@ -194,10 +196,11 @@ class AppFactory:
         )
         self._container = await DependencyContainer.create_async(config)
         self._logger.info("Lifespan: container criado com sucesso")
+        return self._container
 
-    async def _load_agents(self):
+    async def _load_agents(self, container: DependencyContainer) -> list[AgentHandle]:
         """Aquece cache e retorna lista de agentes ativos."""
-        controller = self._container.get_orquestrador_controller()
+        controller = container.get_orquestrador_controller()
         self._logger.info("Lifespan: warm up cache...")
         await controller.warm_up_cache()
 
@@ -210,10 +213,9 @@ class AppFactory:
         )
         return agents
 
-    async def _load_teams(self):
+    async def _load_teams(self, container: DependencyContainer) -> list[TeamHandle]:
         """Carrega teams ativos (dependem dos agentes em cache)."""
-        controller = self._container.get_orquestrador_controller()
-        teams = await controller.get_teams()
+        teams = await container.get_orquestrador_controller().get_teams()
         self._logger.info(
             "Lifespan: teams carregados",
             team_count=len(teams) if teams else 0,
@@ -234,49 +236,35 @@ class AppFactory:
                 app,
                 excluded_urls=_OTEL_EXCLUDED_URLS,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - o app sobe sem tracing HTTP; logado
             self._logger.warning(
                 "OpenTelemetry FastAPI instrumentation não disponível — ignorando",
                 error_type=type(exc).__name__,
             )
 
-    def _mount_agent_os(self, app: FastAPI, agents: list, teams: list) -> None:
-        """Monta o AgentOS no app base e, depois dele, o AG-UI por entidade (``/agui/{id}``).
+    def _mount_runtime(
+        self,
+        app: FastAPI,
+        runtime: AgnoRuntime,
+        agents: Sequence[AgentHandle],
+        teams: Sequence[TeamHandle],
+    ) -> None:
+        """Monta as rotas do runtime (AgentOS, cancel, AG-UI) e reinstala a borda por fora.
 
-        Sem a interface ``AGUI`` do agno: ela só expõe uma entidade em ``/agui`` e fixa
-        ``Access-Control-Allow-Origin: *`` (ver ``agui_router``). O router entra depois do
-        ``get_app()``, quando o AgentOS já definiu os ids das entidades.
+        A montagem troca o CORS do app e põe middleware na frente (ver ``AgnoRuntime.mount``):
+        a borda volta a ser a mais externa mesmo se a montagem falhar no meio.
         """
+        if self._config is None:
+            raise RuntimeError("AppConfig não carregado: chame create_app() antes")
         self._logger.info(
             "Lifespan: montando AgentOS",
             agent_count=len(agents),
             team_count=len(teams),
         )
-        if self._config is None:
-            raise RuntimeError("AppConfig não carregado: chame create_app() antes")
-        origins = self._config.cors_allowed_origins
-        agent_os = AgentOS(
-            agents=agents,
-            teams=teams or None,
-            cors_allowed_origins=list(origins),
-            base_app=app,
-            on_route_conflict="preserve_base_app",
-            tracing=False,
-            telemetry=False,
-        )
-        # Cancel só de run registrado (F1-10): gerenciador antes de qualquer run e as rotas
-        # de cancel antes do get_app(), que pula as do agno (preserve_base_app). Depois do
-        # construtor (que valida ids): falha ali não deixa rota parcial.
-        install_run_cancellation_manager()
-        app.include_router(build_run_cancel_router(agents, teams, StructlogLoggerAdapter("run_cancel")))
         try:
-            agent_os.get_app()
+            runtime.mount(app, agents, teams, cors_allowed_origins=self._config.cors_allowed_origins)
         finally:
-            # get_app() troca o CORS por um com "*" (update_cors_middleware): mesmo se
-            # falhar depois disso, o app não pode ficar com ele nem perder a auth.
             self._apply_edge_middleware(app)
-        app.include_router(build_agui_router(agents, teams, StructlogLoggerAdapter("agui")))
-        app.openapi_schema = None
         self._logger.info(
             "AgentOS montado com sucesso",
             agent_count=len(agents),
@@ -285,20 +273,35 @@ class AppFactory:
         )
 
     @asynccontextmanager
-    async def _lifespan(self, app: FastAPI):
-        """Inicializa DI + agentes e, se houver agentes, monta AgentOS."""
-        import time as _time
+    async def _lifespan(self, app: FastAPI) -> AsyncIterator[None]:
+        """Container -> telemetria -> entidades -> runtime (rotas e lifespans do AgentOS).
 
-        startup_start = _time.perf_counter()
+        Shutdown, também depois de falha parcial no startup: flush da telemetria primeiro (o fechamento
+        do runtime pode demorar e o orquestrador matar o processo), depois o runtime (uma vez) e o
+        container. Falha dentro de ``DependencyContainer.create_async`` é fechada por ele mesmo (o
+        container só existe aqui quando a inicialização terminou).
+
+        Um lifespan só por ``AppFactory``: o shutdown fecha os clientes do container e os dbs das
+        entidades, e as rotas montadas apontam para elas; um 2º lifespan as serviria com o db
+        fechado (sessão perdida em silêncio, BUG-F2-05-QA-1). Ele é recusado com erro claro.
+        """
+        if self._lifespan_ran:
+            raise RuntimeError(
+                "Lifespan já executado por este AppFactory: o shutdown fechou o container e o runtime; "
+                "crie um AppFactory novo (create_app) para subir de novo"
+            )
+        self._lifespan_ran = True
+        startup_start = time.perf_counter()
+        runtime: AgnoRuntime | None = None
         try:
             self._logger.info("Lifespan: iniciando...")
-            await self._ensure_container()
+            container = await self._ensure_container()
+            setup_telemetry(container.config)
 
-            config = self._container.config
-            setup_telemetry(config)
-
-            agents, teams = await self._load_all_entities()
-            self._try_mount_agent_os(app, agents, teams)
+            agents, teams = await self._load_all_entities(container)
+            runtime = container.get_agent_runtime()
+            self._try_mount_runtime(app, runtime, agents, teams)
+            await runtime.start()
 
             self._record_startup_metrics(startup_start, agents, teams)
             yield
@@ -310,18 +313,34 @@ class AppFactory:
             )
             raise
         finally:
-            shutdown_telemetry()
-            if self._container:
-                await self._container.cleanup()
+            try:
+                shutdown_telemetry()
+            finally:
+                try:
+                    if runtime is not None:
+                        await runtime.close()
+                finally:
+                    if self._container:
+                        await self._container.cleanup()
 
-    async def _load_all_entities(self):
+    async def _load_all_entities(
+        self, container: DependencyContainer
+    ) -> tuple[list[AgentHandle], list[TeamHandle]]:
         """Carrega agentes e teams ativos."""
-        agents = await self._load_agents()
-        teams = await self._load_teams()
+        agents = await self._load_agents(container)
+        teams = await self._load_teams(container)
         return agents, teams
 
-    def _try_mount_agent_os(self, app: FastAPI, agents, teams):
-        """Tenta montar AgentOS se houver agentes ou teams."""
+    def _try_mount_runtime(
+        self,
+        app: FastAPI,
+        runtime: AgnoRuntime,
+        agents: Sequence[AgentHandle],
+        teams: Sequence[TeamHandle],
+    ) -> None:
+        """Monta o runtime no app se houver agentes ou teams; falha deixa a borda, o admin e o que a
+        montagem já tiver posto (falha depois do ``get_app()`` deixa as rotas do AgentOS sem os
+        lifespans dele)."""
         if not agents and not teams:
             self._logger.info(
                 "Nenhum agente ou team ativo — rodando só endpoints admin"
@@ -329,18 +348,19 @@ class AppFactory:
             return
 
         try:
-            self._mount_agent_os(app, agents or [], teams or [])
-        except Exception as exc:
+            self._mount_runtime(app, runtime, agents, teams)
+        except Exception as exc:  # noqa: BLE001 - o app sobe sem rotas de agente; logado
             self._logger.error(
-                "Erro ao montar AgentOS — continuando sem rotas de agente",
+                "Erro ao montar AgentOS — continuando com montagem parcial ou sem rotas de agente",
                 error_type=exc.__class__.__name__,
                 error=str(exc),
             )
 
-    def _record_startup_metrics(self, startup_start, agents, teams):
+    def _record_startup_metrics(
+        self, startup_start: float, agents: Sequence[AgentHandle], teams: Sequence[TeamHandle]
+    ) -> None:
         """Registra métricas de startup."""
-        import time as _time
-        startup_elapsed = _time.perf_counter() - startup_start
+        startup_elapsed = time.perf_counter() - startup_start
         TelemetryMetrics.record_startup_duration(startup_elapsed)
         TelemetryMetrics.record_agents_loaded(len(agents) if agents else 0)
         TelemetryMetrics.record_teams_loaded(len(teams) if teams else 0)

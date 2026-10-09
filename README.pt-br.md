@@ -413,7 +413,8 @@ sequenceDiagram
     F->>MDB: teams_config.find({active: true})
     MDB-->>F: [TeamConfig, ...]
     F->>AF: build_team(config, agentes) por team (GetActiveTeamsUseCase, fora do event loop)
-    F->>OS: AgentOS(agents, teams, base_app) + router AG-UI /agui/{id}
+    F->>AF: runtime.mount(app, agents, teams): AgentOS(agents, teams, base_app) + router AG-UI /agui/{id}
+    F->>AF: runtime.start(): lifespans do AgentOS (fechados por runtime.close() no shutdown)
     OS->>OS: Registra ~75 rotas + setup OpenTelemetry tracing
     Note over U,OS: Servidor pronto na porta 7777
 ```
@@ -523,7 +524,7 @@ Toda rota exige chave de API, exceto `GET /livez` e o preflight CORS (`OPTIONS` 
 
 - **Chaves**: `API_KEY_RUN` (uso dos agentes) e `API_KEY_ADMIN` (operação; vale também onde a run vale). As duas juntas, diferentes entre si, com ao menos 32 caracteres ASCII visíveis. Gere cada uma com `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
 - **Credencial**: `Authorization: Bearer <chave>` ou `X-API-Key: <chave>`. Com os dois headers vale o Bearer.
-- **Rotas admin** (só `API_KEY_ADMIN`): `/admin/*`, `/metrics` e `/metrics/*`, `/databases/*`, `/eval-runs*`, `/components*`, `/schedules*`, `/registry*`, `POST /optimize-memories` (reescreve memórias de qualquer `user_id` com o modelo que o request escolher); `DELETE` em `/sessions*` e `/memories*`; `POST|PUT|PATCH|DELETE` em `/knowledge*` (inclusive `POST /knowledge/search`, que devolve o texto dos chunks de toda a base e gera custo de embedding); `/docs`, `/redoc` e `/openapi.json` fora de `ENVIRONMENT=development`.
+- **Rotas admin** (só `API_KEY_ADMIN`): `/admin/*`, `/metrics` e `/metrics/*`, `/databases/*`, `/eval-runs*`, `/components*`, `/schedules*`, `/registry*`, `/approvals*`, `POST /optimize-memories` (reescreve memórias de qualquer `user_id` com o modelo que o request escolher); `DELETE` em `/sessions*` e `/memories*`; `POST|PUT|PATCH|DELETE` em `/knowledge*` (inclusive `POST /knowledge/search`, que devolve o texto dos chunks de toda a base e gera custo de embedding); `/docs`, `/redoc` e `/openapi.json` fora de `ENVIRONMENT=development`.
 - **Rotas run**: todo o resto (runs de agente/team, `/agui` e `/agui/{id}`, `/agents`, `/teams`, `/sessions`, `/memories` exceto `DELETE`, `/config`, `/health`, WebSocket `/workflows/ws`...).
 - **Respostas**: `401 {"detail":"unauthorized"}` + `WWW-Authenticate: Bearer` sem credencial ou com chave inválida; `403 {"detail":"forbidden"}` com a chave run em rota admin. WebSocket sem chave válida é recusado no handshake (`websocket.close` 1008 antes do accept; o servidor responde 403). O WebSocket só autentica por header (`Authorization`/`X-API-Key`): navegador não manda header customizado no handshake, então com chaves configuradas o `/workflows/ws` só é usável por cliente não-navegador. O 401 de uma origem permitida leva os headers CORS.
 - **Fail-closed**: sem nenhuma chave o app só inicia com `APP_HOST` em loopback (`127.0.0.0/8`, `::1`, `localhost`) **e** `ENVIRONMENT` `development` ou `test`; nesse modo dev local não há chave (aviso no log), mas cada request só passa se o cliente, o endereço local do servidor e o header `Host` (`localhost`, `127.x`, `[::1]`, porta opcional) forem loopback (socket UNIX não é suportado nesse modo) e se não vier de outro site no navegador: `Origin` presente precisa estar em `CORS_ALLOWED_ORIGINS` (origem permitida passa mesmo `cross-site`, como os.agno.com → localhost) e, sem `Origin`, `Sec-Fetch-Site: cross-site` é recusado. O resto recebe 401 (WebSocket: 1008). `/livez` segue público. Em qualquer outro caso (ex.: `0.0.0.0`, ou `production` no loopback) o app recusa iniciar com erro claro. Só uma das chaves também é erro.
@@ -1010,7 +1011,7 @@ tests/
    - Busca no MongoDB as configs de agentes ativos
    - Para cada config, o `AgentFactoryService` cria um `agno.Agent` com modelo, tools, knowledge e memória
    - Em seguida, o `GetActiveTeamsUseCase` busca configs de teams ativos e o `TeamFactoryService` cria `agno.Team` com os agentes como membros
-5. Os agentes criados são passados junto com os teams para `AgentOS(agents, teams, base_app)`, que registra as rotas REST + SSE no FastAPI; em seguida o app monta o router AG-UI próprio (`POST /agui/{id}` por entidade, `src/infrastructure/web/agui_router.py`)
+5. Os agentes criados são passados junto com os teams ao `AgnoRuntime.mount` (`src/infrastructure/runtime/agno/runtime.py`), que cria o `AgentOS(agents, teams, base_app)` (rotas REST + SSE no FastAPI) e monta o router AG-UI próprio (`POST /agui/{id}` por entidade, `src/infrastructure/web/agui_router.py`); o `AppFactory` reinstala CORS e auth por fora e o `runtime.start()` abre os lifespans do AgentOS (fechados por `runtime.close()` no shutdown, antes do container)
 6. O servidor fica pronto na porta 7777
 
 ### Padrões Implementados

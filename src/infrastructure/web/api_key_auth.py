@@ -9,7 +9,7 @@ tabelas abaixo exige a chave run):
   ``CORSMiddleware`` mais externo, sem chamar a auth (aqui ele não tem exceção: se a
   ordem quebrar, exige chave);
 - admin: ``/admin*``, ``/metrics*``, ``/databases*``, ``/eval-runs*``,
-  ``/components*``, ``/schedules*``, ``/registry*``, ``/optimize-memories``;
+  ``/components*``, ``/schedules*``, ``/registry*``, ``/approvals*``, ``/optimize-memories``;
   ``DELETE`` em ``/sessions*`` e ``/memories*``; ``POST|PUT|PATCH|DELETE`` em
   ``/knowledge*``; docs (``/docs*``, ``/redoc``, ``/openapi.json``) fora de development;
 - run: todo o resto (inclusive rota desconhecida, que só vira 404 depois da chave).
@@ -70,6 +70,9 @@ _ADMIN_PREFIXES = (
     "/components",
     "/schedules",
     "/registry",
+    # Aprovações (HITL) listam e decidem runs de qualquer usuário: decisão do operador, não de
+    # quem pediu a tool sensível (F2-05; hoje stub 503: o AgentOS sobe sem ``db=``).
+    "/approvals",
     "/optimize-memories",
 )
 _ADMIN_DELETE_PREFIXES = ("/sessions", "/memories")

@@ -26,6 +26,7 @@ from src.infrastructure.web.api_key_auth import (
 )
 from src.infrastructure.web.app_factory import AppFactory
 from tests.fakes import FakeChatModel
+from tests.fakes.web import mount_agent_os
 
 RUN_KEY = "chave-de-teste-run-" + "r" * 21
 ADMIN_KEY = "chave-de-teste-admin-" + "a" * 19
@@ -135,16 +136,16 @@ GET /traces/filter-schema RUN
 GET /traces/{trace_id} RUN
 POST /traces/search RUN
 GET /trace_session_stats RUN
-GET /approvals RUN
-POST /approvals RUN
-PUT /approvals RUN
-PATCH /approvals RUN
-DELETE /approvals RUN
-GET /approvals/{path:path} RUN
-POST /approvals/{path:path} RUN
-PUT /approvals/{path:path} RUN
-PATCH /approvals/{path:path} RUN
-DELETE /approvals/{path:path} RUN
+GET /approvals ADMIN
+POST /approvals ADMIN
+PUT /approvals ADMIN
+PATCH /approvals ADMIN
+DELETE /approvals ADMIN
+GET /approvals/{path:path} ADMIN
+POST /approvals/{path:path} ADMIN
+PUT /approvals/{path:path} ADMIN
+PATCH /approvals/{path:path} ADMIN
+DELETE /approvals/{path:path} ADMIN
 """
 
 
@@ -179,7 +180,7 @@ def mounted_app() -> Iterator[FastAPI]:
         team = Team(id="time-1", name="Time 1", members=[member], model=FakeChatModel(responses=[]), telemetry=False)
         factory = AppFactory()
         app = factory.create_app()
-        factory._mount_agent_os(app, [agent], [team])
+        mount_agent_os(factory, app, [agent], [team])
         yield app
 
 

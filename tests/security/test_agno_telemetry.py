@@ -18,9 +18,9 @@ import pytest
 from agno.agent import Agent
 from agno.os import AgentOS
 
-from src.infrastructure.web import app_factory
 from src.infrastructure.web.app_factory import AppFactory
 from tests.fakes import FakeChatModel
+from tests.fakes.web import mount_agent_os
 
 
 class _RecordingAgentOS(AgentOS):
@@ -34,12 +34,12 @@ class _RecordingAgentOS(AgentOS):
 def test_agent_os_montado_sem_telemetria(monkeypatch: pytest.MonkeyPatch):
     launches: list[object] = []
     monkeypatch.setattr(agno_api_os, "log_os_telemetry", lambda launch: launches.append(launch))
-    monkeypatch.setattr(app_factory, "AgentOS", _RecordingAgentOS)
+    monkeypatch.setattr("src.infrastructure.runtime.agno.runtime.AgentOS", _RecordingAgentOS)
     monkeypatch.setattr(_RecordingAgentOS, "created", [])
     agent = Agent(id="agente-1", name="Agente 1", model=FakeChatModel(responses=[]), telemetry=False)
     factory = AppFactory()
 
-    factory._mount_agent_os(factory.create_app(), [agent], [])
+    mount_agent_os(factory, factory.create_app(), [agent], [])
 
     assert [os_.telemetry for os_ in _RecordingAgentOS.created] == [False]
     assert launches == [], "AgentOS registrou o launch na API da Agno"

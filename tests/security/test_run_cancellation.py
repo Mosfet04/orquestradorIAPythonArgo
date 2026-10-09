@@ -5,7 +5,7 @@ O agno 2.5.8 grava intenção de cancelamento para qualquer ``run_id``, mesmo in
 as rotas ``POST /agents|teams/{id}/runs/{run_id}/cancel`` sempre respondiam 200. Um cliente
 enchia a memória com ids inventados e pré-cancelava o próximo run com um ``runId`` que ele
 adivinha (o do AG-UI é escolhido pelo cliente). Pilha real: ``AppFactory.create_app`` (CORS +
-auth) -> ``_mount_agent_os`` -> AgentOS + AG-UI; modelo = ``FakeChatModel``.
+auth) -> ``mount_agent_os`` -> AgentOS + AG-UI; modelo = ``FakeChatModel``.
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ from src.infrastructure.web.app_factory import AppFactory
 from src.infrastructure.web.run_cancellation import RegisteredRunCancellationManager
 from tests.fakes import FakeChatModel
 from tests.fakes.agui import assert_valid_run, parse_agui_sse, text_of
+from tests.fakes.web import mount_agent_os
 
 RUN_KEY = "f110-run-key-" + "r" * 20
 ADMIN_KEY = "f110-admin-key-" + "a" * 18
@@ -58,7 +59,7 @@ def _mount(monkeypatch: pytest.MonkeyPatch, agents: list[Agent], teams: list[Tea
         monkeypatch.setenv(name, value)
     factory = AppFactory()
     app = factory.create_app()
-    factory._mount_agent_os(app, agents, teams)
+    mount_agent_os(factory, app, agents, teams)
     return app
 
 
@@ -247,6 +248,6 @@ def test_falha_ao_criar_o_agentos_nao_deixa_rota_de_cancel_parcial(monkeypatch: 
     app = factory.create_app()
 
     with pytest.raises(ValueError, match="Duplicate IDs"):
-        factory._mount_agent_os(app, [_agent("dup"), _agent("dup")], [])
+        mount_agent_os(factory, app, [_agent("dup"), _agent("dup")], [])
 
     assert not [r for r in app.routes if isinstance(r, APIRoute) and r.path.endswith("/cancel")]

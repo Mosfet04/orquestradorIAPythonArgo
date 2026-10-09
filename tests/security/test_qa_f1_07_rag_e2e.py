@@ -56,6 +56,7 @@ from tests.fakes import (
 )
 from tests.fakes.knowledge import OfflineKnowledge
 from tests.fakes.models import factory_call
+from tests.fakes.web import mount_agent_os
 
 pytestmark = pytest.mark.usefixtures("offline_knowledge")
 
@@ -317,7 +318,7 @@ def client_for(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[list[Agent
         monkeypatch.setenv("API_KEY_ADMIN", ADMIN_KEY)
         factory = AppFactory()
         app = factory.create_app()
-        factory._mount_agent_os(app, agents, [])
+        mount_agent_os(factory, app, agents, [])
         client = TestClient(app, raise_server_exceptions=False)
         clients.append(client)
         return client

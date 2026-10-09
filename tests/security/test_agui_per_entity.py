@@ -1,6 +1,6 @@
 """F1-08 (B4): AG-UI por entidade, de ponta a ponta.
 
-Pilha real: ``AppFactory.create_app`` (CORS + auth por chave) -> ``_mount_agent_os`` com
+Pilha real: ``AppFactory.create_app`` (CORS + auth por chave) -> ``mount_agent_os`` com
 2 agentes e 1 team de ``FakeChatModel`` roteirizado -> ``POST /agui/{id}`` e o alias
 ``POST /agui``. Antes: o agno 2.5.8 criava uma rota ``POST /agui`` por interface e
 descartava as repetidas (só a primeira entidade respondia), fixava
@@ -24,6 +24,7 @@ from starlette.testclient import TestClient
 from src.infrastructure.runtime.agno.user_id_guardrail import UserIdRequiredGuardrail
 from src.infrastructure.web.app_factory import AppFactory
 from tests.fakes import FakeChatModel
+from tests.fakes.web import mount_agent_os
 
 RUN_KEY = "agui-run-key-" + "r" * 21
 ADMIN_KEY = "agui-admin-key-" + "a" * 19
@@ -89,7 +90,7 @@ def mount(monkeypatch: pytest.MonkeyPatch) -> Callable[..., Mounted]:
             teams = [_team("time-1")]
         factory = AppFactory()
         app = factory.create_app()
-        factory._mount_agent_os(app, agents or [], teams or [])
+        mount_agent_os(factory, app, agents or [], teams or [])
         return Mounted(app, agents or [], teams or [])
 
     return _mount

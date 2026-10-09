@@ -27,6 +27,7 @@ from src.infrastructure.web.api_key_auth import ApiKeyAuthMiddleware, ApiKeys
 from src.infrastructure.web.app_factory import AppFactory
 from src.infrastructure.web.metrics_middleware import MetricsMiddleware
 from tests.fakes import FakeChatModel, RecordingLogger, loopback_client
+from tests.fakes.web import mount_agent_os
 
 REPO = Path(__file__).resolve().parents[2]
 RUN_KEY = "chave-de-teste-run-" + "r" * 21
@@ -74,7 +75,7 @@ def _make_app(mp: pytest.MonkeyPatch, *, agent: Agent | None, **env: str) -> Fas
     factory = AppFactory()
     app = factory.create_app()
     if agent is not None:
-        factory._mount_agent_os(app, [agent], [])
+        mount_agent_os(factory, app, [agent], [])
     return app
 
 
@@ -363,8 +364,6 @@ def test_nada_que_reescreva_path_fica_dentro_da_auth(
 def test_auth_sobrevive_a_falha_na_montagem_do_agentos(monkeypatch: pytest.MonkeyPatch):
     from agno.os.utils import update_cors_middleware
 
-    from src.infrastructure.web import app_factory
-
     class _AgentOSQueQuebra:
         def __init__(self, *, base_app: FastAPI, **_: object) -> None:
             self._app = base_app
@@ -378,12 +377,12 @@ def test_auth_sobrevive_a_falha_na_montagem_do_agentos(monkeypatch: pytest.Monke
         monkeypatch.delenv(name, raising=False)
     for name, value in KEYS.items():
         monkeypatch.setenv(name, value)
-    monkeypatch.setattr(app_factory, "AgentOS", _AgentOSQueQuebra)
+    monkeypatch.setattr("src.infrastructure.runtime.agno.runtime.AgentOS", _AgentOSQueQuebra)
     factory = AppFactory()
     app = factory.create_app()
 
     with pytest.raises(RuntimeError, match="falha no meio"):
-        factory._mount_agent_os(app, [_agent()], [])
+        mount_agent_os(factory, app, [_agent()], [])
 
     assert [m.cls for m in app.user_middleware][:2] == [CORSMiddleware, ApiKeyAuthMiddleware]
     _assert_unauthorized(TestClient(app).get("/admin/health"))
@@ -454,7 +453,7 @@ def test_modo_dev_local_sem_chaves_libera_tudo_com_aviso(
     logger = RecordingLogger()
     factory._logger = logger  # type: ignore[assignment]
     app = factory.create_app()
-    factory._mount_agent_os(app, [_agent()], [])
+    mount_agent_os(factory, app, [_agent()], [])
     client = loopback_client(app)
 
     assert client.get("/admin/health").status_code == 200

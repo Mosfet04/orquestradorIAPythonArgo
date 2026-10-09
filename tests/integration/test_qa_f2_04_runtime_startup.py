@@ -35,6 +35,7 @@ from src.domain.ports import InvalidModelConfigError
 from src.infrastructure import dependency_injection as di
 from src.infrastructure.repositories import mongo_base
 from src.infrastructure.runtime.agno import agent_factory_service, team_factory_service
+from src.infrastructure.runtime.agno import runtime as agno_runtime_module
 from src.infrastructure.web import app_factory
 from src.infrastructure.web.app_factory import AppFactory
 from tests.fakes import (
@@ -232,7 +233,7 @@ def _boot(root: Path, *, search_fails: bool) -> Booted:
 
             mp.setattr(HierarchicalSearchStrategy, "search", failing)
 
-        real_agent_os = app_factory.AgentOS
+        real_agent_os = agno_runtime_module.AgentOS
 
         class SpyAgentOS(real_agent_os):  # type: ignore[valid-type, misc]
             """Registra o que o AgentOS recebe do runtime."""
@@ -241,7 +242,7 @@ def _boot(root: Path, *, search_fails: bool) -> Booted:
                 result.handles = (list(kwargs.get("agents") or []), list(kwargs.get("teams") or []))
                 super().__init__(*args, **kwargs)
 
-        mp.setattr(app_factory, "AgentOS", SpyAgentOS)
+        mp.setattr(agno_runtime_module, "AgentOS", SpyAgentOS)
 
         with cut_agno_io(mp, on_insert=lambda *_: None):
             app = AppFactory().create_app()

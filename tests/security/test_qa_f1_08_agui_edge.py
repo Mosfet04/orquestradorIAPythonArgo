@@ -1,6 +1,6 @@
 """QA do F1-08: entradas hostis e bordas do AG-UI por entidade, na pilha real.
 
-App real (``AppFactory`` + ``_mount_agent_os``, auth por chave, CORS), modelo
+App real (``AppFactory`` + ``mount_agent_os``, auth por chave, CORS), modelo
 ``FakeChatModel``. Cobre: corpo inválido (422 sem stack), payload grande, id de entidade
 hostil na URL, variações de path sem chave, OpenAPI e exceção no meio do stream. Chaves
 são valores de teste.
@@ -21,6 +21,7 @@ from starlette.testclient import TestClient
 from src.infrastructure.web.app_factory import AppFactory
 from tests.fakes import FakeChatModel
 from tests.fakes.agui import assert_valid_run, parse_agui_sse, text_of
+from tests.fakes.web import mount_agent_os
 
 RUN_KEY = "qa8-edge-run-key-" + "r" * 21
 ADMIN_KEY = "qa8-edge-admin-key-" + "a" * 19
@@ -65,7 +66,7 @@ def shared() -> Iterator[tuple[TestClient, Agent]]:
             mp.setenv(name, value)
         factory = AppFactory()
         app = factory.create_app()
-        factory._mount_agent_os(app, [agent, _ExplodingAgent()], [])
+        mount_agent_os(factory, app, [agent, _ExplodingAgent()], [])
     yield TestClient(app, raise_server_exceptions=False), agent
 
 

@@ -1,7 +1,7 @@
 """QA do F1-04: auth na pilha real (métricas, spans) e com servidor uvicorn real em loopback.
 
 Sem LLM real, sem rede externa: o uvicorn sobe só em 127.0.0.1 (porta livre) com o app real
-(``AppFactory`` + ``_mount_agent_os`` com Agent/Team de ``FakeChatModel``).
+(``AppFactory`` + ``mount_agent_os`` com Agent/Team de ``FakeChatModel``).
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ from websockets.sync.client import connect as ws_connect
 from src.infrastructure.web import metrics_middleware
 from src.infrastructure.web.app_factory import AppFactory
 from tests.fakes import FakeChatModel, RecordingTelemetryMetrics, loopback_client
+from tests.fakes.web import mount_agent_os
 
 ALL_INTERFACES = "0.0.0" + ".0"  # só valor de APP_HOST no ambiente: nenhum teste faz bind nele
 RUN_KEY = "qa-run-key-" + "r" * 21
@@ -76,7 +77,7 @@ def build_app(monkeypatch: pytest.MonkeyPatch) -> Callable[..., FastAPI]:
         factory = AppFactory()
         app = factory.create_app()
         agent, team = _entities(responses)
-        factory._mount_agent_os(app, [agent], [team])
+        mount_agent_os(factory, app, [agent], [team])
         return app
 
     return _build

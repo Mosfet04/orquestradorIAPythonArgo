@@ -95,7 +95,7 @@ TEAM_DOCS = [
 ]
 
 
-def _controller(monkeypatch: pytest.MonkeyPatch, logger: RecordingLogger) -> OrquestradorController:
+def _controller(monkeypatch: pytest.MonkeyPatch, logger: RecordingLogger) -> tuple[OrquestradorController, AgnoRuntime]:
     client = FakeMongoClient(
         {"agents_config": FakeMongoCollection(AGENT_DOCS), "teams_config": FakeMongoCollection(TEAM_DOCS)}
     )
@@ -124,7 +124,10 @@ def _controller(monkeypatch: pytest.MonkeyPatch, logger: RecordingLogger) -> Orq
         MongoTeamConfigRepository(connection_string=CONN, logger=logger),
         logger,
     )
-    return OrquestradorController(get_active_agents_use_case=agents, get_active_teams_use_case=teams, logger=logger)
+    controller = OrquestradorController(
+        get_active_agents_use_case=agents, get_active_teams_use_case=teams, logger=logger
+    )
+    return controller, runtime
 
 
 def _start(monkeypatch: pytest.MonkeyPatch, logger: RecordingLogger) -> tuple[AppFactory, Any]:
@@ -133,9 +136,9 @@ def _start(monkeypatch: pytest.MonkeyPatch, logger: RecordingLogger) -> tuple[Ap
     monkeypatch.setenv("AGNO_TELEMETRY", "false")
     factory = AppFactory()
     app = factory.create_app()
-    controller = _controller(monkeypatch, logger)
+    controller, runtime = _controller(monkeypatch, logger)
 
-    async def ensure_container() -> None:
+    async def ensure_container() -> Any:
         async def cleanup() -> None:
             return None
 
@@ -144,7 +147,9 @@ def _start(monkeypatch: pytest.MonkeyPatch, logger: RecordingLogger) -> tuple[Ap
             cleanup=cleanup,
             health_service=None,
             get_orquestrador_controller=lambda: controller,
+            get_agent_runtime=lambda: runtime,
         )
+        return factory._container
 
     monkeypatch.setattr(factory, "_ensure_container", ensure_container)
     monkeypatch.setattr(app_factory, "setup_telemetry", lambda config: None)

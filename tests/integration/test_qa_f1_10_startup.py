@@ -112,6 +112,7 @@ class _Env:
             ),
             team_factory=TeamFactoryService(db_url=CONN, logger=logger, model_factory=models),
         )
+        self.runtime = runtime
         self.controller = OrquestradorController(
             get_active_agents_use_case=GetActiveAgentsUseCase(
                 runtime,
@@ -133,6 +134,7 @@ class _Env:
         factory = AppFactory()
         app = factory.create_app()
         controller = self.controller
+        runtime = self.runtime
 
         class _Mongo:
             class admin:
@@ -140,7 +142,7 @@ class _Env:
                 async def command(_name: str) -> dict:
                     return {"ok": 1}
 
-        async def ensure_container() -> None:
+        async def ensure_container() -> Any:
             async def cleanup() -> None:
                 return None
 
@@ -149,7 +151,9 @@ class _Env:
                 cleanup=cleanup,
                 health_service=HealthService(_Mongo(), self.logger),  # type: ignore[arg-type]
                 get_orquestrador_controller=lambda: controller,
+                get_agent_runtime=lambda: runtime,
             )
+            return factory._container
 
         monkeypatch.setattr(factory, "_ensure_container", ensure_container)
         monkeypatch.setattr(app_factory, "setup_telemetry", lambda config: None)

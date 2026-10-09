@@ -28,6 +28,7 @@ from src.infrastructure.web.app_factory import AppFactory
 from src.infrastructure.web.run_cancellation import RegisteredRunCancellationManager
 from tests.fakes import FakeChatModel
 from tests.fakes.agui import parse_agui_sse
+from tests.fakes.web import mount_agent_os
 
 RUN_KEY = "f110qa-run-key-" + "r" * 20
 ADMIN_KEY = "f110qa-admin-key-" + "a" * 18
@@ -58,7 +59,7 @@ def _mount(monkeypatch: pytest.MonkeyPatch, agents: list[Agent], teams: list[Tea
         monkeypatch.setenv(name, value)
     factory = AppFactory()
     app = factory.create_app()
-    factory._mount_agent_os(app, agents, teams)
+    mount_agent_os(factory, app, agents, teams)
     return app
 
 

@@ -26,6 +26,7 @@ from src.infrastructure.config.app_config import AppConfig
 from src.infrastructure.dependency_injection import HealthService
 from src.infrastructure.web.app_factory import AppFactory
 from tests.fakes import FakeChatModel, RecordingLogger, loopback_client
+from tests.fakes.web import mount_agent_os
 
 REPO = Path(__file__).resolve().parents[2]
 ALLOWED = "https://painel.example.com"
@@ -93,7 +94,7 @@ def _mounted(monkeypatch: pytest.MonkeyPatch, agents: list[Agent], teams: list[T
     _clean_env(monkeypatch, **env)
     factory = AppFactory()
     app = factory.create_app()
-    factory._mount_agent_os(app, agents, teams or [])
+    mount_agent_os(factory, app, agents, teams or [])
     return app
 
 
@@ -232,7 +233,7 @@ def test_docs_extras_e_enable_docs_tambem_fora_de_production(monkeypatch: pytest
     factory = AppFactory()
     app = factory.create_app()
     if mounted:
-        factory._mount_agent_os(app, [_agent()], [])
+        mount_agent_os(factory, app, [_agent()], [])
     client = loopback_client(app)
 
     for path in ("/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"):

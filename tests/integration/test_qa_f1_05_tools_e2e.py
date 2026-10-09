@@ -1,7 +1,7 @@
 """QA do F1-05: tools HTTP de ponta a ponta com o AgentOS real.
 
 Cadeia: ``InMemoryToolRepository`` -> ``AgentFactoryService`` -> ``HttpToolFactory`` ->
-``Agent``/``Team`` do agno -> ``AppFactory._mount_agent_os`` -> ``POST /agents/{id}/runs`` com
+``Agent``/``Team`` do agno -> ``mount_agent_os`` (``AppFactory._mount_runtime``) -> ``POST /agents/{id}/runs`` com
 a chave run. O modelo é o ``FakeChatModel`` roteirizando ``tool_call``; o upstream é um
 ``httpx.MockTransport`` (nada sai da máquina). As chaves são valores de teste, não segredos.
 
@@ -37,6 +37,7 @@ from tests.fakes import (
     InMemoryToolRepository,
     RecordingLogger,
 )
+from tests.fakes.web import mount_agent_os
 
 RUN_KEY = "qa-run-key-" + "r" * 21
 ADMIN_KEY = "qa-admin-key-" + "a" * 19
@@ -183,7 +184,7 @@ def _app(monkeypatch: pytest.MonkeyPatch, agents: list[Agent], teams: list[Team]
     monkeypatch.setenv("API_KEY_ADMIN", ADMIN_KEY)
     factory = AppFactory()
     app = factory.create_app()
-    factory._mount_agent_os(app, agents, teams or [])
+    mount_agent_os(factory, app, agents, teams or [])
     return TestClient(app, raise_server_exceptions=False)
 
 

@@ -16,6 +16,7 @@ from starlette.testclient import TestClient
 from src.infrastructure.dependency_injection import HealthService
 from src.infrastructure.web.app_factory import AppFactory
 from tests.fakes import FakeChatModel, RecordingLogger, loopback_client
+from tests.fakes.web import mount_agent_os
 
 # Texto que só existe na exceção do driver: não pode chegar ao cliente HTTP.
 SEGREDO_NA_EXCECAO = "mongodb://admin:senha-super-secreta@mongo.interno:27017"
@@ -59,7 +60,7 @@ def build_app(monkeypatch: pytest.MonkeyPatch) -> Callable[..., FastAPI]:
         factory = AppFactory()
         app = factory.create_app()
         if with_agent_os:
-            factory._mount_agent_os(app, [_agent()], [])
+            mount_agent_os(factory, app, [_agent()], [])
         return app
 
     return _build
@@ -195,8 +196,6 @@ def test_cors_reaplicado_mesmo_se_a_montagem_do_agentos_falhar(monkeypatch: pyte
     """O AgentOS troca o CORS (``*``) antes de terminar o get_app(); falha no meio não pode deixá-lo assim."""
     from agno.os.utils import update_cors_middleware
 
-    from src.infrastructure.web import app_factory
-
     class _AgentOSQueQuebra:
         def __init__(self, *, base_app: FastAPI, **_: object) -> None:
             self._app = base_app
@@ -206,12 +205,12 @@ def test_cors_reaplicado_mesmo_se_a_montagem_do_agentos_falhar(monkeypatch: pyte
             raise RuntimeError("falha no meio da montagem")
 
     monkeypatch.setenv("CORS_ALLOWED_ORIGINS", "https://painel.example.com")
-    monkeypatch.setattr(app_factory, "AgentOS", _AgentOSQueQuebra)
+    monkeypatch.setattr("src.infrastructure.runtime.agno.runtime.AgentOS", _AgentOSQueQuebra)
     factory = AppFactory()
     app = factory.create_app()
 
     with pytest.raises(RuntimeError, match="falha no meio"):
-        factory._mount_agent_os(app, [_agent()], [])
+        mount_agent_os(factory, app, [_agent()], [])
 
     _assert_cors_outermost_and_explicit(app, ["https://painel.example.com"])
     denied = _preflight(loopback_client(app), "https://evil.example.com")

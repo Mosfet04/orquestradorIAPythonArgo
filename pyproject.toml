@@ -115,7 +115,6 @@ known-first-party = ["src", "tests"]
 "src/domain/repositories/tool_repository.py" = ["UP006", "UP035"]
 "src/infrastructure/cache/model_cache_service.py" = ["BLE001", "UP006", "UP017", "UP035", "UP045"]
 "src/infrastructure/config/app_config.py" = ["UP045"]
-"src/infrastructure/dependency_injection.py" = ["BLE001", "UP045"]
 "src/infrastructure/http/http_tool_factory.py" = ["BLE001", "UP006", "UP035"]
 "src/infrastructure/logging/decorators.py" = ["BLE001", "G004", "UP006", "UP035"]
 "src/infrastructure/logging/structlog_logger.py" = ["B023", "RUF012", "UP006", "UP017", "UP035", "UP045"]
@@ -128,7 +127,6 @@ known-first-party = ["src", "tests"]
 "src/infrastructure/services/llm_summary_generator.py" = ["BLE001"]
 "src/infrastructure/telemetry/metrics.py" = ["UP035"]
 "src/infrastructure/telemetry/otel_setup.py" = ["BLE001"]
-"src/infrastructure/web/app_factory.py" = ["BLE001", "RUF012", "UP045"]
 "tests/unit/test_app_factory_extended.py" = ["E501"]
 "tests/unit/test_dependency_injection.py" = ["E501"]
 "tests/unit/test_document_indexing_service.py" = ["RUF015"]
@@ -168,7 +166,6 @@ module = [
     "src.infrastructure.repositories.mongo_document_tree_repository",
     "src.infrastructure.repositories.mongo_team_config_repository",
     "src.infrastructure.repositories.mongo_tool_repository",
-    "src.infrastructure.web.app_factory",
 ]
 ignore_errors = true
 

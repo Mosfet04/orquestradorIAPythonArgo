@@ -429,12 +429,6 @@ def test_import_dinamico_fora_do_dev_local_ou_sem_flag_recusa_o_startup_sem_impo
     _assert_nothing_opened(result)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="BUG-F2-03-QA-2 (pré-existente ao F2-03): falha em _initialize depois de abrir o AsyncIOMotorClient "
-    "deixa o cliente aberto, porque o lifespan só chama cleanup() se o container foi atribuído",
-)
 def test_falha_tardia_no_wiring_nao_deixa_cliente_mongo_aberto(
     site: FakeSite, monkeypatch: pytest.MonkeyPatch
 ) -> None:

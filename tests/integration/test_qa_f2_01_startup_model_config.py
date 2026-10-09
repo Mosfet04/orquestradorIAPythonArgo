@@ -195,7 +195,7 @@ def boot(
     factory = AppFactory()
     app = factory.create_app()
 
-    async def ensure_container() -> None:
+    async def ensure_container() -> Any:
         async def cleanup() -> None:
             return None
 
@@ -204,7 +204,9 @@ def boot(
             cleanup=cleanup,
             health_service=None,
             get_orquestrador_controller=lambda: controller,
+            get_agent_runtime=lambda: runtime,
         )
+        return factory._container
 
     monkeypatch.setattr(factory, "_ensure_container", ensure_container)
     monkeypatch.setattr(app_factory, "setup_telemetry", lambda config: None)
