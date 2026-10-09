@@ -218,8 +218,9 @@ def test_cors_reaplicado_mesmo_se_a_montagem_do_agentos_falhar(monkeypatch: pyte
     assert denied.status_code == 400
 
 
-def test_cors_nao_expoe_headers_de_resposta(build_app: Callable[..., FastAPI]):
+def test_cors_expoe_so_o_sinal_de_deprecated_do_agui(build_app: Callable[..., FastAPI]):
+    """F1-08: só ``Deprecation`` e ``Link`` (alias ``POST /agui``) ficam legíveis no navegador."""
     response = loopback_client(build_app()).get("/livez", headers={"Origin": "https://os.agno.com"})
 
     assert response.headers["access-control-allow-origin"] == "https://os.agno.com"
-    assert "access-control-expose-headers" not in response.headers
+    assert response.headers["access-control-expose-headers"] == "Deprecation, Link"

@@ -90,6 +90,7 @@ GET /config RUN
 GET /models RUN
 GET /status RUN
 POST /agui RUN
+POST /agui/{entity_id} RUN
 GET /agents RUN
 GET /agents/{agent_id} RUN
 POST /agents/{agent_id}/runs RUN

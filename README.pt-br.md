@@ -307,7 +307,7 @@ orquestradorIAPythonArgo/
 │   │   ├── services/
 │   │   │   └── llm_summary_generator.py #  Gerador de sumários de seção via LLM
 │   │   ├── web/
-│   │   │   └── app_factory.py      #   AppFactory — cria FastAPI + AgentOS + AGUI
+│   │   │   └── app_factory.py      #   AppFactory — cria FastAPI + AgentOS + AG-UI por entidade
 │   │   └── dependency_injection.py #   DependencyContainer — Composition Root
 │   │
 │   └── presentation/               # 🌐 CAMADA DE APRESENTAÇÃO
@@ -399,7 +399,7 @@ sequenceDiagram
     F->>MDB: teams_config.find({active: true})
     MDB-->>F: [TeamConfig, ...]
     F->>F: TeamFactoryService → cria Teams com agentes como membros
-    F->>OS: AgentOS(agents, teams, interfaces=[AGUI], base_app, tracing=True)
+    F->>OS: AgentOS(agents, teams, base_app) + router AG-UI /agui/{id}
     OS->>OS: Registra ~75 rotas + setup OpenTelemetry tracing
     Note over U,OS: Servidor pronto na porta 7777
 ```
@@ -506,7 +506,7 @@ Toda rota exige chave de API, exceto `GET /livez` e o preflight CORS (`OPTIONS` 
 - **Chaves**: `API_KEY_RUN` (uso dos agentes) e `API_KEY_ADMIN` (operação; vale também onde a run vale). As duas juntas, diferentes entre si, com ao menos 32 caracteres ASCII visíveis. Gere cada uma com `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
 - **Credencial**: `Authorization: Bearer <chave>` ou `X-API-Key: <chave>`. Com os dois headers vale o Bearer.
 - **Rotas admin** (só `API_KEY_ADMIN`): `/admin/*`, `/metrics` e `/metrics/*`, `/databases/*`, `/eval-runs*`, `/components*`, `/schedules*`, `/registry*`, `POST /optimize-memories` (reescreve memórias de qualquer `user_id` com o modelo que o request escolher); `DELETE` em `/sessions*` e `/memories*`; `POST|PUT|PATCH|DELETE` em `/knowledge*` (inclusive `POST /knowledge/search`, que devolve o texto dos chunks de toda a base e gera custo de embedding); `/docs`, `/redoc` e `/openapi.json` fora de `ENVIRONMENT=development`.
-- **Rotas run**: todo o resto (runs de agente/team, `/agui`, `/agents`, `/teams`, `/sessions`, `/memories` exceto `DELETE`, `/config`, `/health`, WebSocket `/workflows/ws`...).
+- **Rotas run**: todo o resto (runs de agente/team, `/agui` e `/agui/{id}`, `/agents`, `/teams`, `/sessions`, `/memories` exceto `DELETE`, `/config`, `/health`, WebSocket `/workflows/ws`...).
 - **Respostas**: `401 {"detail":"unauthorized"}` + `WWW-Authenticate: Bearer` sem credencial ou com chave inválida; `403 {"detail":"forbidden"}` com a chave run em rota admin. WebSocket sem chave válida é recusado no handshake (`websocket.close` 1008 antes do accept; o servidor responde 403). O WebSocket só autentica por header (`Authorization`/`X-API-Key`): navegador não manda header customizado no handshake, então com chaves configuradas o `/workflows/ws` só é usável por cliente não-navegador. O 401 de uma origem permitida leva os headers CORS.
 - **Fail-closed**: sem nenhuma chave o app só inicia com `APP_HOST` em loopback (`127.0.0.0/8`, `::1`, `localhost`) **e** `ENVIRONMENT` `development` ou `test`; nesse modo dev local não há chave (aviso no log), mas cada request só passa se o cliente, o endereço local do servidor e o header `Host` (`localhost`, `127.x`, `[::1]`, porta opcional) forem loopback (socket UNIX não é suportado nesse modo) e se não vier de outro site no navegador: `Origin` presente precisa estar em `CORS_ALLOWED_ORIGINS` (origem permitida passa mesmo `cross-site`, como os.agno.com → localhost) e, sem `Origin`, `Sec-Fetch-Site: cross-site` é recusado. O resto recebe 401 (WebSocket: 1008). `/livez` segue público. Em qualquer outro caso (ex.: `0.0.0.0`, ou `production` no loopback) o app recusa iniciar com erro claro. Só uma das chaves também é erro.
 - O `APP_HOST` decide se o app sobe sem chaves: rode por `python app.py` (que faz o bind nele). Se ele subir com `uvicorn app:app --host 0.0.0.0` direto, a guarda por request recusa quem vem de fora do loopback. **Atenção (risco residual do modo dev local):** um proxy reverso ou túnel (ngrok, `ssh -R`, port-forward) rodando no próprio host conecta pelo loopback e continua expondo o app sem chave; qualquer processo local também acessa tudo, e uma origem listada em `CORS_ALLOWED_ORIGINS` (ex.: os.agno.com) pode chamar o app pelo navegador do dev. Para expor ou restringir, configure as chaves.
@@ -529,7 +529,7 @@ Após o AgentOS montar as rotas, a aplicação expõe ~75 endpoints. Os principa
 |--------|------|-----------|
 | `GET` | `/` | Info da API (nome, ID, versão) |
 | `GET` | `/health` | Health check AgentOS (`{"status":"ok","instantiated_at":"..."}`) |
-| `GET` | `/config` | Configuração completa (agentes, databases, interfaces) |
+| `GET` | `/config` | Configuração do AgentOS (agentes, teams, databases) |
 | `GET` | `/agents` | Lista todos os agentes ativos |
 | `GET` | `/agents/{agent_id}` | Detalhes de um agente |
 | `POST` | `/agents/{agent_id}/runs` | **Executa o agente** (resposta SSE streaming) |
@@ -548,7 +548,16 @@ Após o AgentOS montar as rotas, a aplicação expõe ~75 endpoints. Os principa
 | Método | Rota | Descrição |
 |--------|------|-----------|
 | `GET` | `/status` | Status da interface (`{"status":"available"}`) |
-| `POST` | `/agui` | Executa agente via protocolo AG-UI (SSE streaming) |
+| `POST` | `/agui/{id}` | Executa o agente ou team `{id}` via protocolo AG-UI (SSE streaming); id inexistente = 404 |
+| `POST` | `/agui` | **Deprecated** (sai no próximo release): alias da primeira entidade carregada (agentes antes de teams); a resposta traz `Deprecation: true` e `Link: </agui/{id}>; rel="successor-version"`. Use `/agui/{id}` |
+
+Detalhes do AG-UI (F1-08):
+- A resposta SSE não carrega header CORS próprio: vale o `CORS_ALLOWED_ORIGINS` do app (origem fora da lista não recebe `Access-Control-Allow-Origin`).
+- Falha do run (erro do modelo/SDK, run recusado por guardrail, ex.: falta de `user_id`, ou run cancelado) termina com o evento `RUN_ERROR` no lugar do `RUN_FINISHED`. `code`: `input_check_error`/`output_check_error` (a `message` é a do guardrail, até 300 caracteres), `run_cancelled` ou `run_error` (mensagem genérica; o texto da exceção só vai para o log, pelo tipo).
+- `runId` do cliente só é aceito com 1 a 64 caracteres em `[A-Za-z0-9_-]` (cabe um UUID). Vazio ou fora disso, o servidor gera um UUID4 e devolve no `RUN_STARTED`/`RUN_FINISHED`: use o `runId` dos eventos, não o enviado. `runId` ausente do corpo segue sendo 422 (o campo é obrigatório no protocolo).
+- `user_id` continua vindo de `forwardedProps.user_id` (ver [Memória Inteligente](#memória-inteligente)); valor que não seja string é descartado (o run segue sem `user_id`; entidade com memória de usuário o recusa).
+- `GET /config` não lista o AG-UI (a lista `interfaces` vem vazia): use `POST /agui/{id}` com os ids de `GET /agents` e `GET /teams`.
+- No navegador, `Deprecation` e `Link` são os únicos headers de resposta expostos pelo CORS.
 
 ### Rotas Administrativas (customizadas)
 
@@ -586,7 +595,7 @@ Com `API_KEY_RUN`/`API_KEY_ADMIN` configuradas, o frontend precisa mandar a chav
 
 - O frontend chama `GET /health` e `GET /status` para verificar se o servidor está ativo
 - Lista os agentes via `GET /config` e `GET /agents`
-- Envia mensagens via `POST /agents/{agent_id}/runs` (SSE streaming nativo) ou `POST /agui` (protocolo AG-UI)
+- Envia mensagens via `POST /agents/{agent_id}/runs` (SSE streaming nativo) ou `POST /agui/{id}` (protocolo AG-UI; `POST /agui` é alias deprecated da primeira entidade)
 - Gerencia sessões via `GET/DELETE /sessions/{session_id}` (o `DELETE` exige a chave admin)
 
 ---
@@ -838,7 +847,7 @@ Quando ativada (`user_memory_active: true`), a memória:
 - **Persiste**: Na collection `agno_memories`, associada ao `user_id`
 - **Recupera**: A cada nova conversa, o contexto acumulado é injetado nas instruções do agente
 
-**`user_id` é obrigatório** em agente ou team com memória de usuário (`user_memory_active: true`; no team, também quando algum membro a tem): envie no campo `user_id` do form de `POST /agents/{id}/runs` / `POST /teams/{id}/runs`, ou em `forwardedProps.user_id` no AG-UI. O `user_id` deve ser string não vazia, com ao menos um caractere visível, e diferente de `default` (o usuário de fallback do Agno para memória sem `user_id`); não é normalizado (`" ana "` e `ana` são usuários diferentes). Não há usuário fixo nem default: sem `user_id` válido (ausente, vazio, em branco ou só invisível, `default`, ou não-string, ex.: número em `forwardedProps`) o run é recusado antes de ler memória ou chamar o modelo, então chamadores anônimos nunca compartilham memórias. O AgentOS responde 200 com `status: "ERROR"` e mensagem citando `user_id` (`stream=false`) ou evento SSE `RunError` (`stream=true`); o AG-UI do Agno 2.5.8 descarta erros de run, então o run AG-UI recusado termina sem texto. Entidades sem memória de usuário continuam aceitando run sem `user_id`.
+**`user_id` é obrigatório** em agente ou team com memória de usuário (`user_memory_active: true`; no team, também quando algum membro a tem): envie no campo `user_id` do form de `POST /agents/{id}/runs` / `POST /teams/{id}/runs`, ou em `forwardedProps.user_id` no AG-UI. O `user_id` deve ser string não vazia, com ao menos um caractere visível, e diferente de `default` (o usuário de fallback do Agno para memória sem `user_id`); não é normalizado (`" ana "` e `ana` são usuários diferentes). Não há usuário fixo nem default: sem `user_id` válido (ausente, vazio, em branco ou só invisível, `default`, ou não-string, ex.: número em `forwardedProps`) o run é recusado antes de ler memória ou chamar o modelo, então chamadores anônimos nunca compartilham memórias. O AgentOS responde 200 com `status: "ERROR"` e mensagem citando `user_id` (`stream=false`) ou evento SSE `RunError` (`stream=true`); no AG-UI o run recusado termina com o evento `RUN_ERROR` (`code: input_check_error`) e a mesma mensagem. Entidades sem memória de usuário continuam aceitando run sem `user_id`.
 
 **Nota de operação (atualização para o F1-06):** antes do F1-06 todo agente e team rodava com `user_id: "ava"` fixo, então memórias e sessões gravadas com `user_id: "ava"` são um pool legado compartilhado por todos os chamadores. Revise e apague: liste com `GET /memories?user_id=ava` e apague com `DELETE /memories` (chave admin; corpo `{"memory_ids": [...], "user_id": "ava"}`) ou direto no MongoDB: `db.agno_memories.deleteMany({user_id: "ava"})` (e `db.agno_sessions.deleteMany({user_id: "ava"})`, se não quiser manter esse histórico).
 
@@ -964,7 +973,7 @@ tests/
    - Busca no MongoDB as configs de agentes ativos
    - Para cada config, o `AgentFactoryService` cria um `agno.Agent` com modelo, tools, knowledge e memória
    - Em seguida, o `GetActiveTeamsUseCase` busca configs de teams ativos e o `TeamFactoryService` cria `agno.Team` com os agentes como membros
-5. Os agentes criados são passados junto com os teams para `AgentOS(agents, teams, interfaces=[AGUI(...)], base_app, tracing=True)` que registra ~75 rotas REST + SSE no FastAPI e configura OpenTelemetry tracing
+5. Os agentes criados são passados junto com os teams para `AgentOS(agents, teams, base_app)`, que registra as rotas REST + SSE no FastAPI; em seguida o app monta o router AG-UI próprio (`POST /agui/{id}` por entidade, `src/infrastructure/web/agui_router.py`)
 6. O servidor fica pronto na porta 7777
 
 ### Padrões Implementados

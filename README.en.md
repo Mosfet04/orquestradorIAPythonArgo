@@ -307,7 +307,7 @@ orquestradorIAPythonArgo/
 │   │   ├── services/
 │   │   │   └── llm_summary_generator.py #  Section summary generator via LLM
 │   │   ├── web/
-│   │   │   └── app_factory.py      #   AppFactory — creates FastAPI + AgentOS + AGUI
+│   │   │   └── app_factory.py      #   AppFactory — creates FastAPI + AgentOS + per-entity AG-UI
 │   │   └── dependency_injection.py #   DependencyContainer — Composition Root
 │   │
 │   └── presentation/               # 🌐 PRESENTATION LAYER
@@ -399,7 +399,7 @@ sequenceDiagram
     F->>MDB: teams_config.find({active: true})
     MDB-->>F: [TeamConfig, ...]
     F->>F: TeamFactoryService → creates Teams with agents as members
-    F->>OS: AgentOS(agents, teams, interfaces=[AGUI], base_app, tracing=True)
+    F->>OS: AgentOS(agents, teams, base_app) + AG-UI router /agui/{id}
     OS->>OS: Registers ~75 routes + sets up OpenTelemetry tracing
     Note over U,OS: Server ready on port 7777
 ```
@@ -492,7 +492,7 @@ Every route requires an API key, except `GET /livez` and the CORS preflight (`OP
 - **Keys**: `API_KEY_RUN` (using agents) and `API_KEY_ADMIN` (operations; also valid wherever run is). Both together, different from each other, at least 32 visible ASCII characters. Generate each with `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
 - **Credential**: `Authorization: Bearer <key>` or `X-API-Key: <key>`. With both headers, Bearer wins.
 - **Admin routes** (`API_KEY_ADMIN` only): `/admin/*`, `/metrics` and `/metrics/*`, `/databases/*`, `/eval-runs*`, `/components*`, `/schedules*`, `/registry*`, `POST /optimize-memories` (rewrites memories of any `user_id` with a model chosen by the request); `DELETE` on `/sessions*` and `/memories*`; `POST|PUT|PATCH|DELETE` on `/knowledge*` (including `POST /knowledge/search`, which returns chunk text from the whole base and costs embeddings); `/docs`, `/redoc` and `/openapi.json` outside `ENVIRONMENT=development`.
-- **Run routes**: everything else (agent/team runs, `/agui`, `/agents`, `/teams`, `/sessions`, `/memories` except `DELETE`, `/config`, `/health`, WebSocket `/workflows/ws`...).
+- **Run routes**: everything else (agent/team runs, `/agui` and `/agui/{id}`, `/agents`, `/teams`, `/sessions`, `/memories` except `DELETE`, `/config`, `/health`, WebSocket `/workflows/ws`...).
 - **Responses**: `401 {"detail":"unauthorized"}` + `WWW-Authenticate: Bearer` with no credential or an invalid key; `403 {"detail":"forbidden"}` with the run key on an admin route. A WebSocket without a valid key is rejected at the handshake (`websocket.close` 1008 before accept; the server answers 403). WebSocket only authenticates by header (`Authorization`/`X-API-Key`): browsers cannot send custom headers on the handshake, so with keys configured `/workflows/ws` is only usable by non-browser clients. A 401 for an allowed origin carries the CORS headers.
 - **Fail-closed**: with no key at all the app only starts with `APP_HOST` on loopback (`127.0.0.0/8`, `::1`, `localhost`) **and** `ENVIRONMENT` `development` or `test`; in this local dev mode there is no key (warning in the log), but each request only passes if the client, the server's local address and the `Host` header (`localhost`, `127.x`, `[::1]`, optional port) are loopback (UNIX sockets are not supported in this mode) and it does not come from another site in the browser: a present `Origin` must be in `CORS_ALLOWED_ORIGINS` (an allowed origin passes even when `cross-site`, like os.agno.com → localhost) and, without `Origin`, `Sec-Fetch-Site: cross-site` is rejected. Anything else gets 401 (WebSocket: 1008). `/livez` stays public. In any other case (e.g. `0.0.0.0`, or `production` on loopback) the app refuses to start with a clear error. Only one of the keys is an error too.
 - `APP_HOST` decides whether the app starts without keys: run through `python app.py` (which binds to it). If it is started with `uvicorn app:app --host 0.0.0.0` directly, the per-request guard rejects anything coming from outside loopback. **Warning (local dev mode residual risk):** a reverse proxy or tunnel (ngrok, `ssh -R`, port-forward) running on the same host connects over loopback and still exposes the app without a key; any local process can also reach everything, and an origin listed in `CORS_ALLOWED_ORIGINS` (e.g. os.agno.com) can call the app through the dev's browser. To expose or restrict it, configure the keys.
@@ -515,7 +515,7 @@ After AgentOS mounts its routes, the application exposes ~75 endpoints. The main
 |--------|-------|-------------|
 | `GET` | `/` | API info (name, ID, version) |
 | `GET` | `/health` | AgentOS health check (`{"status":"ok","instantiated_at":"..."}`) |
-| `GET` | `/config` | Full configuration (agents, databases, interfaces) |
+| `GET` | `/config` | AgentOS configuration (agents, teams, databases) |
 | `GET` | `/agents` | Lists all active agents |
 | `GET` | `/agents/{agent_id}` | Agent details |
 | `POST` | `/agents/{agent_id}/runs` | **Run the agent** (SSE streaming response) |
@@ -534,7 +534,16 @@ After AgentOS mounts its routes, the application exposes ~75 endpoints. The main
 | Method | Route | Description |
 |--------|-------|-------------|
 | `GET` | `/status` | Interface status (`{"status":"available"}`) |
-| `POST` | `/agui` | Runs agent via AG-UI protocol (SSE streaming) |
+| `POST` | `/agui/{id}` | Runs agent or team `{id}` via the AG-UI protocol (SSE streaming); unknown id = 404 |
+| `POST` | `/agui` | **Deprecated** (removed in the next release): alias of the first loaded entity (agents before teams); the response carries `Deprecation: true` and `Link: </agui/{id}>; rel="successor-version"`. Use `/agui/{id}` |
+
+AG-UI details (F1-08):
+- The SSE response sets no CORS header of its own: the app's `CORS_ALLOWED_ORIGINS` applies (an origin outside the list gets no `Access-Control-Allow-Origin`).
+- A failed run (model/SDK error, run refused by a guardrail, e.g. missing `user_id`, or cancelled run) ends with a `RUN_ERROR` event instead of `RUN_FINISHED`. `code`: `input_check_error`/`output_check_error` (`message` is the guardrail's, up to 300 characters), `run_cancelled` or `run_error` (generic message; the exception text only goes to the log, by type).
+- The client `runId` is accepted only with 1 to 64 characters in `[A-Za-z0-9_-]` (a UUID fits). Empty or anything else: the server generates a UUID4 and returns it in `RUN_STARTED`/`RUN_FINISHED`; use the events' `runId`, not the one you sent. A body without `runId` is still 422 (the field is required by the protocol).
+- `user_id` still comes from `forwardedProps.user_id` (see [Smart Memory](#smart-memory)); a non-string value is dropped (the run proceeds without `user_id`; an entity with user memory refuses it).
+- `GET /config` does not list AG-UI (its `interfaces` list is empty): use `POST /agui/{id}` with the ids from `GET /agents` and `GET /teams`.
+- In the browser, `Deprecation` and `Link` are the only response headers exposed by CORS.
 
 ### Administrative Routes (custom)
 
@@ -572,7 +581,7 @@ With `API_KEY_RUN`/`API_KEY_ADMIN` configured, the frontend must send the run ke
 
 - The frontend calls `GET /health` and `GET /status` to verify the server is active
 - Agents are listed via `GET /config` and `GET /agents`
-- Messages are sent via `POST /agents/{agent_id}/runs` (native SSE streaming) or `POST /agui` (AG-UI protocol)
+- Messages are sent via `POST /agents/{agent_id}/runs` (native SSE streaming) or `POST /agui/{id}` (AG-UI protocol; `POST /agui` is a deprecated alias of the first entity)
 - Sessions are managed via `GET/DELETE /sessions/{session_id}` (`DELETE` requires the admin key)
 
 ---
@@ -824,7 +833,7 @@ When enabled (`user_memory_active: true`), memory:
 - **Persists**: In the `agno_memories` collection, associated with `user_id`
 - **Retrieves**: On each new conversation, accumulated context is injected into agent instructions
 
-**`user_id` is required** for an agent or team with user memory (`user_memory_active: true`; for a team, also when any member has it): send it in the `user_id` form field of `POST /agents/{id}/runs` / `POST /teams/{id}/runs`, or in `forwardedProps.user_id` on AG-UI. `user_id` must be a non-empty string with at least one visible character and must not be `default` (Agno's fallback user for memory without `user_id`); it is not normalized (`" ana "` and `ana` are different users). There is no fixed or default user: without a valid `user_id` (missing, empty, blank or invisible-only, `default`, or not a string, e.g. a number in `forwardedProps`) the run is refused before reading memory or calling the model, so anonymous callers never share memories. AgentOS answers 200 with `status: "ERROR"` and a message naming `user_id` (`stream=false`), or a `RunError` SSE event (`stream=true`); AG-UI in Agno 2.5.8 drops run errors, so the refused AG-UI run ends with no text. Entities without user memory keep accepting runs without `user_id`.
+**`user_id` is required** for an agent or team with user memory (`user_memory_active: true`; for a team, also when any member has it): send it in the `user_id` form field of `POST /agents/{id}/runs` / `POST /teams/{id}/runs`, or in `forwardedProps.user_id` on AG-UI. `user_id` must be a non-empty string with at least one visible character and must not be `default` (Agno's fallback user for memory without `user_id`); it is not normalized (`" ana "` and `ana` are different users). There is no fixed or default user: without a valid `user_id` (missing, empty, blank or invisible-only, `default`, or not a string, e.g. a number in `forwardedProps`) the run is refused before reading memory or calling the model, so anonymous callers never share memories. AgentOS answers 200 with `status: "ERROR"` and a message naming `user_id` (`stream=false`), or a `RunError` SSE event (`stream=true`); on AG-UI the refused run ends with a `RUN_ERROR` event (`code: input_check_error`) carrying the same message. Entities without user memory keep accepting runs without `user_id`.
 
 **Operations note (upgrade to F1-06):** before F1-06 every agent and team ran with the fixed `user_id: "ava"`, so memories and sessions stored with `user_id: "ava"` are a legacy pool shared by all callers. Review and delete them: list with `GET /memories?user_id=ava` and delete with `DELETE /memories` (admin key; body `{"memory_ids": [...], "user_id": "ava"}`), or directly in MongoDB: `db.agno_memories.deleteMany({user_id: "ava"})` (and `db.agno_sessions.deleteMany({user_id: "ava"})` if you do not want to keep that history).
 
@@ -950,7 +959,7 @@ tests/
    - Fetches active agent configs from MongoDB
    - For each config, `AgentFactoryService` creates an `agno.Agent` with model, tools, knowledge, and memory
    - Then `GetActiveTeamsUseCase` fetches active team configs and `TeamFactoryService` creates `agno.Team` with agents as members
-5. Created agents and teams are passed to `AgentOS(agents, teams, interfaces=[AGUI(...)], base_app, tracing=True)` which registers ~75 REST + SSE routes on FastAPI and sets up OpenTelemetry tracing
+5. Created agents and teams are passed to `AgentOS(agents, teams, base_app)`, which registers the REST + SSE routes on FastAPI; then the app mounts its own AG-UI router (`POST /agui/{id}` per entity, `src/infrastructure/web/agui_router.py`)
 6. Server is ready on port 7777
 
 ### Implemented Patterns

@@ -187,12 +187,8 @@ def test_resposta_sse_do_agui_ecoa_a_origem_permitida_e_nunca_curinga_com_ela(mo
     assert ok.headers["access-control-allow-credentials"] == "true"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="BUG-F103-AGUI-ACAO: agno/os/interfaces/agui/router.py:144 fixa 'Access-Control-Allow-Origin: *' "
-    "no StreamingResponse; o CORS do app só sobrescreve para origem permitida. Escopo declarado do F1-08 (B7).",
-)
 def test_resposta_sse_do_agui_nao_carrega_curinga_para_origem_negada(monkeypatch: pytest.MonkeyPatch):
+    """BUG-F103-AGUI-ACAO (corrigido no F1-08): o router AG-UI do agno fixava ``ACAO: *``."""
     # Com chaves e chave run válida: no modo dev local (F1-04) a origem negada nem chegaria ao AG-UI.
     client = loopback_client(_mounted(monkeypatch, [_agent()], CORS_ALLOWED_ORIGINS=ALLOWED, **_KEYS))
     run_key = {"Authorization": f"Bearer {_KEYS['API_KEY_RUN']}"}

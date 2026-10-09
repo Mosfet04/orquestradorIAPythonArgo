@@ -223,7 +223,7 @@ async def test_agui_sem_user_id_e_recusado_e_com_user_id_le_so_a_propria_memoria
     memory_db: InMemoryDb, client_for: Callable[..., TestClient]
 ) -> None:
     agent = await _agent("com-memoria", memory=True)
-    client = client_for([agent])  # só ele: /agui é a interface da primeira entidade
+    client = client_for([agent])
     model = _model(agent)
 
     def agui(forwarded: dict[str, str], run_id: str) -> str:
@@ -236,15 +236,15 @@ async def test_agui_sem_user_id_e_recusado_e_com_user_id_le_so_a_propria_memoria
             "context": [],
             "forwardedProps": forwarded,
         }
-        response = client.post("/agui", json=body, headers=AUTH)
+        response = client.post("/agui/com-memoria", json=body, headers=AUTH)
         assert response.status_code == 200
         return response.text
 
-    # O AG-UI do agno 2.5.8 descarta o RunError do run (agno/os/interfaces/agui/utils.py só
-    # mapeia conteúdo, tools, reasoning e conclusão): o run recusado chega como RUN_STARTED +
-    # RUN_FINISHED sem texto. O que importa aqui: o modelo não foi chamado (nada de memória).
+    # Desde o F1-08 o run recusado chega como RUN_STARTED + RUN_ERROR com o motivo (antes o
+    # AG-UI do agno descartava o RunError). E o modelo não foi chamado (nada de memória).
     refused = agui({}, "r-anon")
-    assert [e["type"] for e in _sse(refused)] == ["RUN_STARTED", "RUN_FINISHED"]
+    assert [e["type"] for e in _sse(refused)] == ["RUN_STARTED", "RUN_ERROR"]
+    assert "user_id obrigatório" in _sse(refused)[-1]["message"]
     assert model.calls == []
 
     accepted = agui({"user_id": "ana"}, "r-ana")
@@ -286,11 +286,12 @@ async def test_agui_com_user_id_nao_string_e_recusado_sem_ler_memoria(
         member = await _agent("membro", memory=False)
         entity = _team("time", [member], memory=True)
         models = [_model(entity), _model(member)]
-        client = client_for([], [entity])  # só o team: /agui é a interface dele
+        client = client_for([], [entity])
 
-    response = client.post("/agui", json=_agui_body({"user_id": user_id}, "r-tipo"), headers=AUTH)
+    response = client.post(f"/agui/{entity.id}", json=_agui_body({"user_id": user_id}, "r-tipo"), headers=AUTH)
 
     assert response.status_code == 200
+    assert [e["type"] for e in _sse(response.text)] == ["RUN_STARTED", "RUN_ERROR"]
     assert all(model.calls == [] for model in models)
     assert all(memory not in response.text for memory in MEMORY_OF.values())
     assert _memories(memory_db) == before

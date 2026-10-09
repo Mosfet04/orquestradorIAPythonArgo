@@ -7,7 +7,6 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 from agno.os import AgentOS
-from agno.os.interfaces.agui import AGUI
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -20,6 +19,7 @@ from src.infrastructure.telemetry import (
     setup_telemetry,
     shutdown_telemetry,
 )
+from src.infrastructure.web.agui_router import build_agui_router
 from src.infrastructure.web.api_key_auth import (
     ApiKeyAuthMiddleware,
     ApiKeys,
@@ -31,6 +31,7 @@ from src.infrastructure.web.metrics_middleware import MetricsMiddleware
 # soma os headers CORS-safelisted (Accept, Accept-Language, Content-Language, Content-Type).
 _CORS_ALLOW_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
 _CORS_ALLOW_HEADERS = ("Authorization", "Content-Type", "X-API-Key")
+_CORS_EXPOSE_HEADERS = ("Deprecation", "Link")
 
 # Rotas fora do tracing. O OTel faz re.search em ``scheme://<Host><path>`` (sem query;
 # opentelemetry/instrumentation/asgi/__init__.py, get_host_port_url_tuple): a regex
@@ -137,8 +138,9 @@ class AppFactory:
             allow_credentials=True,
             allow_methods=list(_CORS_ALLOW_METHODS),
             allow_headers=list(_CORS_ALLOW_HEADERS),
-            # expose_headers no default (nenhum): o navegador só lê os headers
-            # CORS-safelisted da resposta.
+            # O navegador só lê os headers CORS-safelisted e estes: o sinal de alias
+            # deprecated do POST /agui (F1-08).
+            expose_headers=list(_CORS_EXPOSE_HEADERS),
         )
 
     # ── admin endpoints ─────────────────────────────────────────────
@@ -235,13 +237,16 @@ class AppFactory:
             )
 
     def _mount_agent_os(self, app: FastAPI, agents: list, teams: list) -> None:
-        """Cria interfaces AG-UI e monta o AgentOS no app base."""
-        agent_interfaces = [AGUI(agent=agent) for agent in agents]
-        team_interfaces = [AGUI(team=team) for team in teams]
-        interfaces = agent_interfaces + team_interfaces
+        """Monta o AgentOS no app base e, depois dele, o AG-UI por entidade (``/agui/{id}``).
+
+        Sem a interface ``AGUI`` do agno: ela só expõe uma entidade em ``/agui`` e fixa
+        ``Access-Control-Allow-Origin: *`` (ver ``agui_router``). O router entra depois do
+        ``get_app()``, quando o AgentOS já definiu os ids das entidades.
+        """
         self._logger.info(
-            "Lifespan: montando AgentOS com interfaces AG-UI",
-            interface_count=len(interfaces),
+            "Lifespan: montando AgentOS",
+            agent_count=len(agents),
+            team_count=len(teams),
         )
         if self._config is None:
             raise RuntimeError("AppConfig não carregado: chame create_app() antes")
@@ -249,7 +254,6 @@ class AppFactory:
         agent_os = AgentOS(
             agents=agents,
             teams=teams or None,
-            interfaces=interfaces,
             cors_allowed_origins=list(origins),
             base_app=app,
             on_route_conflict="preserve_base_app",
@@ -262,6 +266,7 @@ class AppFactory:
             # get_app() troca o CORS por um com "*" (update_cors_middleware): mesmo se
             # falhar depois disso, o app não pode ficar com ele nem perder a auth.
             self._apply_edge_middleware(app)
+        app.include_router(build_agui_router(agents, teams, StructlogLoggerAdapter("agui")))
         app.openapi_schema = None
         self._logger.info(
             "AgentOS montado com sucesso",
