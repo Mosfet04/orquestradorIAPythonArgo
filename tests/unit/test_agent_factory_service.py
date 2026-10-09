@@ -6,10 +6,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.application.services.agent_factory_service import AgentFactoryService
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.rag_config import RagConfig, SearchStrategy
 from src.domain.ports.model_factory_port import InvalidModelConfigError
+from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService
 from tests.fakes import FakeModelFactory
 
 
@@ -47,8 +47,8 @@ def service(mock_logger, mock_tool_repository):
 
 
 class TestAgentFactoryService:
-    @patch("src.application.services.agent_factory_service.Agent")
-    @patch("src.application.services.agent_factory_service.MongoAgentDb")
+    @patch("src.infrastructure.runtime.agno.agent_factory_service.Agent")
+    @patch("src.infrastructure.runtime.agno.agent_factory_service.MongoAgentDb")
     async def test_create_agent_success(self, mock_db, mock_agent, service):
         mock_agent.return_value = MagicMock()
         config = _make_config()
@@ -62,8 +62,8 @@ class TestAgentFactoryService:
         with pytest.raises(InvalidModelConfigError, match="marcado como inválido"):
             await service.create_agent(_make_config())
 
-    @patch("src.application.services.agent_factory_service.Agent")
-    @patch("src.application.services.agent_factory_service.MongoAgentDb")
+    @patch("src.infrastructure.runtime.agno.agent_factory_service.Agent")
+    @patch("src.infrastructure.runtime.agno.agent_factory_service.MongoAgentDb")
     async def test_modelo_recebe_a_model_config_inteira_fora_do_event_loop(self, mock_db, mock_agent, service):
         """F2-02: campos novos chegam à fábrica; a criação (segredo file:, DNS) roda em thread."""
         factory = FakeModelFactory()
@@ -78,8 +78,8 @@ class TestAgentFactoryService:
         assert factory.on_event_loop == [False]
         assert mock_agent.call_args.kwargs["model"] is factory.models[0]
 
-    @patch("src.application.services.agent_factory_service.Agent")
-    @patch("src.application.services.agent_factory_service.MongoAgentDb")
+    @patch("src.infrastructure.runtime.agno.agent_factory_service.Agent")
+    @patch("src.infrastructure.runtime.agno.agent_factory_service.MongoAgentDb")
     async def test_create_agent_with_tools(self, mock_db, mock_agent, service, mock_tool_repository):
         mock_agent.return_value = MagicMock()
         mock_tool_repository.get_tools_by_ids.return_value = [MagicMock(), MagicMock()]
@@ -89,10 +89,10 @@ class TestAgentFactoryService:
         assert agent is not None
         mock_tool_repository.get_tools_by_ids.assert_awaited_once_with(["t1", "t2"])
 
-    @patch("src.application.services.agent_factory_service.Agent")
-    @patch("src.application.services.agent_factory_service.MongoAgentDb")
-    @patch("src.application.services.agent_factory_service.Knowledge")
-    @patch("src.application.services.agent_factory_service.MongoVectorDb")
+    @patch("src.infrastructure.runtime.agno.agent_factory_service.Agent")
+    @patch("src.infrastructure.runtime.agno.agent_factory_service.MongoAgentDb")
+    @patch("src.infrastructure.runtime.agno.agent_factory_service.Knowledge")
+    @patch("src.infrastructure.runtime.agno.agent_factory_service.MongoVectorDb")
     async def test_create_agent_with_rag(self, mock_vdb, mock_knowledge, mock_db, mock_agent, service):
         mock_agent.return_value = MagicMock()
         service._embedder_factory.create_embedder.return_value = MagicMock()
@@ -101,8 +101,8 @@ class TestAgentFactoryService:
         agent = await service.create_agent(config)
         assert agent is not None
 
-    @patch("src.application.services.agent_factory_service.Agent")
-    @patch("src.application.services.agent_factory_service.MongoAgentDb")
+    @patch("src.infrastructure.runtime.agno.agent_factory_service.Agent")
+    @patch("src.infrastructure.runtime.agno.agent_factory_service.MongoAgentDb")
     async def test_create_agent_enables_message_persistence(self, mock_db, mock_agent, service):
         mock_agent.return_value = MagicMock()
         config = _make_config()
@@ -125,10 +125,10 @@ async def test_embedder_recusado_vai_ao_log_com_o_motivo(
     strategy: SearchStrategy, message: str, tmp_path, monkeypatch: pytest.MonkeyPatch
 ):
     """``InvalidModelConfigError`` é texto nosso (sem segredo): o operador precisa saber o porquê."""
-    from src.application.services import agent_factory_service
     from src.application.services.document_indexing_service import DocumentIndexingService
     from src.application.services.knowledge_search_factory import KnowledgeSearchFactory
     from src.infrastructure.parsers.text_document_parser import TextDocumentParser
+    from src.infrastructure.runtime.agno import agent_factory_service
     from tests.fakes import FakeEmbedderFactory, InMemoryDocumentTreeRepository, InMemoryToolRepository, RecordingLogger
 
     (tmp_path / "docs").mkdir()

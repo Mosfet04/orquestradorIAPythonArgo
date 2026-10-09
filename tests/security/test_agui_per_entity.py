@@ -21,7 +21,7 @@ from agno.team import Team
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
-from src.application.services.agent_factory_service import UserIdRequiredGuardrail
+from src.infrastructure.runtime.agno.user_id_guardrail import UserIdRequiredGuardrail
 from src.infrastructure.web.app_factory import AppFactory
 from tests.fakes import FakeChatModel
 

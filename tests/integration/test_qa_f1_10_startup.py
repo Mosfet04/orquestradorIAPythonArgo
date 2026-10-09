@@ -15,9 +15,6 @@ from typing import Any
 
 import pytest
 
-from src.application.services import agent_factory_service, team_factory_service
-from src.application.services.agent_factory_service import AgentFactoryService
-from src.application.services.team_factory_service import TeamFactoryService
 from src.application.use_cases.get_active_agents_use_case import GetActiveAgentsUseCase
 from src.application.use_cases.get_active_teams_use_case import GetActiveTeamsUseCase
 from src.infrastructure.dependency_injection import HealthService
@@ -26,6 +23,9 @@ from src.infrastructure.logging.logger_adapter import StructlogLoggerAdapter
 from src.infrastructure.repositories import mongo_base
 from src.infrastructure.repositories.mongo_agent_config_repository import MongoAgentConfigRepository
 from src.infrastructure.repositories.mongo_team_config_repository import MongoTeamConfigRepository
+from src.infrastructure.runtime.agno import AgnoRuntime, agent_factory_service, team_factory_service
+from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService
+from src.infrastructure.runtime.agno.team_factory_service import TeamFactoryService
 from src.infrastructure.web import app_factory
 from src.infrastructure.web.app_factory import AppFactory
 from src.presentation.controllers.orquestrador_controller import OrquestradorController
@@ -101,21 +101,25 @@ class _Env:
         monkeypatch.setattr(team_factory_service, "MongoAgentDb", lambda **_: None)
         models = FakeModelFactory(responses=["oi"], invalid_models={"modelo-invalido"})
         logger = self.logger
+        runtime = AgnoRuntime(
+            agent_factory=AgentFactoryService(
+                db_url=CONN,
+                logger=logger,
+                model_factory=models,
+                embedder_factory=FakeEmbedderFactory(),
+                tool_factory=HttpToolFactory(logger=logger),
+                tool_repository=InMemoryToolRepository(),
+            ),
+            team_factory=TeamFactoryService(db_url=CONN, logger=logger, model_factory=models),
+        )
         self.controller = OrquestradorController(
             get_active_agents_use_case=GetActiveAgentsUseCase(
-                AgentFactoryService(
-                    db_url=CONN,
-                    logger=logger,
-                    model_factory=models,
-                    embedder_factory=FakeEmbedderFactory(),
-                    tool_factory=HttpToolFactory(logger=logger),
-                    tool_repository=InMemoryToolRepository(),
-                ),
+                runtime,
                 MongoAgentConfigRepository(connection_string=CONN, logger=logger),
                 logger,
             ),
             get_active_teams_use_case=GetActiveTeamsUseCase(
-                TeamFactoryService(db_url=CONN, logger=logger, model_factory=models),
+                runtime,
                 MongoTeamConfigRepository(connection_string=CONN, logger=logger),
                 logger,
             ),

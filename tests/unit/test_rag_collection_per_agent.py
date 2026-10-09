@@ -12,12 +12,12 @@ from pathlib import Path
 
 import pytest
 
-from src.application.services.agent_factory_service import (
+from src.domain.entities.agent_config import AgentConfig
+from src.domain.entities.rag_config import RagConfig, SearchStrategy
+from src.infrastructure.runtime.agno.agent_factory_service import (
     AgentFactoryService,
     rag_collection_name,
 )
-from src.domain.entities.agent_config import AgentConfig
-from src.domain.entities.rag_config import RagConfig, SearchStrategy
 from tests.fakes import (
     FakeEmbedderFactory,
     FakeModelFactory,

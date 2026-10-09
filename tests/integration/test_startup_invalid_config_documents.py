@@ -15,15 +15,15 @@ from typing import Any
 import pytest
 from starlette.testclient import TestClient
 
-from src.application.services import agent_factory_service, team_factory_service
-from src.application.services.agent_factory_service import AgentFactoryService
-from src.application.services.team_factory_service import TeamFactoryService
 from src.application.use_cases.get_active_agents_use_case import GetActiveAgentsUseCase
 from src.application.use_cases.get_active_teams_use_case import GetActiveTeamsUseCase
 from src.infrastructure.http.http_tool_factory import HttpToolFactory
 from src.infrastructure.repositories import mongo_base
 from src.infrastructure.repositories.mongo_agent_config_repository import MongoAgentConfigRepository
 from src.infrastructure.repositories.mongo_team_config_repository import MongoTeamConfigRepository
+from src.infrastructure.runtime.agno import AgnoRuntime, agent_factory_service, team_factory_service
+from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService
+from src.infrastructure.runtime.agno.team_factory_service import TeamFactoryService
 from src.infrastructure.web import app_factory
 from src.infrastructure.web.app_factory import AppFactory
 from src.presentation.controllers.orquestrador_controller import OrquestradorController
@@ -103,8 +103,8 @@ def _controller(monkeypatch: pytest.MonkeyPatch, logger: RecordingLogger) -> Orq
     monkeypatch.setattr(agent_factory_service, "MongoAgentDb", lambda **_: None)
     monkeypatch.setattr(team_factory_service, "MongoAgentDb", lambda **_: None)
     models = FakeModelFactory(responses=["oi"], invalid_models={"modelo-invalido"})
-    agents = GetActiveAgentsUseCase(
-        AgentFactoryService(
+    runtime = AgnoRuntime(
+        agent_factory=AgentFactoryService(
             db_url=CONN,
             logger=logger,
             model_factory=models,
@@ -112,11 +112,15 @@ def _controller(monkeypatch: pytest.MonkeyPatch, logger: RecordingLogger) -> Orq
             tool_factory=HttpToolFactory(logger=logger),
             tool_repository=InMemoryToolRepository(),
         ),
+        team_factory=TeamFactoryService(db_url=CONN, logger=logger, model_factory=models),
+    )
+    agents = GetActiveAgentsUseCase(
+        runtime,
         MongoAgentConfigRepository(connection_string=CONN, logger=logger),
         logger,
     )
     teams = GetActiveTeamsUseCase(
-        TeamFactoryService(db_url=CONN, logger=logger, model_factory=models),
+        runtime,
         MongoTeamConfigRepository(connection_string=CONN, logger=logger),
         logger,
     )

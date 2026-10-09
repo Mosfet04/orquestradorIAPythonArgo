@@ -8,9 +8,12 @@ import pytest
 from agno.tools import Toolkit
 
 from src.domain.entities.search_result import SearchResult
-from src.infrastructure.tools.hierarchical_search_tool import (
+from src.infrastructure.runtime.agno.hierarchical_search_tool import (
     create_hierarchical_search_tool,
 )
+from tests.fakes import RecordingLogger
+
+SEARCH_ERROR = "Erro ao buscar no knowledge base; a busca não está disponível agora."
 
 
 def _get_func(toolkit: Toolkit):
@@ -25,11 +28,11 @@ class TestCreateHierarchicalSearchTool:
         self.mock_strategy = AsyncMock()
 
     def test_returns_toolkit(self):
-        toolkit = create_hierarchical_search_tool(self.mock_strategy)
+        toolkit = create_hierarchical_search_tool(self.mock_strategy, logger=RecordingLogger())
         assert isinstance(toolkit, Toolkit)
 
     def test_toolkit_has_search_knowledge_function(self):
-        toolkit = create_hierarchical_search_tool(self.mock_strategy)
+        toolkit = create_hierarchical_search_tool(self.mock_strategy, logger=RecordingLogger())
         assert "search_knowledge" in toolkit.async_functions
 
     @pytest.mark.asyncio
@@ -50,7 +53,7 @@ class TestCreateHierarchicalSearchTool:
         ]
         self.mock_strategy.search = AsyncMock(return_value=results)
 
-        toolkit = create_hierarchical_search_tool(self.mock_strategy)
+        toolkit = create_hierarchical_search_tool(self.mock_strategy, logger=RecordingLogger())
         func = _get_func(toolkit)
         output = await func.entrypoint(query="princípios SOLID")
 
@@ -64,7 +67,7 @@ class TestCreateHierarchicalSearchTool:
     async def test_search_returns_no_results_message(self):
         self.mock_strategy.search = AsyncMock(return_value=[])
 
-        toolkit = create_hierarchical_search_tool(self.mock_strategy)
+        toolkit = create_hierarchical_search_tool(self.mock_strategy, logger=RecordingLogger())
         func = _get_func(toolkit)
         output = await func.entrypoint(query="algo inexistente")
 
@@ -76,18 +79,19 @@ class TestCreateHierarchicalSearchTool:
             side_effect=RuntimeError("MongoDB unreachable")
         )
 
-        toolkit = create_hierarchical_search_tool(self.mock_strategy)
+        toolkit = create_hierarchical_search_tool(self.mock_strategy, logger=RecordingLogger())
         func = _get_func(toolkit)
         output = await func.entrypoint(query="qualquer coisa")
 
-        assert "Erro ao buscar" in output
-        assert "MongoDB unreachable" in output
+        # Texto de driver/SDK não vai ao modelo, ao cliente AG-UI nem à sessão (F2-04, R1).
+        assert output == SEARCH_ERROR
+        assert "MongoDB unreachable" not in output
 
     @pytest.mark.asyncio
     async def test_custom_top_k(self):
         self.mock_strategy.search = AsyncMock(return_value=[])
 
-        toolkit = create_hierarchical_search_tool(self.mock_strategy, top_k=3)
+        toolkit = create_hierarchical_search_tool(self.mock_strategy, top_k=3, logger=RecordingLogger())
         func = _get_func(toolkit)
         await func.entrypoint(query="test")
 
@@ -105,8 +109,23 @@ class TestCreateHierarchicalSearchTool:
         ]
         self.mock_strategy.search = AsyncMock(return_value=results)
 
-        toolkit = create_hierarchical_search_tool(self.mock_strategy)
+        toolkit = create_hierarchical_search_tool(self.mock_strategy, logger=RecordingLogger())
         func = _get_func(toolkit)
         output = await func.entrypoint(query="busca")
 
         assert "doc::node::5" in output
+
+
+async def test_falha_da_busca_vai_ao_log_com_o_tipo_sem_o_texto():
+    """F2-04: o ``except Exception`` da tool loga (tipo, sem o texto, que pode vir de driver/SDK)."""
+    strategy = AsyncMock()
+    strategy.search = AsyncMock(side_effect=RuntimeError("mongodb://usuario:senha@host"))
+    logger = RecordingLogger()
+
+    output = await _get_func(create_hierarchical_search_tool(strategy, logger=logger)).entrypoint(query="q")
+
+    assert output == SEARCH_ERROR
+    assert "senha" not in output
+    assert [(r.level, r.message, r.context) for r in logger.records] == [
+        ("warning", "Erro na busca hierárquica; a tool devolve o erro ao modelo", {"error_type": "RuntimeError"})
+    ]

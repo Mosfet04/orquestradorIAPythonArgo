@@ -11,14 +11,14 @@ from agno.exceptions import CheckTrigger, InputCheckError
 from agno.run.agent import RunInput
 from agno.team import Team
 
-from src.application.services.agent_factory_service import (
-    AgentFactoryService,
+from src.domain.entities.agent_config import AgentConfig
+from src.domain.entities.team_config import TeamConfig
+from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService
+from src.infrastructure.runtime.agno.team_factory_service import TeamFactoryService
+from src.infrastructure.runtime.agno.user_id_guardrail import (
     UserIdRequiredGuardrail,
     requires_user_id,
 )
-from src.application.services.team_factory_service import TeamFactoryService
-from src.domain.entities.agent_config import AgentConfig
-from src.domain.entities.team_config import TeamConfig
 from tests.fakes import (
     FakeChatModel,
     FakeEmbedderFactory,

@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.application.services.agent_factory_service import AgentFactoryService
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.rag_config import RagConfig
+from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService
 
 
 def _make_config(**overrides) -> AgentConfig:
@@ -47,8 +47,8 @@ def service(mock_logger, mock_tool_repository):
 class TestBuildToolsError:
     """Testa _build_tools quando ocorre exceção."""
 
-    @patch("src.application.services.agent_factory_service.Agent")
-    @patch("src.application.services.agent_factory_service.MongoAgentDb")
+    @patch("src.infrastructure.runtime.agno.agent_factory_service.Agent")
+    @patch("src.infrastructure.runtime.agno.agent_factory_service.MongoAgentDb")
     async def test_build_tools_exception_returns_empty(self, mock_db, mock_agent, service, mock_logger):
         """Se a busca das tools falhar, o agente sobe sem tools e o erro é logado com os ids."""
         mock_agent.return_value = MagicMock()
@@ -70,8 +70,8 @@ class TestBuildToolsError:
 class TestBuildKnowledgeEdgeCases:
     """Testa _build_knowledge em caminhos de erro."""
 
-    @patch("src.application.services.agent_factory_service.Agent")
-    @patch("src.application.services.agent_factory_service.MongoAgentDb")
+    @patch("src.infrastructure.runtime.agno.agent_factory_service.Agent")
+    @patch("src.infrastructure.runtime.agno.agent_factory_service.MongoAgentDb")
     async def test_rag_without_model_returns_none(self, mock_db, mock_agent, service, mock_logger):
         """RAG ativo sem factory_ia_model deve logar warning e ignorar."""
         mock_agent.return_value = MagicMock()
@@ -83,8 +83,8 @@ class TestBuildKnowledgeEdgeCases:
             "RAG ativo sem factory_ia_model ou model — ignorando"
         )
 
-    @patch("src.application.services.agent_factory_service.Agent")
-    @patch("src.application.services.agent_factory_service.MongoAgentDb")
+    @patch("src.infrastructure.runtime.agno.agent_factory_service.Agent")
+    @patch("src.infrastructure.runtime.agno.agent_factory_service.MongoAgentDb")
     async def test_rag_without_factory_ia_model(self, mock_db, mock_agent, service, mock_logger):
         """RAG ativo com model mas sem factory_ia_model deve ignorar."""
         mock_agent.return_value = MagicMock()
@@ -97,10 +97,10 @@ class TestBuildKnowledgeEdgeCases:
 class TestLoadDocument:
     """Testa _load_document em caminhos de erro."""
 
-    @patch("src.application.services.agent_factory_service.Agent")
-    @patch("src.application.services.agent_factory_service.MongoAgentDb")
-    @patch("src.application.services.agent_factory_service.Knowledge")
-    @patch("src.application.services.agent_factory_service.MongoVectorDb")
+    @patch("src.infrastructure.runtime.agno.agent_factory_service.Agent")
+    @patch("src.infrastructure.runtime.agno.agent_factory_service.MongoAgentDb")
+    @patch("src.infrastructure.runtime.agno.agent_factory_service.Knowledge")
+    @patch("src.infrastructure.runtime.agno.agent_factory_service.MongoVectorDb")
     async def test_load_document_no_doc_name(
         self, mock_vdb, mock_knowledge_cls, mock_db, mock_agent, service, mock_logger
     ):
@@ -116,10 +116,10 @@ class TestLoadDocument:
         assert agent is not None
         mock_logger.info.assert_any_call("Nenhum documento especificado para RAG")
 
-    @patch("src.application.services.agent_factory_service.Agent")
-    @patch("src.application.services.agent_factory_service.MongoAgentDb")
-    @patch("src.application.services.agent_factory_service.Knowledge")
-    @patch("src.application.services.agent_factory_service.MongoVectorDb")
+    @patch("src.infrastructure.runtime.agno.agent_factory_service.Agent")
+    @patch("src.infrastructure.runtime.agno.agent_factory_service.MongoAgentDb")
+    @patch("src.infrastructure.runtime.agno.agent_factory_service.Knowledge")
+    @patch("src.infrastructure.runtime.agno.agent_factory_service.MongoVectorDb")
     async def test_load_document_file_not_found(
         self, mock_vdb, mock_knowledge_cls, mock_db, mock_agent, service, mock_logger
     ):
@@ -138,10 +138,10 @@ class TestLoadDocument:
             "Documento não encontrado", path="docs/test.pdf"
         )
 
-    @patch("src.application.services.agent_factory_service.Agent")
-    @patch("src.application.services.agent_factory_service.MongoAgentDb")
-    @patch("src.application.services.agent_factory_service.Knowledge")
-    @patch("src.application.services.agent_factory_service.MongoVectorDb")
+    @patch("src.infrastructure.runtime.agno.agent_factory_service.Agent")
+    @patch("src.infrastructure.runtime.agno.agent_factory_service.MongoAgentDb")
+    @patch("src.infrastructure.runtime.agno.agent_factory_service.Knowledge")
+    @patch("src.infrastructure.runtime.agno.agent_factory_service.MongoVectorDb")
     async def test_load_document_generic_exception(
         self, mock_vdb, mock_knowledge_cls, mock_db, mock_agent, service, mock_logger
     ):

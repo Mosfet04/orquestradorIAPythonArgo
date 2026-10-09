@@ -128,28 +128,10 @@ def mock_logger():
 
 
 @pytest.fixture
-def mock_agent_config_repository():
-    """Mock assíncrono para IAgentConfigRepository."""
-    repo = AsyncMock()
-    repo.get_active_agents = AsyncMock(return_value=[])
-    repo.get_agent_by_id = AsyncMock(return_value=None)
-    return repo
-
-
-@pytest.fixture
 def mock_tool_repository():
     """Mock assíncrono para IToolRepository."""
     repo = AsyncMock()
     repo.get_tools_by_ids = AsyncMock(return_value=[])
     repo.get_all_active_tools = AsyncMock(return_value=[])
     repo.get_tool_by_id = AsyncMock(return_value=None)
-    return repo
-
-
-@pytest.fixture
-def mock_team_config_repository():
-    """Mock assíncrono para ITeamConfigRepository."""
-    repo = AsyncMock()
-    repo.get_active_teams = AsyncMock(return_value=[])
-    repo.get_team_by_id = AsyncMock(return_value=None)
     return repo

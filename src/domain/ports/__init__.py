@@ -5,25 +5,21 @@ Seguindo a Arquitetura Hexagonal (Ports & Adapters), estas interfaces
 definem contratos que a camada de infraestrutura deve implementar.
 """
 
-from typing import Any
-
-from src.domain.ports.agent_builder_port import IAgentBuilder
+from src.domain.ports.agent_runtime_port import AgentHandle, AgentRuntime, TeamHandle
 from src.domain.ports.embedder_factory_port import IEmbedderFactory, TextEmbedder
 from src.domain.ports.logger_port import ILogger
 from src.domain.ports.model_factory_port import ChatModel, IModelFactory, InvalidModelConfigError
 from src.domain.ports.tool_factory_port import IToolFactory
 
-# Type alias para desacoplar o domínio do framework agno
-AgentInstance = Any
-
 __all__ = [
-    "AgentInstance",
+    "AgentHandle",
+    "AgentRuntime",
     "ChatModel",
-    "IAgentBuilder",
     "IEmbedderFactory",
     "ILogger",
     "IModelFactory",
     "IToolFactory",
     "InvalidModelConfigError",
+    "TeamHandle",
     "TextEmbedder",
 ]

@@ -6,8 +6,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.application.services.team_factory_service import TeamFactoryService
 from src.domain.entities.team_config import TeamConfig
+from src.infrastructure.runtime.agno.team_factory_service import TeamFactoryService
 
 
 def _make_config(**overrides):
@@ -47,8 +47,8 @@ def service(mock_logger, mock_model_factory):
 
 
 class TestTeamFactoryServiceCreateTeam:
-    @patch("src.application.services.team_factory_service.Team")
-    @patch("src.application.services.team_factory_service.MongoAgentDb")
+    @patch("src.infrastructure.runtime.agno.team_factory_service.Team")
+    @patch("src.infrastructure.runtime.agno.team_factory_service.MongoAgentDb")
     def test_create_team_success(self, mock_db_cls, mock_team_cls, service):
         agents = [_make_agent("agent-a"), _make_agent("agent-b")]
         config = _make_config()
@@ -59,8 +59,8 @@ class TestTeamFactoryServiceCreateTeam:
         mock_team_cls.assert_called_once()
         assert result is mock_team_cls.return_value
 
-    @patch("src.application.services.team_factory_service.Team")
-    @patch("src.application.services.team_factory_service.MongoAgentDb")
+    @patch("src.infrastructure.runtime.agno.team_factory_service.Team")
+    @patch("src.infrastructure.runtime.agno.team_factory_service.MongoAgentDb")
     def test_create_team_with_coordinate_mode(self, mock_db_cls, mock_team_cls, service):
         agents = [_make_agent("agent-a"), _make_agent("agent-b")]
         config = _make_config(mode="coordinate")
@@ -70,8 +70,8 @@ class TestTeamFactoryServiceCreateTeam:
         call_kwargs = mock_team_cls.call_args[1]
         assert call_kwargs["respond_directly"] is False
 
-    @patch("src.application.services.team_factory_service.Team")
-    @patch("src.application.services.team_factory_service.MongoAgentDb")
+    @patch("src.infrastructure.runtime.agno.team_factory_service.Team")
+    @patch("src.infrastructure.runtime.agno.team_factory_service.MongoAgentDb")
     def test_create_team_with_route_mode_respond_directly(self, mock_db_cls, mock_team_cls, service):
         agents = [_make_agent("agent-a"), _make_agent("agent-b")]
         config = _make_config(mode="route")
@@ -81,8 +81,8 @@ class TestTeamFactoryServiceCreateTeam:
         call_kwargs = mock_team_cls.call_args[1]
         assert call_kwargs["respond_directly"] is True
 
-    @patch("src.application.services.team_factory_service.Team")
-    @patch("src.application.services.team_factory_service.MongoAgentDb")
+    @patch("src.infrastructure.runtime.agno.team_factory_service.Team")
+    @patch("src.infrastructure.runtime.agno.team_factory_service.MongoAgentDb")
     def test_create_team_passes_memory_settings(self, mock_db_cls, mock_team_cls, service):
         agents = [_make_agent("agent-a")]
         config = _make_config(
@@ -98,8 +98,8 @@ class TestTeamFactoryServiceCreateTeam:
         assert call_kwargs["enable_user_memories"] is False
         assert call_kwargs["enable_session_summaries"] is True
 
-    @patch("src.application.services.team_factory_service.Team")
-    @patch("src.application.services.team_factory_service.MongoAgentDb")
+    @patch("src.infrastructure.runtime.agno.team_factory_service.Team")
+    @patch("src.infrastructure.runtime.agno.team_factory_service.MongoAgentDb")
     def test_create_team_enables_message_persistence(self, mock_db_cls, mock_team_cls, service):
         agents = [_make_agent("agent-a"), _make_agent("agent-b")]
         config = _make_config()

@@ -31,8 +31,6 @@ from agno.models.response import ModelResponse
 from agno.vectordb.mongodb import MongoDb as MongoVectorDb
 from starlette.testclient import TestClient
 
-from src.application.services import agent_factory_service
-from src.application.services.agent_factory_service import AgentFactoryService, rag_collection_name
 from src.application.services.document_indexing_service import DocumentIndexingService
 from src.application.services.knowledge_search_factory import KnowledgeSearchFactory
 from src.application.use_cases.get_active_agents_use_case import GetActiveAgentsUseCase
@@ -40,6 +38,9 @@ from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.model_config import ModelConfig
 from src.domain.entities.rag_config import RagConfig, SearchStrategy
 from src.infrastructure.parsers.text_document_parser import TextDocumentParser
+from src.infrastructure.runtime.agno import AgnoRuntime, agent_factory_service
+from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService, rag_collection_name
+from src.infrastructure.runtime.agno.team_factory_service import TeamFactoryService
 from src.infrastructure.services.llm_summary_generator import LLMSummaryGenerator
 from src.infrastructure.web.app_factory import AppFactory
 from tests.fakes import (
@@ -420,7 +421,13 @@ async def test_doc_name_hostil_num_agente_nao_derruba_os_outros_nem_o_startup(
         _config("abs-sem", str(workspace / ".env"), SEM),
         _config("tipo-ruim", 123, HIER),
     ]
-    use_case = GetActiveAgentsUseCase(asm.service, InMemoryAgentConfigRepository(configs), asm.logger)
+    runtime = AgnoRuntime(
+        agent_factory=asm.service,
+        team_factory=TeamFactoryService(
+            db_url="mongodb://mongo.test.invalid:27017", logger=asm.logger, model_factory=FakeModelFactory()
+        ),
+    )
+    use_case = GetActiveAgentsUseCase(runtime, InMemoryAgentConfigRepository(configs), asm.logger)
 
     agents = await use_case.execute()  # gather: um create_agent que levantasse sumiria da lista
 

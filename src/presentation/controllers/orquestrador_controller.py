@@ -1,55 +1,52 @@
-"""Controller do orquestrador de agentes — agno v2.5."""
+"""Controller do orquestrador de agentes: cache dos agentes e teams montados pelo runtime."""
 
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
-
-from agno.agent import Agent
-from agno.team import Team
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from src.application.use_cases.get_active_agents_use_case import GetActiveAgentsUseCase
 from src.application.use_cases.get_active_teams_use_case import GetActiveTeamsUseCase
-from src.domain.ports import ILogger
+from src.domain.ports import AgentHandle, ILogger, TeamHandle
 from src.infrastructure.telemetry.metrics import TelemetryMetrics
 
 
 class AgentCacheEntry:
     """Cache de agentes com TTL."""
 
-    def __init__(self, agents: List[Agent], ttl_minutes: int = 5) -> None:
+    def __init__(self, agents: list[AgentHandle], ttl_minutes: int = 5) -> None:
         self.agents = agents
-        self.created_at = datetime.now(timezone.utc)
+        self.created_at = datetime.now(UTC)
         self.ttl = timedelta(minutes=ttl_minutes)
         self.hit_count = 0
         self.last_access = self.created_at
 
     def is_expired(self) -> bool:
-        return datetime.now(timezone.utc) > (self.created_at + self.ttl)
+        return datetime.now(UTC) > (self.created_at + self.ttl)
 
-    def access(self) -> List[Agent]:
+    def access(self) -> list[AgentHandle]:
         self.hit_count += 1
-        self.last_access = datetime.now(timezone.utc)
+        self.last_access = datetime.now(UTC)
         return self.agents
 
 
 class TeamCacheEntry:
     """Cache de teams com TTL."""
 
-    def __init__(self, teams: List[Team], ttl_minutes: int = 5) -> None:
+    def __init__(self, teams: list[TeamHandle], ttl_minutes: int = 5) -> None:
         self.teams = teams
-        self.created_at = datetime.now(timezone.utc)
+        self.created_at = datetime.now(UTC)
         self.ttl = timedelta(minutes=ttl_minutes)
         self.hit_count = 0
         self.last_access = self.created_at
 
     def is_expired(self) -> bool:
-        return datetime.now(timezone.utc) > (self.created_at + self.ttl)
+        return datetime.now(UTC) > (self.created_at + self.ttl)
 
-    def access(self) -> List[Team]:
+    def access(self) -> list[TeamHandle]:
         self.hit_count += 1
-        self.last_access = datetime.now(timezone.utc)
+        self.last_access = datetime.now(UTC)
         return self.teams
 
 
@@ -65,11 +62,11 @@ class OrquestradorController:
         self._agents_use_case = get_active_agents_use_case
         self._teams_use_case = get_active_teams_use_case
         self._logger = logger
-        self._cache: Optional[AgentCacheEntry] = None
-        self._team_cache: Optional[TeamCacheEntry] = None
+        self._cache: AgentCacheEntry | None = None
+        self._team_cache: TeamCacheEntry | None = None
         self._lock = asyncio.Lock()
 
-    async def get_agents(self) -> List[Agent]:
+    async def get_agents(self) -> list[AgentHandle]:
         """Retorna agentes com cache inteligente."""
         async with self._lock:
             if self._cache and not self._cache.is_expired():
@@ -78,7 +75,7 @@ class OrquestradorController:
         TelemetryMetrics.record_cache_miss("agents")
         return await self._load_agents()
 
-    async def get_teams(self) -> List[Team]:
+    async def get_teams(self) -> list[TeamHandle]:
         """Retorna teams com cache inteligente."""
         async with self._lock:
             if self._team_cache and not self._team_cache.is_expired():
@@ -103,8 +100,8 @@ class OrquestradorController:
         await self._load_teams(agents)
         self._logger.info("Cache de agentes e teams atualizado")
 
-    def get_cache_stats(self) -> Dict[str, Any]:
-        stats: Dict[str, Any] = {}
+    def get_cache_stats(self) -> dict[str, Any]:
+        stats: dict[str, Any] = {}
         if not self._cache:
             stats["agents"] = {"status": "empty"}
         else:
@@ -131,7 +128,7 @@ class OrquestradorController:
 
     # ── private ─────────────────────────────────────────────────────
 
-    async def _load_agents(self) -> List[Agent]:
+    async def _load_agents(self) -> list[AgentHandle]:
         try:
             agents = await self._agents_use_case.execute()
             self._cache = AgentCacheEntry(agents)
@@ -146,12 +143,12 @@ class OrquestradorController:
                 return self._cache.access()
             raise
 
-    async def _load_teams(self, agents: List[Agent]) -> List[Team]:
+    async def _load_teams(self, agents: list[AgentHandle]) -> list[TeamHandle]:
         try:
             teams = await self._teams_use_case.execute(agents)
             self._team_cache = TeamCacheEntry(teams)
             return teams
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - logado; teams caem no cache expirado ou ficam vazios
             self._logger.error(
                 "Erro ao carregar teams",
                 error=str(exc),

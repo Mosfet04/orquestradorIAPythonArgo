@@ -25,11 +25,11 @@ from agno.db.schemas import UserMemory
 from agno.team import Team
 from starlette.testclient import TestClient
 
-from src.application.services import agent_factory_service, team_factory_service
-from src.application.services.agent_factory_service import AgentFactoryService
-from src.application.services.team_factory_service import TeamFactoryService
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.team_config import TeamConfig
+from src.infrastructure.runtime.agno import agent_factory_service, team_factory_service
+from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService
+from src.infrastructure.runtime.agno.team_factory_service import TeamFactoryService
 from src.infrastructure.web.app_factory import AppFactory
 from tests.fakes import (
     FakeChatModel,

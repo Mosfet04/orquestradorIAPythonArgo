@@ -1,23 +1,17 @@
-"""Serviço de criação de agentes — agno v2.5."""
+"""Criação de ``Agent`` do agno 2.5 a partir de ``AgentConfig`` (adapter do runtime, F2-04)."""
 
 from __future__ import annotations
 
 import asyncio
 import hashlib
 import re
-import unicodedata
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any
 
 from agno.agent import Agent
 from agno.db.mongo import MongoDb as MongoAgentDb
-from agno.exceptions import CheckTrigger, InputCheckError
-from agno.guardrails.base import BaseGuardrail
 from agno.knowledge import Knowledge
-from agno.run.agent import RunInput
-from agno.run.team import TeamRunInput
-from agno.team import Team
 from agno.vectordb.mongodb import MongoDb as MongoVectorDb
 
 from src.application.services.document_indexing_service import DocumentIndexingService
@@ -36,8 +30,12 @@ from src.domain.ports import (
     IToolFactory,
 )
 from src.domain.repositories.tool_repository import IToolRepository
-from src.infrastructure.tools.hierarchical_search_tool import (
+from src.infrastructure.runtime.agno.hierarchical_search_tool import (
     create_hierarchical_search_tool,
+)
+from src.infrastructure.runtime.agno.user_id_guardrail import (
+    UserIdRequiredGuardrail,
+    needs_user_id,
 )
 
 _SIMPLE_AGENT_ID = re.compile(r"[a-z0-9-]{1,64}")
@@ -81,83 +79,6 @@ def _read_document(doc_name: str) -> str:
     return resolve_document_path(doc_name).read_text(encoding="utf-8")
 
 
-# Usuário que o agno 2.5.8 usa para memória sem ``user_id`` (``agno/agent/_messages.py``,
-# ``agno/memory/manager.py``): pool compartilhado, nunca um usuário de requisição.
-_RESERVED_USER_IDS = frozenset({"default"})
-
-
-def _has_visible_char(value: str) -> bool:
-    """Algum caractere fora de separador (Z*) e controle/formatação/não atribuído (C*).
-
-    ``str.strip`` não remove U+200B, U+FEFF, U+2060 nem NUL: sem isto, um valor que parece
-    vazio viraria um usuário "anônimo" compartilhado.
-    """
-    return any(unicodedata.category(char)[0] not in ("Z", "C") for char in value)
-
-
-def is_valid_user_id(user_id: object) -> bool:
-    """``user_id`` aceito para memória: string com caractere visível e não reservada.
-
-    Total (nunca levanta): o AG-UI repassa ``forwardedProps.user_id`` sem validar o tipo. Sem
-    normalização: ``" ana "`` e ``"ana"`` são usuários diferentes.
-    """
-    return (
-        isinstance(user_id, str)
-        and user_id not in _RESERVED_USER_IDS
-        and _has_visible_char(user_id)
-    )
-
-
-class UserIdRequiredGuardrail(BaseGuardrail):
-    """Recusa run sem ``user_id`` válido de Agent/Team que guarda memória de usuário.
-
-    Sem ``user_id``, o agno 2.5.8 lê e grava a memória no usuário ``"default"``
-    (``agno/agent/_messages.py``, ``agno/agent/_managers.py``, ``agno/memory/manager.py``),
-    compartilhado por todo chamador anônimo. Guardrail roda antes de o run ler memória
-    ou chamar o modelo e sempre de forma síncrona (``agno/agent/_hooks.py``), inclusive
-    com hooks em background. O ``user_id`` chega pelo nome do parâmetro
-    (``agno/utils/hooks.py``, ``filter_hook_args``). Exceção que não seja
-    ``InputCheckError`` é engolida pelo agno e o run segue: a checagem é total.
-    """
-
-    def __init__(self, entity_id: str) -> None:
-        self.entity_id = entity_id
-
-    def check(
-        self,
-        run_input: RunInput | TeamRunInput,
-        user_id: object = None,
-    ) -> None:
-        if not is_valid_user_id(user_id):
-            raise InputCheckError(
-                f"user_id obrigatório: '{self.entity_id}' guarda memória por usuário. "
-                "Envie user_id como string não vazia, com caractere visível e diferente "
-                "de 'default' (campo do form em /agents|/teams/{id}/runs; "
-                "forwardedProps.user_id no AG-UI).",
-                check_trigger=CheckTrigger.VALIDATION_FAILED,
-            )
-
-    async def async_check(
-        self,
-        run_input: RunInput | TeamRunInput,
-        user_id: object = None,
-    ) -> None:
-        self.check(run_input, user_id)
-
-
-def needs_user_id(*, user_memories: bool, agentic_memory: bool) -> bool:
-    """Predicado único (Agent e Team): memória de usuário ligada exige ``user_id``."""
-    return user_memories or agentic_memory
-
-
-def requires_user_id(entity: Agent | Team) -> bool:
-    """``True`` se o Agent/Team lê ou grava memória de usuário (precisa de ``user_id``)."""
-    return needs_user_id(
-        user_memories=getattr(entity, "enable_user_memories", None) is True,
-        agentic_memory=getattr(entity, "enable_agentic_memory", None) is True,
-    )
-
-
 class AgentFactoryService:
     """Cria instâncias de ``Agent`` (agno v2.5) a partir de ``AgentConfig``."""
 
@@ -171,8 +92,8 @@ class AgentFactoryService:
         embedder_factory: IEmbedderFactory,
         tool_factory: IToolFactory,
         tool_repository: IToolRepository,
-        indexing_service: Optional[DocumentIndexingService] = None,
-        search_factory: Optional[KnowledgeSearchFactory] = None,
+        indexing_service: DocumentIndexingService | None = None,
+        search_factory: KnowledgeSearchFactory | None = None,
     ) -> None:
         self._db_url = db_url
         self._db_name = db_name
@@ -192,7 +113,7 @@ class AgentFactoryService:
         Falha sobe sem log aqui: quem chama loga uma vez, com id e tipo do erro
         (``GetActiveAgentsUseCase``); o texto de exceção de SDK pode trazer segredo.
         """
-        start = datetime.now(timezone.utc)
+        start = datetime.now(UTC)
         # Config recusada sobe como InvalidModelConfigError; a criação pode ler segredo
         # (file:) e resolver DNS do destino: fora do event loop.
         model = await asyncio.to_thread(self._model_factory.create_model, config.model_config)
@@ -208,7 +129,7 @@ class AgentFactoryService:
 
         db = self._build_db()
         agent = self._assemble_agent(config, model, db, tools, knowledge)
-        elapsed = (datetime.now(timezone.utc) - start).total_seconds()
+        elapsed = (datetime.now(UTC) - start).total_seconds()
         self._logger.info(
             "Agente criado",
             agent_id=config.id,
@@ -225,7 +146,7 @@ class AgentFactoryService:
             db_name=self._db_name,
         )
 
-    async def _build_tools(self, config: AgentConfig) -> List[Any]:
+    async def _build_tools(self, config: AgentConfig) -> list[Any]:
         """Tools do agente; cada tool referenciada que não entra gera log de erro com os ids."""
         if not config.tools_ids:
             return []
@@ -233,7 +154,7 @@ class AgentFactoryService:
             tool_configs = await self._tool_repository.get_tools_by_ids(
                 config.tools_ids
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - agente sobe sem tools; logado
             self._logger.error(
                 "Erro ao buscar tools do agente; agente sobe sem elas",
                 agent_id=config.id,
@@ -252,13 +173,13 @@ class AgentFactoryService:
                     tool_id=tool_id,
                 )
 
-        tools: List[Any] = []
+        tools: list[Any] = []
         for tool_config in tool_configs:
             try:
                 created = await self._tool_factory.create_tools_from_configs(
                     [tool_config]
                 )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - agente sobe sem a tool; logado
                 self._logger.error(
                     "Erro ao criar tool do agente; agente sobe sem ela",
                     agent_id=config.id,
@@ -282,7 +203,7 @@ class AgentFactoryService:
             reason=str(exc),
         )
 
-    def _build_knowledge(self, config: AgentConfig) -> Optional[Knowledge]:
+    def _build_knowledge(self, config: AgentConfig) -> Knowledge | None:
         """Knowledge do RAG semântico. Síncrono e com I/O: chame via ``asyncio.to_thread``."""
         rag = config.rag_config
         if not rag or not rag.active:
@@ -299,7 +220,7 @@ class AgentFactoryService:
             )
             return None
 
-        doc_path: Optional[Path] = None
+        doc_path: Path | None = None
         if rag.doc_name:
             try:
                 doc_path = resolve_document_path(rag.doc_name)
@@ -320,11 +241,11 @@ class AgentFactoryService:
             )
             self._load_document(knowledge, doc_path)
             return knowledge
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - agente sobe sem RAG; logado
             self._logger.warning("Erro ao criar RAG", agent_id=config.id, **_failure(exc))
             return None
 
-    async def _build_hierarchical_tool(self, config: AgentConfig) -> Optional[Any]:
+    async def _build_hierarchical_tool(self, config: AgentConfig) -> Any | None:
         """Cria tool de busca hierárquica se a estratégia for HIERARCHICAL."""
         rag = config.rag_config
         if not rag or not rag.active:
@@ -365,15 +286,15 @@ class AgentFactoryService:
             strategy = self._search_factory.create_strategy(
                 rag, embedder=embedder
             )
-            return create_hierarchical_search_tool(strategy)
-        except Exception as exc:
+            return create_hierarchical_search_tool(strategy, logger=self._logger)
+        except Exception as exc:  # noqa: BLE001 - agente sobe sem a tool; logado
             self._logger.warning(
                 "Erro ao criar tool hierárquica", agent_id=config.id, **_failure(exc)
             )
             return None
 
     def _load_document(
-        self, knowledge: Knowledge, resolved_path: Optional[Path]
+        self, knowledge: Knowledge, resolved_path: Path | None
     ) -> None:
         """Indexa o documento na coleção do agente (já confinado a ``docs/``).
 
@@ -392,7 +313,7 @@ class AgentFactoryService:
             self._logger.warning(
                 "Documento não encontrado", path=doc_path
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - agente sobe sem o documento; logado
             self._logger.error(
                 "Erro ao carregar documento RAG",
                 path=doc_path,
@@ -404,8 +325,8 @@ class AgentFactoryService:
         config: AgentConfig,
         model: Any,
         db: MongoAgentDb,
-        tools: List[Any],
-        knowledge: Optional[Knowledge],
+        tools: list[Any],
+        knowledge: Knowledge | None,
     ) -> Agent:
         user_memories = agentic_memory = config.user_memory_active
         return Agent(

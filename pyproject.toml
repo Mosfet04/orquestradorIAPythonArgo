@@ -96,14 +96,10 @@ known-first-party = ["src", "tests"]
 # Optional, timezone.utc...); BLE001 = except Exception; S110 = try/except/pass;
 # ASYNC230 = open() bloqueante em async; RUF012 = atributo de classe mutável;
 # B904 = raise sem from; G004 = f-string em log; E501 = linha > 120.
-"src/application/services/agent_factory_service.py" = ["ASYNC230", "BLE001", "UP006", "UP015", "UP017", "UP035", "UP045"]
 "src/application/services/document_indexing_service.py" = ["BLE001", "UP006", "UP035"]
 "src/application/services/knowledge_search_factory.py" = ["UP045"]
 "src/application/services/search_strategies/hierarchical_search_strategy.py" = ["B905", "BLE001", "UP006", "UP035", "UP045"]
 "src/application/services/search_strategies/semantic_search_strategy.py" = ["UP006", "UP035"]
-"src/application/services/team_factory_service.py" = ["UP006", "UP007", "UP035"]
-"src/application/use_cases/get_active_agents_use_case.py" = ["B007", "UP006", "UP035"]
-"src/application/use_cases/get_active_teams_use_case.py" = ["BLE001", "UP006", "UP035"]
 "src/domain/entities/agent_config.py" = ["UP006", "UP035", "UP045"]
 "src/domain/entities/document_node.py" = ["UP006", "UP035", "UP045"]
 "src/domain/entities/rag_config.py" = ["UP045"]
@@ -132,9 +128,7 @@ known-first-party = ["src", "tests"]
 "src/infrastructure/services/llm_summary_generator.py" = ["BLE001"]
 "src/infrastructure/telemetry/metrics.py" = ["UP035"]
 "src/infrastructure/telemetry/otel_setup.py" = ["BLE001"]
-"src/infrastructure/tools/hierarchical_search_tool.py" = ["BLE001"]
 "src/infrastructure/web/app_factory.py" = ["BLE001", "RUF012", "UP045"]
-"src/presentation/controllers/orquestrador_controller.py" = ["BLE001", "UP006", "UP017", "UP035", "UP045"]
 "tests/unit/test_app_factory_extended.py" = ["E501"]
 "tests/unit/test_dependency_injection.py" = ["E501"]
 "tests/unit/test_document_indexing_service.py" = ["RUF015"]
@@ -162,7 +156,6 @@ ignore_missing_imports = true
 # BASELINE HERDADA (F0-01): módulos que hoje falham em `mypy --strict`.
 # Esta lista SÓ PODE ENCOLHER: ao tipar um módulo, remova-o daqui.
 module = [
-    "src.application.use_cases.get_active_agents_use_case",
     "src.domain.entities.agent_config",
     "src.domain.entities.tool",
     "src.infrastructure.cache.model_cache_service",
@@ -201,7 +194,6 @@ exhaustive = true
 # BASELINE HERDADA (F0-01): violações existentes no commit 91a8a7a.
 # Esta lista SÓ PODE ENCOLHER; não copie o padrão nem acrescente entradas.
 ignore_imports = [
-    "src.application.services.agent_factory_service -> src.infrastructure.tools.hierarchical_search_tool",
     "src.infrastructure.dependency_injection -> src.presentation.controllers.orquestrador_controller",
     "src.presentation.controllers.orquestrador_controller -> src.infrastructure.telemetry.metrics",
 ]
@@ -234,19 +226,16 @@ forbidden_modules = [
     "uvicorn",
     "uvloop",
 ]
-# BASELINE HERDADA (F0-01): agno em application. Some na F2 (AgnoRuntime).
-# Esta lista SÓ PODE ENCOLHER; não copie o padrão nem acrescente entradas.
-# A aresta agent_factory_service -> infrastructure.tools.hierarchical_search_tool
-# não é um import de framework: está aqui porque o contrato também checa cadeias
-# indiretas, e hierarchical_search_tool importa agno (application -> infra -> agno).
-# É a mesma aresta da baseline do contrato "camadas"; sai junto com ela.
-ignore_imports = [
-    "src.application.services.agent_factory_service -> agno",
-    "src.application.services.agent_factory_service -> src.infrastructure.tools.hierarchical_search_tool",
-    "src.application.services.team_factory_service -> agno",
-    "src.application.use_cases.get_active_agents_use_case -> agno",
-    "src.application.use_cases.get_active_teams_use_case -> agno",
-]
+# Sem baseline desde o F2-04 (montagem com agno em src/infrastructure/runtime/agno/).
+# Não acrescente ignore_imports: o núcleo não importa framework nem driver.
+
+[[tool.importlinter.contracts]]
+id = "apresentacao-sem-runtime"
+name = "presentation não importa o framework de agentes (usa os handles da porta AgentRuntime)"
+type = "forbidden"
+source_modules = ["src.presentation"]
+forbidden_modules = ["agno"]
+# Sem baseline desde a criação (F2-04). Não acrescente ignore_imports.
 
 # ---------------------------------------------------------------------------
 # bandit (gate a partir da F1): `bandit -q -c pyproject.toml -r src`

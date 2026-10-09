@@ -27,10 +27,10 @@ import uvicorn
 from agno.models.openai.like import OpenAILike
 from starlette.testclient import TestClient
 
-from src.application.services import agent_factory_service, team_factory_service
 from src.infrastructure import dependency_injection as di
 from src.infrastructure.providers.plugins import ENTRY_POINT_GROUP, PluginLoadError
 from src.infrastructure.repositories import mongo_base
+from src.infrastructure.runtime.agno import agent_factory_service, team_factory_service
 from src.infrastructure.web import app_factory
 from src.infrastructure.web.app_factory import AppFactory
 from tests.fakes import FakeMongoClient, FakeMongoCollection, RecordingLogger

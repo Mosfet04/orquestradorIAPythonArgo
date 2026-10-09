@@ -7,10 +7,8 @@ from typing import Any, Optional
 
 from motor.motor_asyncio import AsyncIOMotorClient
 
-from src.application.services.agent_factory_service import AgentFactoryService
 from src.application.services.document_indexing_service import DocumentIndexingService
 from src.application.services.knowledge_search_factory import KnowledgeSearchFactory
-from src.application.services.team_factory_service import TeamFactoryService
 from src.application.use_cases.get_active_agents_use_case import GetActiveAgentsUseCase
 from src.application.use_cases.get_active_teams_use_case import GetActiveTeamsUseCase
 from src.domain.ports import ILogger
@@ -31,6 +29,9 @@ from src.infrastructure.repositories.mongo_team_config_repository import (
     MongoTeamConfigRepository,
 )
 from src.infrastructure.repositories.mongo_tool_repository import MongoToolRepository
+from src.infrastructure.runtime.agno import AgnoRuntime
+from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService
+from src.infrastructure.runtime.agno.team_factory_service import TeamFactoryService
 from src.infrastructure.services.llm_summary_generator import LLMSummaryGenerator
 from src.infrastructure.web.api_key_auth import is_local_dev_mode
 from src.presentation.controllers.orquestrador_controller import OrquestradorController
@@ -214,16 +215,17 @@ class DependencyContainer:
             logger=self._logger,
             model_factory=providers,
         )
+        runtime = AgnoRuntime(agent_factory=agent_factory, team_factory=team_factory)
 
         team_config_repo = MongoTeamConfigRepository(
             connection_string=conn, database_name=db, logger=self._logger
         )
 
         agents_use_case = GetActiveAgentsUseCase(
-            agent_factory, agent_config_repo, self._logger
+            runtime, agent_config_repo, self._logger
         )
         teams_use_case = GetActiveTeamsUseCase(
-            team_factory, team_config_repo, self._logger
+            runtime, team_config_repo, self._logger
         )
 
         self._controller = OrquestradorController(

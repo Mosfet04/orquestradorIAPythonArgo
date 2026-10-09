@@ -21,7 +21,6 @@ from agno.knowledge import Knowledge
 from agno.knowledge.document import Document
 from agno.vectordb.mongodb import MongoDb as MongoVectorDb
 
-from src.application.services.agent_factory_service import AgentFactoryService
 from src.application.services.document_indexing_service import DocumentIndexingService
 from src.application.services.document_path import DocumentPathError, resolve_document_path
 from src.application.services.knowledge_search_factory import KnowledgeSearchFactory
@@ -30,6 +29,7 @@ from src.domain.entities.model_config import ModelConfig
 from src.domain.entities.rag_config import RagConfig, SearchStrategy
 from src.domain.ports.summary_generator_port import ISummaryGenerator
 from src.infrastructure.parsers.text_document_parser import TextDocumentParser
+from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService
 from tests.fakes import (
     FakeEmbedderFactory,
     FakeModelFactory,

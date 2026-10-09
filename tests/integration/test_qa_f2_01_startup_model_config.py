@@ -19,10 +19,7 @@ from typing import Any
 import pytest
 from starlette.testclient import TestClient
 
-from src.application.services import agent_factory_service, team_factory_service
-from src.application.services.agent_factory_service import AgentFactoryService
 from src.application.services.document_indexing_service import DocumentIndexingService
-from src.application.services.team_factory_service import TeamFactoryService
 from src.application.use_cases.get_active_agents_use_case import GetActiveAgentsUseCase
 from src.application.use_cases.get_active_teams_use_case import GetActiveTeamsUseCase
 from src.domain.entities.rag_config import RagConfig, SearchStrategy
@@ -35,6 +32,9 @@ from src.infrastructure.providers.builtins import BUILTIN_PROVIDERS
 from src.infrastructure.repositories import mongo_base
 from src.infrastructure.repositories.mongo_agent_config_repository import MongoAgentConfigRepository
 from src.infrastructure.repositories.mongo_team_config_repository import MongoTeamConfigRepository
+from src.infrastructure.runtime.agno import AgnoRuntime, agent_factory_service, team_factory_service
+from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService
+from src.infrastructure.runtime.agno.team_factory_service import TeamFactoryService
 from src.infrastructure.web import app_factory
 from src.infrastructure.web.app_factory import AppFactory
 from src.presentation.controllers.orquestrador_controller import OrquestradorController
@@ -168,8 +168,8 @@ def boot(
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("AGNO_TELEMETRY", "false")
     logger = result.logger
-    agents_uc = GetActiveAgentsUseCase(
-        AgentFactoryService(
+    runtime = AgnoRuntime(
+        agent_factory=AgentFactoryService(
             db_url=CONN,
             logger=logger,
             model_factory=models,
@@ -177,11 +177,15 @@ def boot(
             tool_factory=HttpToolFactory(logger=logger),
             tool_repository=InMemoryToolRepository(),
         ),
+        team_factory=TeamFactoryService(db_url=CONN, logger=logger, model_factory=models),
+    )
+    agents_uc = GetActiveAgentsUseCase(
+        runtime,
         MongoAgentConfigRepository(connection_string=CONN, logger=logger),
         logger,
     )
     teams_uc = GetActiveTeamsUseCase(
-        TeamFactoryService(db_url=CONN, logger=logger, model_factory=models),
+        runtime,
         MongoTeamConfigRepository(connection_string=CONN, logger=logger),
         logger,
     )

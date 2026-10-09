@@ -1,23 +1,24 @@
-"""Serviço de criação de Teams — agno v2.5."""
+"""Criação de ``Team`` do agno 2.5 a partir de ``TeamConfig`` (adapter do runtime, F2-04)."""
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Sequence, Union
+from collections.abc import Sequence
+from typing import Any
 
 from agno.agent import Agent
 from agno.db.mongo import MongoDb as MongoAgentDb
 from agno.team import Team
 from agno.team.mode import TeamMode
 
-from src.application.services.agent_factory_service import (
+from src.domain.entities.team_config import TeamConfig
+from src.domain.ports import ILogger, IModelFactory
+from src.infrastructure.runtime.agno.user_id_guardrail import (
     UserIdRequiredGuardrail,
     needs_user_id,
     requires_user_id,
 )
-from src.domain.entities.team_config import TeamConfig
-from src.domain.ports import ILogger, IModelFactory
 
-_MODE_MAP: Dict[str, TeamMode] = {
+_MODE_MAP: dict[str, TeamMode] = {
     "route": TeamMode.route,
     "coordinate": TeamMode.coordinate,
     "broadcast": TeamMode.broadcast,
@@ -44,12 +45,12 @@ class TeamFactoryService:
     def create_team(
         self,
         config: TeamConfig,
-        agents: List[Agent],
+        agents: list[Agent],
     ) -> Team:
         """Cria um Team usando os agentes fornecidos como membros (síncrono, com I/O)."""
-        members: Sequence[Union[Agent, Team]] = self._resolve_members(config, agents)
+        members: Sequence[Agent | Team] = self._resolve_members(config, agents)
         # Síncrono e com I/O (segredo file:, DNS do destino): quem chama do caminho async
-        # roda create_team via asyncio.to_thread (GetActiveTeamsUseCase).
+        # roda create_team via asyncio.to_thread (GetActiveTeamsUseCase, pelo AgnoRuntime).
         model: Any = self._model_factory.create_model(config.model_config)
         mode = _MODE_MAP.get(config.mode, TeamMode.route)
         db = MongoAgentDb(db_url=self._db_url, db_name=self._db_name)
@@ -96,11 +97,11 @@ class TeamFactoryService:
     def _resolve_members(
         self,
         config: TeamConfig,
-        agents: List[Agent],
-    ) -> List[Agent]:
+        agents: list[Agent],
+    ) -> list[Agent]:
         """Filtra e valida agentes membros do team."""
         agent_map = {a.id: a for a in agents}
-        members: List[Agent] = []
+        members: list[Agent] = []
         for mid in config.member_ids:
             agent = agent_map.get(mid)
             if agent:

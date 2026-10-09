@@ -3,40 +3,39 @@
 from __future__ import annotations
 
 import asyncio
-from typing import List
 
-from agno.agent import Agent
-
-from src.application.services.agent_factory_service import AgentFactoryService
 from src.domain.entities.agent_config import AgentConfig
-from src.domain.ports import ILogger
-from src.domain.ports.model_factory_port import InvalidModelConfigError
+from src.domain.ports import AgentHandle, AgentRuntime, ILogger, InvalidModelConfigError
 from src.domain.repositories.agent_config_repository import IAgentConfigRepository
 
 
 class GetActiveAgentsUseCase:
-    """Busca configurações ativas e cria os agentes."""
+    """Busca configurações ativas e monta os agentes pelo runtime.
+
+    A política de carga fica aqui (o runtime monta um agente por vez): um agente por id,
+    montagem em paralelo e falha de um isolada dos outros, com um log por falha.
+    """
 
     def __init__(
         self,
-        agent_factory_service: AgentFactoryService,
+        runtime: AgentRuntime,
         agent_config_repository: IAgentConfigRepository,
         logger: ILogger,
     ) -> None:
-        self._factory = agent_factory_service
+        self._runtime = runtime
         self._repository = agent_config_repository
         self._logger = logger
 
-    async def execute(self) -> List[Agent]:
+    async def execute(self) -> list[AgentHandle]:
         """Busca configs e cria agentes em paralelo; falha de um não derruba os outros."""
         configs = self._unique_ids(await self._repository.get_active_agents())
         if not configs:
             return []
 
-        tasks = [self._factory.create_agent(cfg) for cfg in configs]
+        tasks = [self._runtime.build_agent(cfg) for cfg in configs]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        agents: List[Agent] = []
+        agents: list[AgentHandle] = []
         for config, result in zip(configs, results, strict=True):
             if isinstance(result, BaseException):
                 self._log_failure(config.id, result)
@@ -44,7 +43,7 @@ class GetActiveAgentsUseCase:
             agents.append(result)
         return agents
 
-    def _unique_ids(self, configs: List[AgentConfig]) -> List[AgentConfig]:
+    def _unique_ids(self, configs: list[AgentConfig]) -> list[AgentConfig]:
         """Um agente por id; o primeiro vence (o AgentOS recusa a montagem com id repetido)."""
         unique: dict[str, AgentConfig] = {}
         for config in configs:

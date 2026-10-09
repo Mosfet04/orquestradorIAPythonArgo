@@ -178,13 +178,13 @@ The application follows **Onion Architecture** (also known as Clean Architecture
 graph TB
     subgraph "🎯 Domain - Core"
         E["Entities<br/>(AgentConfig, TeamConfig, Tool, RagConfig)"]
-        RP["Ports<br/>(ILogger, IModelFactory,<br/>IEmbedderFactory, IToolFactory)"]
+        RP["Ports<br/>(ILogger, IModelFactory, IEmbedderFactory,<br/>IToolFactory, AgentRuntime)"]
         RI["Repository Interfaces<br/>(IAgentConfigRepository,<br/>ITeamConfigRepository, IToolRepository)"]
     end
 
     subgraph "📋 Application"
         UC["Use Cases<br/>(GetActiveAgentsUseCase,<br/>GetActiveTeamsUseCase)"]
-        AS["Services<br/>(AgentFactoryService, TeamFactoryService,<br/>DocumentIndexingService)"]
+        AS["Services<br/>(DocumentIndexingService,<br/>KnowledgeSearchFactory)"]
     end
 
     subgraph "🔧 Infrastructure"
@@ -192,6 +192,7 @@ graph TB
         WEB["Web - AppFactory + Middleware"]
         HTTP["HttpToolFactory"]
         PROV["ProviderRegistry<br/>(models and embedders)"]
+        RT["AgnoRuntime<br/>(AgentFactoryService, TeamFactoryService,<br/>user_id guardrail, hierarchical tool)"]
         LOG["Structlog Logging"]
         CACHE["ModelCacheService"]
         DI["DependencyContainer"]
@@ -207,14 +208,19 @@ graph TB
     end
 
     CTRL --> UC
-    UC --> AS
+    UC --> RP
+    UC --> RI
     AS --> E
     AS --> RI
     AS --> RP
     DB -.->|implements| RI
     HTTP -.->|implements| RP
     PROV -.->|implements| RP
+    RT -.->|implements| RP
+    RT --> AS
+    RT --> AGNO
     DI --> PROV
+    DI --> RT
     DI --> CTRL
     DI --> AS
     DI --> DB
@@ -223,7 +229,7 @@ graph TB
     WEB --> AGNO
 
     style E fill:#e1f5fe
- | **Observability via Grafana LGTM** | Traces, metrics, and logs are now sent to Grafana (Tempo, Loki, Prometheus) using OpenTelemetry. MongoDB is no longer used for observability. |
+    style RP fill:#e1f5fe
     style RI fill:#e1f5fe
     style UC fill:#f3e5f5
     style AS fill:#f3e5f5
@@ -261,7 +267,7 @@ orquestradorIAPythonArgo/
 │   │   │   ├── model_factory_port.py #   IModelFactory
 │   │   │   ├── embedder_factory_port.py # IEmbedderFactory
 │   │   │   ├── tool_factory_port.py #    IToolFactory
-│   │   │   ├── agent_builder_port.py #   IAgentBuilder
+│   │   │   ├── agent_runtime_port.py #   AgentRuntime + opaque handles (AgentHandle, TeamHandle)
 │   │   │   ├── document_parser_port.py # IDocumentParser
 │   │   │   ├── knowledge_search_port.py # IKnowledgeSearchStrategy
 │   │   │   └── document_tree_repository_port.py # IDocumentTreeRepository
@@ -272,16 +278,14 @@ orquestradorIAPythonArgo/
 │   │
 │   ├── application/                # 📋 APPLICATION LAYER (orchestration)
 │   │   ├── services/
-│   │   │   ├── agent_factory_service.py       # Creates agno Agents from AgentConfig
-│   │   │   ├── team_factory_service.py        # Creates agno Teams from TeamConfig
 │   │   │   ├── knowledge_search_factory.py    # RAG search strategy factory
 │   │   │   ├── document_indexing_service.py   # Hierarchical document indexing
 │   │   │   └── search_strategies/             # Strategy Pattern for RAG search
 │   │   │       ├── semantic_search_strategy.py    # Semantic search (agno native)
 │   │   │       └── hierarchical_search_strategy.py # Hierarchical search (document tree)
 │   │   └── use_cases/
-│   │       ├── get_active_agents_use_case.py  # Fetches active configs and creates agents
-│   │       └── get_active_teams_use_case.py   # Fetches active configs and creates teams
+│   │       ├── get_active_agents_use_case.py  # Fetches active configs and builds agents via AgentRuntime
+│   │       └── get_active_teams_use_case.py   # Fetches active configs and builds teams via AgentRuntime
 │   │
 │   ├── infrastructure/             # 🔧 INFRASTRUCTURE LAYER (implementations)
 │   │   ├── config/
@@ -308,7 +312,11 @@ orquestradorIAPythonArgo/
 │   │   │   └── mongo_document_tree_repository.py # IDocumentTreeRepository → MongoDB
 │   │   ├── parsers/
 │   │   │   └── text_document_parser.py #  Text document parser → tree
-│   │   ├── tools/
+│   │   ├── runtime/agno/           #   The only place that builds agno Agent/Team (AgentRuntime)
+│   │   │   ├── runtime.py          #     AgnoRuntime: AgentRuntime port implementation
+│   │   │   ├── agent_factory_service.py #  Creates agno Agents from AgentConfig (tools, RAG)
+│   │   │   ├── team_factory_service.py #   Creates agno Teams from TeamConfig
+│   │   │   ├── user_id_guardrail.py #    Refuses runs without user_id for entities with user memory
 │   │   │   └── hierarchical_search_tool.py # Hierarchical search tool (agno Toolkit)
 │   │   ├── services/
 │   │   │   └── llm_summary_generator.py #  Section summary generator via LLM
@@ -322,13 +330,14 @@ orquestradorIAPythonArgo/
 │
 └── tests/
     ├── conftest.py                 # Shared fixtures; markers by directory; --update-golden
-    ├── fakes/                      # FakeChatModel, FakeEmbedder, in-memory repositories
+    ├── fakes/                      # FakeChatModel, FakeEmbedder, in-memory repositories, FakeAgentRuntime
     ├── golden/                     # Snapshot of Agent/Team kwargs (updated only with --update-golden)
     ├── contract/                   # Same suite for every implementation of a port
     └── unit/                       # Unit tests
         ├── test_agent_config.py
         ├── test_agent_factory_service.py
         ├── test_agent_factory_extended.py
+        ├── test_agno_runtime.py
         ├── test_app_config.py
         ├── test_app_factory.py
         ├── test_app_factory_extended.py
@@ -380,7 +389,7 @@ sequenceDiagram
     participant F as AppFactory
     participant DI as DependencyContainer
     participant UC as GetActiveAgentsUseCase
-    participant AF as AgentFactoryService
+    participant AF as AgnoRuntime
     participant MDB as MongoDB
     participant OS as AgentOS
 
@@ -395,15 +404,15 @@ sequenceDiagram
     F->>UC: warm_up_cache → execute()
     UC->>MDB: agents_config.find({active: true})
     MDB-->>UC: [AgentConfig, ...]
-    UC->>AF: create_agent(config) for each agent
+    UC->>AF: build_agent(config) for each agent (in parallel)
     AF->>MDB: tools.find({id: {$in: tools_ids}})
     AF->>AF: model_factory → creates AI model
     AF->>AF: embedder_factory → creates RAG embedder
     AF->>AF: Assembles agno v2.5 Agent
-    UC-->>F: [Agent, ...]
+    UC-->>F: [agent handle (agno Agent), ...]
     F->>MDB: teams_config.find({active: true})
     MDB-->>F: [TeamConfig, ...]
-    F->>F: TeamFactoryService → creates Teams with agents as members
+    F->>AF: build_team(config, agents) per team (GetActiveTeamsUseCase, off the event loop)
     F->>OS: AgentOS(agents, teams, base_app) + AG-UI router /agui/{id}
     OS->>OS: Registers ~75 routes + sets up OpenTelemetry tracing
     Note over U,OS: Server ready on port 7777
@@ -934,15 +943,16 @@ tests/
     ├── test_document_node.py              # Domain: DocumentNode hierarchy
     ├── test_search_result.py              # Domain: SearchResult
     ├── test_rag_config_strategy.py        # Domain: RagConfig + SearchStrategy enum
-    ├── test_agent_factory_service.py      # Application: agent creation
-    ├── test_agent_factory_extended.py     # Application: agent creation (extended)
-    ├── test_team_factory_service.py       # Application: team creation
+    ├── test_agent_factory_service.py      # Infrastructure (agno runtime): agent creation
+    ├── test_agent_factory_extended.py     # Infrastructure (agno runtime): agent creation (extended)
+    ├── test_team_factory_service.py       # Infrastructure (agno runtime): team creation
+    ├── test_agno_runtime.py               # Infrastructure: AgnoRuntime (handles are agno Agent/Team)
     ├── test_knowledge_search_factory.py   # Application: search strategy factory
     ├── test_document_indexing_service.py  # Application: document indexing
     ├── test_hierarchical_search_strategy.py # Application: hierarchical search
     ├── test_hierarchical_integration.py   # Application: hierarchical integration
-    ├── test_get_active_agents_use_case.py # Application: agents use case
-    ├── test_get_active_teams_use_case.py  # Application: teams use case
+    ├── test_get_active_agents_use_case.py # Application: agents use case (fake runtime)
+    ├── test_get_active_teams_use_case.py  # Application: teams use case (fake runtime)
     ├── test_app_config.py                 # Infrastructure: configuration
     ├── test_app_factory.py                # Infrastructure: AppFactory
     ├── test_app_factory_extended.py       # Infrastructure: AppFactory (extended)

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
-from src.application.services.agent_factory_service import AgentFactoryService
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.rag_config import RagConfig, SearchStrategy
+from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService
 
 
 class TestAgentFactoryRetrocompat:

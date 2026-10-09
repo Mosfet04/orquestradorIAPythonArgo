@@ -235,18 +235,16 @@ async def test_agentes_vem_em_ordem_de_id_do_mongo_e_o_mais_antigo_vence_o_id_re
     monkeypatch: pytest.MonkeyPatch,
 ):
     from src.application.use_cases.get_active_agents_use_case import GetActiveAgentsUseCase
+    from tests.fakes.runtime import FakeAgentHandle, FakeAgentRuntime
 
     logger = RecordingLogger()
     older, newer = _oids()
     docs = [_agent_doc("dup", nome="novo", _id=newer), _agent_doc("dup", nome="antigo", _id=older)]
     repo = _agent_repo(monkeypatch, docs, logger)
 
-    class _Factory:
-        async def create_agent(self, config):  # type: ignore[no-untyped-def]
-            return config.nome
-
     assert [c.nome for c in await repo.get_active_agents()] == ["antigo", "novo"]
-    assert await GetActiveAgentsUseCase(_Factory(), repo, logger).execute() == ["antigo"]  # type: ignore[arg-type]
+    agents = await GetActiveAgentsUseCase(FakeAgentRuntime(), repo, logger).execute()
+    assert agents == [FakeAgentHandle("dup", "antigo")]
 
 
 async def test_teams_vem_em_ordem_de_id_do_mongo(monkeypatch: pytest.MonkeyPatch):
