@@ -25,6 +25,7 @@
       },
       "name": "Agente minimo",
       "num_history_runs": 5,
+      "pre_hooks": null,
       "read_chat_history": false,
       "reasoning": false,
       "search_knowledge": false,
@@ -32,8 +33,7 @@
       "store_history_messages": true,
       "store_tool_messages": true,
       "telemetry": false,
-      "tools": null,
-      "user_id": "ava"
+      "tools": null
     }
   ],
   "Team": [],

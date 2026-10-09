@@ -9,6 +9,11 @@ from agno.db.mongo import MongoDb as MongoAgentDb
 from agno.team import Team
 from agno.team.mode import TeamMode
 
+from src.application.services.agent_factory_service import (
+    UserIdRequiredGuardrail,
+    needs_user_id,
+    requires_user_id,
+)
 from src.domain.entities.team_config import TeamConfig
 from src.domain.ports import ILogger, IModelFactory
 
@@ -48,6 +53,12 @@ class TeamFactoryService:
         )
         mode = _MODE_MAP.get(config.mode, TeamMode.route)
         db = MongoAgentDb(db_url=self._db_url, db_name=self._db_name)
+        # O team repassa o user_id da requisição aos membros: exige se ele ou um membro
+        # guarda memória de usuário (recusa logo no team, antes de delegar).
+        user_memories = agentic_memory = config.user_memory_active
+        guarded = needs_user_id(
+            user_memories=user_memories, agentic_memory=agentic_memory
+        ) or any(requires_user_id(member) for member in members)
 
         team = Team(
             id=config.id,
@@ -58,11 +69,11 @@ class TeamFactoryService:
             description=config.descricao or "",
             instructions=config.prompt or None,
             db=db,
-            user_id="ava",
+            pre_hooks=[UserIdRequiredGuardrail(config.id)] if guarded else None,
             markdown=True,
             respond_directly=(mode == TeamMode.route),
-            enable_agentic_memory=config.user_memory_active,
-            enable_user_memories=config.user_memory_active,
+            enable_agentic_memory=agentic_memory,
+            enable_user_memories=user_memories,
             enable_session_summaries=config.summary_active,
             add_history_to_context=True,
             num_team_history_runs=5,

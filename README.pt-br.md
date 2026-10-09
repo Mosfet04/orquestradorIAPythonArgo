@@ -106,7 +106,7 @@ python app.py
 
 - O lock é gerado em Linux/CPython 3.12 e validado para Linux CPython 3.11/3.12 (Docker e CI). No Windows nativo, se o `--require-hashes` falhar, use WSL/Docker ou regenere o lock localmente.
 - `uvloop` só é instalado fora do Windows (`sys_platform != "win32"`); o `app.py` o importa com guarda e só o usa fora do Windows (no Windows, loop padrão).
-- Extras opcionais, **não instalados por padrão** (fora do lock): `PyJWT` (auth JWT do AgentOS), `mcp` (tools MCP), `anthropic` e `groq` (providers de modelo). Para adotar um deles, acrescente-o ao `requirements.in` e regenere o lock.
+- Extras opcionais, **não instalados por padrão** (fora do lock): `PyJWT` (auth JWT do AgentOS), `mcp` (tools MCP), `anthropic` e `groq` (providers de modelo). Para adotar um deles, acrescente-o ao `requirements.in` e regenere o lock. Sem o pacote, agente/team com aquele provider não carrega e o log diz qual pacote instalar (ex.: `pip install groq`).
 - Nunca edite um `.lock` à mão. Comandos de regeneração: [CONTRIBUTING.md](CONTRIBUTING.md#dependencies-and-lock-files).
 
 ### Com Docker Compose
@@ -649,7 +649,7 @@ Esta é a collection que você gerencia. Cada documento define um agente:
 | `prompt` | string[] | ✅ | Instruções do sistema (aceita array de strings) |
 | `tools_ids` | string[] | ❌ | IDs das tools vinculadas (da collection `tools`) |
 | `rag_config` | object | ❌ | Configuração de RAG (veja abaixo) |
-| `user_memory_active` | bool | ❌ | Ativa memória de longo prazo do usuário |
+| `user_memory_active` | bool | ❌ | Ativa memória de longo prazo do usuário (o run passa a exigir `user_id`; ver [Memória Inteligente](#memória-inteligente)) |
 | `summary_active` | bool | ❌ | Ativa sumários automáticos de sessão |
 | `active` | bool | ✅ | Se `false`, o agente é ignorado na inicialização |
 
@@ -727,7 +727,7 @@ Cada documento define um team multi-agente:
 | `prompt` | string | ❌ | Instruções do sistema para o líder do team |
 | `member_ids` | string[] | ✅ | IDs dos agentes membros (da collection `agents_config`) |
 | `mode` | string | ✅ | Modo de operação: `route`, `coordinate`, `broadcast`, `tasks` |
-| `user_memory_active` | bool | ❌ | Ativa memória de longo prazo |
+| `user_memory_active` | bool | ❌ | Ativa memória de longo prazo (o run passa a exigir `user_id`; ver [Memória Inteligente](#memória-inteligente)) |
 | `summary_active` | bool | ❌ | Ativa sumários automáticos de sessão |
 | `active` | bool | ✅ | Se `false`, o team é ignorado na inicialização |
 
@@ -833,8 +833,12 @@ graph TB
 Quando ativada (`user_memory_active: true`), a memória:
 
 - **Extrai**: Informações relevantes do usuário mencionadas nas conversas (nome, profissão, preferências)
-- **Persiste**: Na collection `user_memories`, associada ao `user_id`
+- **Persiste**: Na collection `agno_memories`, associada ao `user_id`
 - **Recupera**: A cada nova conversa, o contexto acumulado é injetado nas instruções do agente
+
+**`user_id` é obrigatório** em agente ou team com memória de usuário (`user_memory_active: true`; no team, também quando algum membro a tem): envie no campo `user_id` do form de `POST /agents/{id}/runs` / `POST /teams/{id}/runs`, ou em `forwardedProps.user_id` no AG-UI. O `user_id` deve ser string não vazia, com ao menos um caractere visível, e diferente de `default` (o usuário de fallback do Agno para memória sem `user_id`); não é normalizado (`" ana "` e `ana` são usuários diferentes). Não há usuário fixo nem default: sem `user_id` válido (ausente, vazio, em branco ou só invisível, `default`, ou não-string, ex.: número em `forwardedProps`) o run é recusado antes de ler memória ou chamar o modelo, então chamadores anônimos nunca compartilham memórias. O AgentOS responde 200 com `status: "ERROR"` e mensagem citando `user_id` (`stream=false`) ou evento SSE `RunError` (`stream=true`); o AG-UI do Agno 2.5.8 descarta erros de run, então o run AG-UI recusado termina sem texto. Entidades sem memória de usuário continuam aceitando run sem `user_id`.
+
+**Nota de operação (atualização para o F1-06):** antes do F1-06 todo agente e team rodava com `user_id: "ava"` fixo, então memórias e sessões gravadas com `user_id: "ava"` são um pool legado compartilhado por todos os chamadores. Revise e apague: liste com `GET /memories?user_id=ava` e apague com `DELETE /memories` (chave admin; corpo `{"memory_ids": [...], "user_id": "ava"}`) ou direto no MongoDB: `db.agno_memories.deleteMany({user_id: "ava"})` (e `db.agno_sessions.deleteMany({user_id: "ava"})`, se não quiser manter esse histórico).
 
 Quando ativado (`summary_active: true`), sumários:
 

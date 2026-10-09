@@ -106,7 +106,7 @@ python app.py
 
 - The lock is generated on Linux/CPython 3.12 and validated for Linux CPython 3.11/3.12 (Docker and CI). On native Windows, if `--require-hashes` fails, use WSL/Docker or regenerate the lock locally.
 - `uvloop` is installed only outside Windows (`sys_platform != "win32"`); `app.py` imports it behind a guard and only uses it outside Windows (default loop on Windows).
-- Optional extras, **not installed by default** (outside the lock): `PyJWT` (AgentOS JWT auth), `mcp` (MCP tools), `anthropic` and `groq` (model providers). To adopt one, add it to `requirements.in` and regenerate the lock.
+- Optional extras, **not installed by default** (outside the lock): `PyJWT` (AgentOS JWT auth), `mcp` (MCP tools), `anthropic` and `groq` (model providers). To adopt one, add it to `requirements.in` and regenerate the lock. Without the package, an agent/team using that provider is not loaded and the log says which package to install (e.g. `pip install groq`).
 - Never edit a `.lock` by hand. Regeneration commands: [CONTRIBUTING.md](CONTRIBUTING.md#dependencies-and-lock-files).
 
 ### With Docker Compose
@@ -635,7 +635,7 @@ This is the collection you manage. Each document defines an agent:
 | `prompt` | string[] | ✅ | System instructions (accepts array of strings) |
 | `tools_ids` | string[] | ❌ | IDs of linked tools (from the `tools` collection) |
 | `rag_config` | object | ❌ | RAG configuration (see below) |
-| `user_memory_active` | bool | ❌ | Enables long-term user memory |
+| `user_memory_active` | bool | ❌ | Enables long-term user memory (runs then require `user_id`; see [Smart Memory](#smart-memory)) |
 | `summary_active` | bool | ❌ | Enables automatic session summaries |
 | `active` | bool | ✅ | If `false`, agent is ignored at startup |
 
@@ -713,7 +713,7 @@ Each document defines a multi-agent team:
 | `prompt` | string | ❌ | System instructions for the team leader |
 | `member_ids` | string[] | ✅ | IDs of member agents (from the `agents_config` collection) |
 | `mode` | string | ✅ | Operating mode: `route`, `coordinate`, `broadcast`, `tasks` |
-| `user_memory_active` | bool | ❌ | Enables long-term memory |
+| `user_memory_active` | bool | ❌ | Enables long-term memory (runs then require `user_id`; see [Smart Memory](#smart-memory)) |
 | `summary_active` | bool | ❌ | Enables automatic session summaries |
 | `active` | bool | ✅ | If `false`, team is ignored at startup |
 
@@ -819,8 +819,12 @@ graph TB
 When enabled (`user_memory_active: true`), memory:
 
 - **Extracts**: Relevant user information mentioned in conversations (name, profession, preferences)
-- **Persists**: In the `user_memories` collection, associated with `user_id`
+- **Persists**: In the `agno_memories` collection, associated with `user_id`
 - **Retrieves**: On each new conversation, accumulated context is injected into agent instructions
+
+**`user_id` is required** for an agent or team with user memory (`user_memory_active: true`; for a team, also when any member has it): send it in the `user_id` form field of `POST /agents/{id}/runs` / `POST /teams/{id}/runs`, or in `forwardedProps.user_id` on AG-UI. `user_id` must be a non-empty string with at least one visible character and must not be `default` (Agno's fallback user for memory without `user_id`); it is not normalized (`" ana "` and `ana` are different users). There is no fixed or default user: without a valid `user_id` (missing, empty, blank or invisible-only, `default`, or not a string, e.g. a number in `forwardedProps`) the run is refused before reading memory or calling the model, so anonymous callers never share memories. AgentOS answers 200 with `status: "ERROR"` and a message naming `user_id` (`stream=false`), or a `RunError` SSE event (`stream=true`); AG-UI in Agno 2.5.8 drops run errors, so the refused AG-UI run ends with no text. Entities without user memory keep accepting runs without `user_id`.
+
+**Operations note (upgrade to F1-06):** before F1-06 every agent and team ran with the fixed `user_id: "ava"`, so memories and sessions stored with `user_id: "ava"` are a legacy pool shared by all callers. Review and delete them: list with `GET /memories?user_id=ava` and delete with `DELETE /memories` (admin key; body `{"memory_ids": [...], "user_id": "ava"}`), or directly in MongoDB: `db.agno_memories.deleteMany({user_id: "ava"})` (and `db.agno_sessions.deleteMany({user_id: "ava"})` if you do not want to keep that history).
 
 When enabled (`summary_active: true`), summaries:
 

@@ -19,7 +19,8 @@ class ModelFactory:
         "openai": ("agno.models.openai.chat", "OpenAIChat", "openai", "OpenAI"),
         "anthropic": ("agno.models.anthropic.claude", "Claude", "anthropic", "Anthropic"),
         "gemini": ("agno.models.google.gemini", "Gemini", "google-genai", "Gemini"),
-        "groq": ("agno.models.groq.chat", "GroqChat", "groq", "Groq"),
+        # agno 2.5.8: agno/models/groq/groq.py define ``Groq`` (não há ``chat``/``GroqChat``).
+        "groq": ("agno.models.groq", "Groq", "groq", "Groq"),
         "azure": ("agno.models.azure.openai_chat", "AzureOpenAI", "openai", "Azure OpenAI"),
     }
 
@@ -118,11 +119,12 @@ class ModelFactory:
         try:
             module = __import__(module_path, fromlist=[class_name])
             return getattr(module, class_name)
-        except ImportError:
+        except ImportError as exc:
+            # SDK opcional ausente (anthropic/groq são extras): diz qual pacote instalar.
             raise ValueError(
                 f"Modelo {human_name} indisponível. "
                 f"Instale com: pip install {pip_pkg}"
-            )
+            ) from exc
 
     def _instantiate(
         self,

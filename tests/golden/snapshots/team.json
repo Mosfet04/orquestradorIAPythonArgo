@@ -36,13 +36,18 @@
       },
       "name": "Time Roteador",
       "num_team_history_runs": 5,
+      "pre_hooks": [
+        {
+          "__type__": "guardrail:UserIdRequiredGuardrail",
+          "entity_id": "time-roteador"
+        }
+      ],
       "respond_directly": true,
       "store_events": true,
       "store_history_messages": true,
       "store_member_responses": true,
       "store_tool_messages": true,
-      "telemetry": false,
-      "user_id": "ava"
+      "telemetry": false
     },
     {
       "add_history_to_context": true,
@@ -75,13 +80,18 @@
       },
       "name": "Time Coordenador",
       "num_team_history_runs": 5,
+      "pre_hooks": [
+        {
+          "__type__": "guardrail:UserIdRequiredGuardrail",
+          "entity_id": "time-coordenador"
+        }
+      ],
       "respond_directly": false,
       "store_events": true,
       "store_history_messages": true,
       "store_member_responses": true,
       "store_tool_messages": true,
-      "telemetry": false,
-      "user_id": "ava"
+      "telemetry": false
     }
   ],
   "factory_calls": {

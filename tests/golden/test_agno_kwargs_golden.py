@@ -290,6 +290,19 @@ async def test_agent_e_team_nunca_sao_criados_com_telemetria_ligada(agno_calls: 
     assert [call.get("telemetry") for call in calls] == [False] * len(calls)
 
 
+@pytest.mark.usefixtures("workdir")
+async def test_agent_e_team_nunca_sao_criados_com_user_id_fixo(agno_calls: AgnoCalls):
+    """F1-06 (B11): ``user_id`` vem da requisição; fixo (era ``"ava"``) junta as memórias de todos."""
+    assembly = _Assembly.build()
+    agents = [await assembly.agents.create_agent(cfg) for cfg in AGENT_SCENARIOS.values()]
+    teams = [assembly.teams.create_team(cfg, agents) for cfg in TEAM_CONFIGS]
+
+    calls = agno_calls.of("Agent") + agno_calls.of("Team")
+    assert len(calls) == len(AGENT_SCENARIOS) + len(TEAM_CONFIGS)
+    assert [call for call in calls if "user_id" in call] == []  # type: ignore[operator]
+    assert [entity.user_id for entity in [*agents, *teams]] == [None] * len(calls)
+
+
 # ── o próprio mecanismo de golden ───────────────────────────────────
 
 

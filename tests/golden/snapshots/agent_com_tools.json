@@ -25,6 +25,12 @@
       },
       "name": "Agente com-tools",
       "num_history_runs": 5,
+      "pre_hooks": [
+        {
+          "__type__": "guardrail:UserIdRequiredGuardrail",
+          "entity_id": "com-tools"
+        }
+      ],
       "read_chat_history": false,
       "reasoning": false,
       "search_knowledge": false,
@@ -79,8 +85,7 @@
             "type": "object"
           }
         }
-      ],
-      "user_id": "ava"
+      ]
     }
   ],
   "Team": [],

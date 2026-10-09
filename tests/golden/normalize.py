@@ -18,6 +18,7 @@ from typing import Any
 
 from agno.agent import Agent
 from agno.db.base import BaseDb
+from agno.guardrails.base import BaseGuardrail
 from agno.knowledge import Knowledge
 from agno.knowledge.embedder.base import Embedder
 from agno.models.base import Model
@@ -127,4 +128,8 @@ def normalize(value: Any) -> JsonValue:
             "instructions": value.instructions,
             "add_instructions": value.add_instructions,
         }
+    if isinstance(value, BaseGuardrail):
+        # só o nome da classe: a montagem muda de módulo na F2 e o snapshot não deve mudar
+        attrs = {k: normalize(v) for k, v in sorted(vars(value).items()) if not k.startswith("_")}
+        return {"__type__": f"guardrail:{type(value).__qualname__}", **attrs}
     raise TypeError(f"golden: sem normalização para {_type_name(value)}; trate o tipo em tests/golden/normalize.py")

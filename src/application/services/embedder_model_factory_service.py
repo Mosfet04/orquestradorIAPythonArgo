@@ -16,7 +16,7 @@ class EmbedderModelFactory:
     # agno v2.5: agno.embedder.* → agno.knowledge.embedder.*
     _IMPORT_SPECS: Dict[str, tuple[str, str, str, str]] = {
         "ollama": (
-            "agno.knowledge.embedder.ollama", "OllamaEmbedder", "agno", "Ollama"
+            "agno.knowledge.embedder.ollama", "OllamaEmbedder", "ollama", "Ollama"
         ),
         "openai": (
             "agno.knowledge.embedder.openai", "OpenAIEmbedder", "openai", "OpenAI"
@@ -90,7 +90,7 @@ class EmbedderModelFactory:
         try:
             module = __import__(module_path, fromlist=[class_name])
             return getattr(module, class_name)
-        except ImportError:
+        except ImportError as exc:
             raise ValueError(
                 f"Embedder {human_name} indisponível. Instale: pip install {pip_pkg}"
-            )
+            ) from exc
