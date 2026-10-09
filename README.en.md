@@ -469,6 +469,8 @@ OLLAMA_BASE_URL=http://localhost:11434
 # AZURE_VERSION=2024-02-01
 # SECRETS_DIR=/run/secrets   # root for "file:/..." api_key_ref (files outside it are rejected); relative or "/" stops the app from starting
 # MODEL_BASE_URL_ALLOWLIST=llm.internal.example,10.0.0.5   # hosts accepted in documents' base_url (host only); list only hosts trusted to receive the process's provider keys
+# PLUGIN_ALLOWLIST=orquestrador-provider-deepseek:deepseek   # allowed provider plugins (distribution:name); outside the list they are never imported (see "Provider plugins")
+# ALLOW_DYNAMIC_IMPORT=false   # with DYNAMIC_PROVIDER_SPECS=module:ATTRIBUTE, local dev mode only; outside it the app does not start
 
 # ═══ OpenTelemetry (optional) ═══
 OTEL_ENABLED=true
@@ -1019,7 +1021,44 @@ NEW = ProviderSpec(
 )
 ```
 
-Cover it in the matrix (`tests/unit/test_provider_matrix.py`: instantiates the real class or fails naming the package) and document the variable in `.env.example`. Third-party plugins (entry point `orquestrador.providers`) arrive in F2-03, through the same `register`.
+Cover it in the matrix (`tests/unit/test_provider_matrix.py`: instantiates the real class or fails naming the package) and document the variable in `.env.example`. Third-party providers, without touching the orchestrator: write a plugin (below).
+
+### Provider plugins (entry point)
+
+A plugin is a Python package installed in the orchestrator's environment that declares, in the `orquestrador.providers` entry point group, a name pointing to a `ProviderSpec` (the same structure as the built-ins). A complete, tested example lives in [`examples/provider_plugin`](examples/provider_plugin) (provider `deepseek` with agno's `DeepSeek` class):
+
+```toml
+# plugin pyproject.toml
+[project]
+name = "orquestrador-provider-deepseek"
+version = "0.1.0"
+dependencies = []          # agno and the openai SDK already ship with the orchestrator
+
+[project.entry-points."orquestrador.providers"]
+deepseek = "orquestrador_provider_deepseek:SPEC"
+```
+
+```python
+# orquestrador_provider_deepseek/__init__.py
+from src.infrastructure.providers import ClassSpec, ProviderSpec
+
+SPEC = ProviderSpec(
+    id="deepseek",
+    sdk_package="openai",
+    chat=ClassSpec(class_path="agno.models.deepseek.DeepSeek", params={"temperature": "temperature"}, base_url_kwarg="base_url"),
+    default_hosts=frozenset({"api.deepseek.com"}),
+    api_key_env="DEEPSEEK_API_KEY",
+)
+```
+
+To use it: `pip install ./examples/provider_plugin` and `PLUGIN_ALLOWLIST=orquestrador-provider-deepseek:deepseek` (the `[project]` `name` + the entry point name; several separated by commas). Rules:
+
+- **Allowlist before import**: the orchestrator checks the distribution (the `Name` field of the installed metadata, compared case-insensitively with `-`, `_` and `.` equivalent, PEP 503) and the entry point name **before** importing any code. An installed plugin outside the list is never imported (only a `Plugin de provider ignorado: fora da PLUGIN_ALLOWLIST` warning); an entry point without a readable `Name` in the metadata is refused; two installed distributions with the same `Name` and the same allowed entry point, in `*.dist-info` directories whose package name (the part before the version, normalized) differs, stop the app from starting (neither is imported); with the same package name in the directory, even with different versions (e.g. `acme_plugin-9.9.dist-info` and `acme_plugin-1.0.dist-info`), the first one on `sys.path` wins (shadowing, like a module with the same name; requires write access to the environment).
+- **Startup error** (the app does not start, before MongoDB and before binding): a list entry with no installed plugin (the message cites the entry position, never its text), a plugin that fails to import or does not point to a `ProviderSpec`, and a provider id or alias repeated, case-insensitively, with a built-in or another plugin (the message says with whom: `plugin 'dist:nome': provider 'openai' com id ou alias já registrado (openai: built-in)`).
+- **No shortcut**: the spec goes into the same registry as the built-ins; `base_url` and key follow the same rules (provider host only over `https`, `MODEL_BASE_URL_ALLOWLIST`, loopback only in local dev mode, metadata always refused, `api_key_ref` or the `api_key_env` variable). Before allowing a plugin, review its spec's `default_hosts` (hosts accepted in documents' `base_url` without going through `MODEL_BASE_URL_ALLOWLIST`) and `api_key_env` (the variable sent to those hosts).
+- **Audit**: each loaded plugin logs `Plugin de provider carregado` with `distribution`, `version`, `entry_point` and `provider_id`.
+- The plugin runs inside the process, with the same privileges: allow only packages from trusted sources. For the Docker image, install the plugin in a derived image (`pip install` at build time).
+- **Development without packaging**: `DYNAMIC_PROVIDER_SPECS=my_module:SPEC` (several separated by commas) with `ALLOW_DYNAMIC_IMPORT=true` loads the spec straight from the module, **only** in local dev mode (no `API_KEY_*`, `APP_HOST` on loopback, `ENVIRONMENT` development/test). Set outside it, the app does not start; it is never silently ignored.
 
 ### Adding a New Tool (zero code)
 

@@ -315,3 +315,77 @@ class TestModelBaseUrlAllowlist:
         with patch.dict(os.environ, {"MODEL_BASE_URL_ALLOWLIST": "10.0.0.5."}, clear=True):
             with pytest.raises(ValueError, match="entrada 1"):
                 AppConfig.load()
+
+
+class TestPluginConfig:
+    """F2-03: ``PLUGIN_ALLOWLIST``, ``ALLOW_DYNAMIC_IMPORT`` e ``DYNAMIC_PROVIDER_SPECS``."""
+
+    def test_defaults_sem_plugin_nem_import_dinamico(self):
+        with patch.dict(os.environ, {}, clear=True):
+            config = AppConfig.load()
+        assert (config.plugin_allowlist, config.allow_dynamic_import, config.dynamic_provider_specs) == ((), False, ())
+
+    def test_allowlist_normaliza_a_distribuicao_pela_pep_503_e_preserva_o_nome(self):
+        raw = " Acme.Plugin_X:acme , beta-plugin:Beta.v2, ,acme-plugin-x:acme"
+        with patch.dict(os.environ, {"PLUGIN_ALLOWLIST": raw}, clear=True):
+            allowlist = AppConfig.load().plugin_allowlist
+        assert allowlist == ("acme-plugin-x:acme", "beta-plugin:Beta.v2", "acme-plugin-x:acme")
+
+    @pytest.mark.parametrize(
+        "entry",
+        [
+            "acme-plugin",
+            ":acme",
+            "acme-plugin:",
+            "acme plugin:acme",
+            "-acme:acme",
+            "acme-:acme",
+            "acme:ac me",
+            "acme:a:b",
+            "admin:hunter2@host",
+            "https://acme.example/x:y",
+            "açme:acme",
+        ],
+    )
+    def test_allowlist_invalida_falha_citando_so_a_posicao(self, entry):
+        with patch.dict(os.environ, {"PLUGIN_ALLOWLIST": f"ok-plugin:ok, ,{entry}"}, clear=True):
+            with pytest.raises(ValueError, match="PLUGIN_ALLOWLIST") as caught:
+                AppConfig.load()
+        assert "entrada 2" in str(caught.value) and entry not in str(caught.value)
+
+    @pytest.mark.parametrize(("value", "expected"), [("true", True), ("1", True), ("false", False), ("", False)])
+    def test_allow_dynamic_import(self, value, expected):
+        with patch.dict(os.environ, {"ALLOW_DYNAMIC_IMPORT": value}, clear=True):
+            assert AppConfig.load().allow_dynamic_import is expected
+
+    def test_allow_dynamic_import_invalido_falha_sem_ecoar_o_valor(self):
+        with patch.dict(os.environ, {"ALLOW_DYNAMIC_IMPORT": "segredo-colado"}, clear=True):
+            with pytest.raises(ValueError, match="ALLOW_DYNAMIC_IMPORT") as caught:
+                AppConfig.load()
+        assert "segredo-colado" not in str(caught.value)
+
+    def test_dynamic_provider_specs_lista_modulo_atributo(self):
+        raw = " meu_pacote.providers:SPEC , outro:specs.LOCAL ,"
+        with patch.dict(os.environ, {"DYNAMIC_PROVIDER_SPECS": raw}, clear=True):
+            config = AppConfig.load()
+        assert config.dynamic_provider_specs == ("meu_pacote.providers:SPEC", "outro:specs.LOCAL")
+
+    @pytest.mark.parametrize(
+        "entry",
+        [
+            "so_modulo",
+            "modulo:",
+            ":SPEC",
+            "mod ulo:SPEC",
+            "1mod:SPEC",
+            "mod:SPEC [extra]",
+            "mod..x:SPEC",
+            "pasta/x.py:SPEC",
+            "mód:SPEC",
+        ],
+    )
+    def test_dynamic_provider_specs_invalida_falha_citando_so_a_posicao(self, entry):
+        with patch.dict(os.environ, {"DYNAMIC_PROVIDER_SPECS": f"ok:SPEC,{entry}"}, clear=True):
+            with pytest.raises(ValueError, match="DYNAMIC_PROVIDER_SPECS") as caught:
+                AppConfig.load()
+        assert "entrada 2" in str(caught.value) and entry not in str(caught.value)

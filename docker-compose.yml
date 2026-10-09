@@ -50,6 +50,11 @@ services:
       AZURE_VERSION:
       SECRETS_DIR:
       MODEL_BASE_URL_ALLOWLIST:
+      # Plugin de provider precisa estar instalado na imagem (imagem derivada com pip install).
+      # Import dinâmico só vale no modo dev local: no container (bind 0.0.0.0) o app recusa.
+      PLUGIN_ALLOWLIST:
+      ALLOW_DYNAMIC_IMPORT:
+      DYNAMIC_PROVIDER_SPECS:
     # Endurecimento: sem escalada de privilégio, sem capabilities, raiz somente leitura.
     # Nada grava em disco no runtime (logs vão para stdout); /tmp em memória.
     security_opt:

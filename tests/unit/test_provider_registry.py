@@ -91,6 +91,13 @@ def test_id_e_alias_sem_caixa_nem_espacos(provider: str):
     assert _registry().create_model(ModelConfig(provider, "m")).kwargs["id"] == "m"
 
 
+def test_in_diz_se_id_ou_alias_esta_registrado_sem_caixa():
+    """Usado pelo loader de plugins (F2-03) para dizer com quem uma spec conflita."""
+    registry = _registry()
+
+    assert [name in registry for name in ("acme", " ACME-AI ", "outro", 1)] == [True, True, False, False]
+
+
 @pytest.mark.parametrize(
     "duplicate",
     [

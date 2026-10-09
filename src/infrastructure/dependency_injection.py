@@ -20,6 +20,7 @@ from src.infrastructure.logging.logger_adapter import StructlogLoggerAdapter
 from src.infrastructure.parsers.text_document_parser import TextDocumentParser
 from src.infrastructure.providers import DestinationPolicy, ProviderRegistry
 from src.infrastructure.providers.builtins import BUILTIN_PROVIDERS
+from src.infrastructure.providers.plugins import load_provider_plugins
 from src.infrastructure.repositories.mongo_agent_config_repository import (
     MongoAgentConfigRepository,
 )
@@ -133,6 +134,12 @@ class DependencyContainer:
         return container
 
     async def _initialize(self) -> None:
+        # Providers primeiro: plugin recusado ou id duplicado derruba o startup antes do Mongo
+        # (e antes do bind: o uvicorn só abre o socket depois do startup do lifespan). Em
+        # thread: descobrir entry points lê metadados em disco e carregar plugin importa código.
+        # Um registry atende modelos e embedders (portas IModelFactory e IEmbedderFactory).
+        providers = await asyncio.to_thread(self._build_provider_registry)
+
         self._mongo_client = AsyncIOMotorClient(
             self.config.mongo_connection_string,
             maxPoolSize=50,
@@ -153,8 +160,6 @@ class DependencyContainer:
         conn = self.config.mongo_connection_string
         db = self.config.mongo_database_name
 
-        # Um registry atende modelos e embedders (portas IModelFactory e IEmbedderFactory).
-        providers = self._build_provider_registry()
         tool_factory = HttpToolFactory(logger=self._logger)
 
         agent_config_repo = MongoAgentConfigRepository(
@@ -228,21 +233,32 @@ class DependencyContainer:
         )
 
     def _build_provider_registry(self) -> ProviderRegistry:
-        """Built-ins + segredos em ``SECRETS_DIR`` + destino permitido para ``base_url`` da config.
+        """Built-ins + plugins + segredos em ``SECRETS_DIR`` + destino permitido para ``base_url``.
 
         ``OLLAMA_BASE_URL`` é do operador: vai só para o Ollama e não passa pela allowlist.
-        Loopback em ``base_url`` só no modo dev local (mesma regra da borda, F1-04).
+        Loopback em ``base_url`` e import dinâmico de spec só no modo dev local (mesma regra da
+        borda, F1-04). Plugins entram no mesmo registry dos built-ins (``PluginLoadError`` se
+        recusados). Síncrono e com I/O: chame fora do event loop.
         """
         config = self.config
-        return ProviderRegistry(
+        dev_mode = is_local_dev_mode(config)
+        registry = ProviderRegistry(
             BUILTIN_PROVIDERS,
             secrets_dir=config.secrets_dir,
             policy=DestinationPolicy(
                 allowlist=config.model_base_url_allowlist,
-                allow_loopback=is_local_dev_mode(config),
+                allow_loopback=dev_mode,
             ),
             operator_base_urls={"ollama": config.ollama_base_url} if config.ollama_base_url else None,
         )
+        load_provider_plugins(
+            registry,
+            allowlist=config.plugin_allowlist,
+            logger=self._logger,
+            dynamic_specs=config.dynamic_provider_specs,
+            dynamic_import_allowed=config.allow_dynamic_import and dev_mode,
+        )
+        return registry
 
     def get_orquestrador_controller(self) -> OrquestradorController:
         if self._controller is None:

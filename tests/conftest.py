@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from tests.fakes.knowledge import offline_knowledge  # noqa: F401  (fixture compartilhada)
+from tests.fakes.plugins import plugin_site  # noqa: F401  (fixture compartilhada)
 
 TESTS_DIR = Path(__file__).resolve().parent
 

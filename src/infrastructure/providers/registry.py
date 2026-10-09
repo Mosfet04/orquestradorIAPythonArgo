@@ -1,8 +1,8 @@
 """Registry de providers de modelo e embedder (F2-02): uma ``ProviderSpec`` por provider.
 
 Substitui as duas fábricas duplicadas (``ModelFactory``/``EmbedderModelFactory``): adicionar
-provider é registrar uma spec (built-ins em ``builtins.py``; plugins por entry point no F2-03,
-no mesmo ``register``). Implementa as portas ``IModelFactory`` e ``IEmbedderFactory``.
+provider é registrar uma spec (built-ins em ``builtins.py``; plugins por entry point em
+``plugins.py``, no mesmo ``register``). Implementa as portas ``IModelFactory`` e ``IEmbedderFactory``.
 
 Ordem do ``build`` (o segredo é a última coisa lida, só quando tudo o mais passou):
 provider → destino (``base_url``: host do provider, ``MODEL_BASE_URL_ALLOWLIST`` ou loopback no
@@ -139,7 +139,8 @@ class DestinationPolicy:
         check_host(raw_host, resolver=self.resolver)
 
 
-def _normalize(name: str) -> str:
+def normalize_provider_name(name: str) -> str:
+    """Forma comparável de id/alias de provider (sem espaços nas pontas, sem caixa)."""
     return name.strip().lower()
 
 
@@ -168,18 +169,22 @@ class ProviderRegistry(IModelFactory, IEmbedderFactory):
         self._specs: dict[str, ProviderSpec] = {}
         self._secrets_dir = secrets_dir
         self._policy = policy or DestinationPolicy()
-        self._operator_base_urls = {_normalize(k): v for k, v in (operator_base_urls or {}).items()}
+        self._operator_base_urls = {normalize_provider_name(k): v for k, v in (operator_base_urls or {}).items()}
         for spec in specs:
             self.register(spec)
 
     def register(self, spec: ProviderSpec) -> None:
         """Registra ``spec``; id ou alias já usado (sem caixa) é ``ValueError``."""
-        names = [_normalize(spec.id), *(_normalize(alias) for alias in spec.aliases)]
+        names = [normalize_provider_name(spec.id), *(normalize_provider_name(alias) for alias in spec.aliases)]
         taken = [name for name in names if name in self._specs]
         if taken or len(set(names)) != len(names):
             raise ValueError(f"Provider '{spec.id}': id ou alias duplicado ({', '.join(taken or names)})")
         for name in names:
             self._specs[name] = spec
+
+    def __contains__(self, name: object) -> bool:
+        """``name`` (sem caixa) é id ou alias de um provider registrado."""
+        return isinstance(name, str) and normalize_provider_name(name) in self._specs
 
     def supported(self, kind: Kind) -> list[str]:
         """Ids e aliases que criam ``kind``, em ordem alfabética."""
@@ -198,7 +203,7 @@ class ProviderRegistry(IModelFactory, IEmbedderFactory):
         return spec.chat if kind == "chat" else spec.embedder
 
     def _build(self, kind: Kind, config: ModelConfig) -> object:
-        spec = self._specs.get(_normalize(config.provider))
+        spec = self._specs.get(normalize_provider_name(config.provider))
         class_spec = self._class_spec(spec, kind) if spec is not None else None
         if spec is None or class_spec is None:
             raise InvalidModelConfigError(
@@ -223,7 +228,7 @@ class ProviderRegistry(IModelFactory, IEmbedderFactory):
         label: str,
     ) -> None:
         if base_url is None:
-            operator_url = self._operator_base_urls.get(_normalize(spec.id))
+            operator_url = self._operator_base_urls.get(normalize_provider_name(spec.id))
             if operator_url and class_spec.base_url_kwarg:
                 kwargs[class_spec.base_url_kwarg] = operator_url
             elif spec.requires_base_url:

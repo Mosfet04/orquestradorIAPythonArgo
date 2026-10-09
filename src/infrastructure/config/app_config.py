@@ -10,6 +10,7 @@ from typing import Optional
 from urllib.parse import urlsplit
 
 from src.infrastructure.config.secrets import DEFAULT_SECRETS_DIR
+from src.infrastructure.providers.plugins import normalize_distribution_name
 from src.infrastructure.security.ssrf import normalize_host
 
 ENVIRONMENTS = ("development", "test", "staging", "production")
@@ -29,6 +30,13 @@ API_KEY_HINT = 'python -c "import secrets; print(secrets.token_urlsafe(32))"'
 
 # Rótulo DNS (RFC 1123): letras, dígitos e hífen, sem hífen nas pontas, até 63 caracteres.
 _DNS_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
+
+# PLUGIN_ALLOWLIST (F2-03): nome de distribuição da PEP 508 e nome de entry point recomendado
+# pela especificação de entry points; DYNAMIC_PROVIDER_SPECS: módulo:atributo, só identificadores.
+_DIST_NAME = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?")
+_ENTRY_POINT_NAME = re.compile(r"[A-Za-z0-9_.-]+")
+_IDENTIFIER_PATH = r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*"
+_IMPORT_TARGET = re.compile(rf"{_IDENTIFIER_PATH}:{_IDENTIFIER_PATH}")
 
 _TRUE = ("true", "1", "yes", "on")
 _FALSE = ("false", "0", "no", "off")
@@ -65,6 +73,11 @@ class AppConfig:
     secrets_dir: str = DEFAULT_SECRETS_DIR
     # Hosts aceitos em base_url de modelo/embedder vinda da config (F2-02), normalizados.
     model_base_url_allowlist: tuple[str, ...] = ()
+    # Plugins de provider por entry point (F2-03): "distribuição:nome", distribuição pela PEP 503.
+    plugin_allowlist: tuple[str, ...] = ()
+    # "módulo:atributo" de ProviderSpec por env: só com o flag e no modo dev local (F2-03).
+    allow_dynamic_import: bool = False
+    dynamic_provider_specs: tuple[str, ...] = ()
 
     @classmethod
     def load(cls) -> AppConfig:
@@ -97,6 +110,11 @@ class AppConfig:
             api_key_admin=_api_key("API_KEY_ADMIN", os.getenv("API_KEY_ADMIN")),
             secrets_dir=_secrets_dir(),
             model_base_url_allowlist=_model_base_url_allowlist(),
+            plugin_allowlist=_plugin_allowlist(),
+            allow_dynamic_import=_optional_bool(
+                "ALLOW_DYNAMIC_IMPORT", os.getenv("ALLOW_DYNAMIC_IMPORT"), default=False
+            ),
+            dynamic_provider_specs=_dynamic_provider_specs(),
         )
         config._validate()
         return config
@@ -193,8 +211,47 @@ def _allowlisted_host(entry: str, position: int) -> str:
     return name
 
 
+def _non_empty_entries(raw: Optional[str]) -> list[tuple[int, str]]:
+    """Entradas não vazias de uma env separada por vírgula, com a posição (1 = a primeira não vazia)."""
+    entries = (item.strip() for item in (raw or "").split(","))
+    return list(enumerate((entry for entry in entries if entry), start=1))
+
+
+def _plugin_allowlist() -> tuple[str, ...]:
+    """``PLUGIN_ALLOWLIST``: ``distribuição:nome`` por vírgula; vazio = nenhum plugin.
+
+    A distribuição é normalizada pela PEP 503 (``Acme_Plugin`` = ``acme-plugin``); o nome do
+    entry point é comparado exatamente. Inválida = erro com a posição, nunca o texto.
+    """
+    allowlist: list[str] = []
+    for position, entry in _non_empty_entries(os.getenv("PLUGIN_ALLOWLIST")):
+        dist, separator, name = entry.partition(":")
+        dist, name = dist.strip(), name.strip()
+        if not (separator and _DIST_NAME.fullmatch(dist) and _ENTRY_POINT_NAME.fullmatch(name)):
+            raise ValueError(
+                f"PLUGIN_ALLOWLIST inválida: entrada {position} (contando da esquerda as não vazias) não é "
+                "distribuição:nome; use o nome da distribuição instalada e o nome do entry point do grupo "
+                "orquestrador.providers (ex.: minha-dist:meu_provider)"
+            )
+        allowlist.append(f"{normalize_distribution_name(dist)}:{name}")
+    return tuple(allowlist)
+
+
+def _dynamic_provider_specs() -> tuple[str, ...]:
+    """``DYNAMIC_PROVIDER_SPECS``: ``módulo:atributo`` por vírgula (só dev local, ver plugins.py)."""
+    targets: list[str] = []
+    for position, entry in _non_empty_entries(os.getenv("DYNAMIC_PROVIDER_SPECS")):
+        if not _IMPORT_TARGET.fullmatch(entry):
+            raise ValueError(
+                f"DYNAMIC_PROVIDER_SPECS inválida: entrada {position} (contando da esquerda as não vazias) "
+                "não é módulo:atributo (ex.: meu_pacote.provider:PROVIDER)"
+            )
+        targets.append(entry)
+    return tuple(targets)
+
+
 def _optional_bool(name: str, raw: Optional[str], *, default: bool) -> bool:
-    """Booleano de env; vazio = ``default``, valor desconhecido = erro (não adivinha)."""
+    """Booleano de env; vazio = ``default``, valor desconhecido = erro (não adivinha nem ecoa o valor)."""
     value = (raw or "").strip().lower()
     if not value:
         return default
@@ -202,7 +259,7 @@ def _optional_bool(name: str, raw: Optional[str], *, default: bool) -> bool:
         return True
     if value in _FALSE:
         return False
-    raise ValueError(f"{name} inválido: {value!r}. Use true ou false")
+    raise ValueError(f"{name} inválido. Use true ou false")
 
 
 def _cors_allowed_origins() -> tuple[str, ...]:

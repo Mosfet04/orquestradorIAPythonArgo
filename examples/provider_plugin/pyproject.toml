@@ -1,0 +1,27 @@
+# Exemplo mínimo de plugin de provider do orquestrador (F2-03).
+#
+# Instale no mesmo ambiente do orquestrador e libere o entry point na allowlist:
+#   pip install ./examples/provider_plugin
+#   PLUGIN_ALLOWLIST=orquestrador-provider-deepseek:deepseek
+# Depois, um agente com factoryIaModel "deepseek" (e DEEPSEEK_API_KEY no ambiente, ou
+# api_key_ref "env:DEEPSEEK_API_KEY") usa o DeepSeek pelo mesmo registry dos built-ins.
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "orquestrador-provider-deepseek"
+version = "0.1.0"
+description = "Exemplo mínimo de plugin de provider do orquestrador: DeepSeek via agno."
+requires-python = ">=3.11"
+# Sem dependência própria: agno e o SDK openai já vêm com o orquestrador.
+dependencies = []
+
+# Grupo orquestrador.providers: nome do entry point -> módulo:atributo de uma ProviderSpec.
+# Na PLUGIN_ALLOWLIST: <name do [project]>:<nome do entry point>.
+[project.entry-points."orquestrador.providers"]
+deepseek = "orquestrador_provider_deepseek:SPEC"
+
+[tool.setuptools.packages.find]
+where = ["src"]
