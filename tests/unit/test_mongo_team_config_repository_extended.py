@@ -19,6 +19,9 @@ class _AsyncCursorStub:
         self._docs = docs
         self._index = 0
 
+    def sort(self, *_args):
+        return self
+
     def __aiter__(self):
         return self
 

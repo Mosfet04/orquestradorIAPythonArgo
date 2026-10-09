@@ -137,6 +137,13 @@ db.tools.createIndex({ "name": 1 });
 
 // ============================================================
 // 3. teams_config — Team configurations
+//    Formato canônico (o mesmo dos agentes e do README): factoryIaModel e o
+//    resto em snake_case (member_ids, user_memory_active, summary_active).
+//    MongoTeamConfigRepository ainda lê o legado camelCase (memberIds,
+//    userMemoryActive, summaryActive) de documentos antigos; com os dois no
+//    mesmo documento vale o snake_case. Documento inválido é ignorado com
+//    log de erro (id + tipo do erro) e os demais carregam.
+//    O array abaixo é JSON puro (tests/unit/test_seed_teams.py o lê com json).
 // ============================================================
 db.teams_config.insertMany([
   {
@@ -147,9 +154,9 @@ db.teams_config.insertMany([
     "factoryIaModel": "ollama",
     "descricao": "Routes user requests to the most appropriate specialist agent",
     "prompt": "You are a smart router. Analyze the user's message and delegate it to the most appropriate team member. For programming questions use the code-assistant, for data analysis use the analyst-assistant, and for general questions use the general-assistant.",
-    "memberIds": ["general-assistant", "code-assistant", "analyst-assistant"],
-    "userMemoryActive": true,
-    "summaryActive": false,
+    "member_ids": ["general-assistant", "code-assistant", "analyst-assistant"],
+    "user_memory_active": true,
+    "summary_active": false,
     "active": true
   }
 ]);

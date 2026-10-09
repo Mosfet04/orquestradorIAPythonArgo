@@ -9,6 +9,7 @@ import pytest
 from src.application.services.agent_factory_service import AgentFactoryService
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.rag_config import RagConfig
+from src.domain.ports.model_factory_port import InvalidModelConfigError
 
 
 def _make_config(**overrides) -> AgentConfig:
@@ -61,7 +62,7 @@ class TestAgentFactoryService:
             "errors": ["Modelo inválido"],
         }
         config = _make_config(factory_ia_model="invalid")
-        with pytest.raises(ValueError, match="Configuração de modelo inválida"):
+        with pytest.raises(InvalidModelConfigError, match="Configuração de modelo inválida: Modelo inválido"):
             await service.create_agent(config)
 
     @patch("src.application.services.agent_factory_service.Agent")

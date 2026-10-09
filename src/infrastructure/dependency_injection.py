@@ -216,7 +216,9 @@ class DependencyContainer:
             connection_string=conn, database_name=db, logger=self._logger
         )
 
-        agents_use_case = GetActiveAgentsUseCase(agent_factory, agent_config_repo)
+        agents_use_case = GetActiveAgentsUseCase(
+            agent_factory, agent_config_repo, self._logger
+        )
         teams_use_case = GetActiveTeamsUseCase(
             team_factory, team_config_repo, self._logger
         )

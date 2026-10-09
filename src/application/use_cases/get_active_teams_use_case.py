@@ -8,6 +8,7 @@ from agno.agent import Agent
 from agno.team import Team
 
 from src.application.services.team_factory_service import TeamFactoryService
+from src.domain.entities.team_config import TeamConfig
 from src.domain.ports import ILogger
 from src.domain.repositories.team_config_repository import ITeamConfigRepository
 
@@ -34,7 +35,7 @@ class GetActiveTeamsUseCase:
         Returns:
             Lista de Teams agno prontos para montar no AgentOS.
         """
-        configs = await self._repository.get_active_teams()
+        configs = self._unique_ids(await self._repository.get_active_teams())
         if not configs:
             return []
 
@@ -44,9 +45,20 @@ class GetActiveTeamsUseCase:
                 team = self._factory.create_team(config, agents)
                 teams.append(team)
             except Exception as exc:
+                # Só o tipo: texto de exceção de SDK pode trazer segredo.
                 self._logger.error(
-                    "Erro ao criar team",
+                    "Team não carregado",
                     team_id=config.id,
-                    error=str(exc),
+                    error_type=type(exc).__name__,
                 )
         return teams
+
+    def _unique_ids(self, configs: List[TeamConfig]) -> List[TeamConfig]:
+        """Um team por id; o primeiro vence (o AgentOS recusa a montagem com id repetido)."""
+        unique: dict[str, TeamConfig] = {}
+        for config in configs:
+            if config.id in unique:
+                self._logger.error("Team com id repetido ignorado", team_id=config.id)
+                continue
+            unique[config.id] = config
+        return list(unique.values())

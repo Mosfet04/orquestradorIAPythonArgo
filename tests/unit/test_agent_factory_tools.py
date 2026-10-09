@@ -102,7 +102,7 @@ async def test_falha_ao_buscar_tools_gera_log_de_erro_com_agente_e_ids():
     assert _errors(logger) == [
         (
             "Erro ao buscar tools do agente; agente sobe sem elas",
-            {"agent_id": "agente-x", "tool_ids": ["a", "b"], "error": "mongo fora"},
+            {"agent_id": "agente-x", "tool_ids": ["a", "b"], "error_type": "RuntimeError"},
         )
     ]
 
@@ -145,6 +145,6 @@ async def test_factory_que_levanta_gera_log_de_erro_e_o_agente_sobe_sem_a_tool()
     assert _errors(logger) == [
         (
             "Erro ao criar tool do agente; agente sobe sem ela",
-            {"agent_id": "agente-x", "tool_id": "a", "error_type": "RuntimeError", "error": "factory quebrou"},
+            {"agent_id": "agente-x", "tool_id": "a", "error_type": "RuntimeError"},
         )
     ]

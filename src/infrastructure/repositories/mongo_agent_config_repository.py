@@ -8,7 +8,10 @@ from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.rag_config import RagConfig, SearchStrategy
 from src.domain.ports import ILogger
 from src.domain.repositories.agent_config_repository import IAgentConfigRepository
-from src.infrastructure.repositories.mongo_base import AsyncMongoRepository
+from src.infrastructure.repositories.mongo_base import (
+    INVALID_DOCUMENT_ERRORS,
+    AsyncMongoRepository,
+)
 
 
 class MongoAgentConfigRepository(AsyncMongoRepository, IAgentConfigRepository):
@@ -31,8 +34,19 @@ class MongoAgentConfigRepository(AsyncMongoRepository, IAgentConfigRepository):
 
     async def get_active_agents(self) -> List[AgentConfig]:
         try:
-            cursor = self._collection.find({"active": True})
-            return [self._map_to_entity(doc) async for doc in cursor]
+            # Ordem determinística (o documento mais antigo primeiro): com id repetido, o
+            # use case fica com o primeiro.
+            cursor = self._collection.find({"active": True}).sort("_id", 1)
+            configs: List[AgentConfig] = []
+            async for doc in cursor:
+                # Documento inválido isola só ele: o startup segue com os válidos (F1-10).
+                try:
+                    configs.append(self._map_to_entity(doc))
+                except INVALID_DOCUMENT_ERRORS as exc:
+                    self._log_invalid_document(
+                        "Documento de agente inválido ignorado", "agent_id", doc, exc
+                    )
+            return configs
         except Exception as exc:
             self._logger.error("Erro ao buscar agentes ativos", error=str(exc))
             raise

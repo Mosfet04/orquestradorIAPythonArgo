@@ -85,3 +85,39 @@ class TestGetActiveTeamsUseCase:
         result = await use_case.execute([MagicMock()])
 
         assert result == []
+
+
+async def test_falha_ao_criar_um_team_vira_log_de_erro_com_id_e_tipo():
+    from tests.fakes import InMemoryTeamConfigRepository, RecordingLogger
+
+    logger = RecordingLogger()
+    factory = MagicMock()
+    factory.create_team = MagicMock(side_effect=[ValueError("nenhum membro"), "team-ok"])
+    use_case = GetActiveTeamsUseCase(
+        team_factory_service=factory,
+        team_config_repository=InMemoryTeamConfigRepository([_make_team_config("t1"), _make_team_config("t2")]),
+        logger=logger,
+    )
+
+    assert await use_case.execute([]) == ["team-ok"]
+    errors = [(r.message, r.context) for r in logger.records if r.level == "error"]
+    assert errors == [("Team não carregado", {"team_id": "t1", "error_type": "ValueError"})]
+
+
+async def test_id_de_team_repetido_fica_com_o_primeiro_e_o_repetido_vira_log_de_erro():
+    from tests.fakes import RecordingLogger
+
+    logger = RecordingLogger()
+    first, repeated = _make_team_config("dup"), _make_team_config("dup")
+    first.nome, repeated.nome = "primeiro", "repetido"
+    repository = MagicMock()
+    repository.get_active_teams = AsyncMock(return_value=[first, _make_team_config("outro"), repeated])
+    factory = MagicMock()
+    factory.create_team = MagicMock(side_effect=lambda config, agents: f"team:{config.id}:{config.nome}")
+    use_case = GetActiveTeamsUseCase(team_factory_service=factory, team_config_repository=repository, logger=logger)
+
+    assert await use_case.execute([]) == ["team:dup:primeiro", "team:outro:Team outro"]
+    assert factory.create_team.call_count == 2
+    assert [(r.message, r.context) for r in logger.records if r.level == "error"] == [
+        ("Team com id repetido ignorado", {"team_id": "dup"})
+    ]

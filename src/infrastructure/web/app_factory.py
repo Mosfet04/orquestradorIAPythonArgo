@@ -26,6 +26,10 @@ from src.infrastructure.web.api_key_auth import (
     resolve_api_keys,
 )
 from src.infrastructure.web.metrics_middleware import MetricsMiddleware
+from src.infrastructure.web.run_cancellation import (
+    build_run_cancel_router,
+    install_run_cancellation_manager,
+)
 
 # CORS explícito (nada de "*"): o que o AgentOS/os.agno.com e o AG-UI usam. O Starlette
 # soma os headers CORS-safelisted (Accept, Accept-Language, Content-Language, Content-Type).
@@ -260,6 +264,11 @@ class AppFactory:
             tracing=False,
             telemetry=False,
         )
+        # Cancel só de run registrado (F1-10): gerenciador antes de qualquer run e as rotas
+        # de cancel antes do get_app(), que pula as do agno (preserve_base_app). Depois do
+        # construtor (que valida ids): falha ali não deixa rota parcial.
+        install_run_cancellation_manager()
+        app.include_router(build_run_cancel_router(agents, teams, StructlogLoggerAdapter("run_cancel")))
         try:
             agent_os.get_app()
         finally:

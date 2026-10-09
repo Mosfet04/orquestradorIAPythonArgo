@@ -428,7 +428,7 @@ sequenceDiagram
 
 ```mermaid
 graph LR
-    A["📝 Inserir Config<br/>no MongoDB"] --> B["🔄 POST /admin/refresh-cache<br/>ou aguardar TTL 5min"]
+    A["📝 Inserir Config<br/>no MongoDB"] --> B["🔄 Reiniciar a aplicação"]
     B --> C["🤖 Agente/Team Ativo<br/>com Tools e RAG"]
     C --> D["💬 Disponível em<br/>os.agno.com"]
     C --> E["📡 Traces & Métricas<br/>no Grafana LGTM"]
@@ -536,6 +536,8 @@ Após o AgentOS montar as rotas, a aplicação expõe ~75 endpoints. Os principa
 | `GET` | `/teams` | Lista todos os teams ativos |
 | `GET` | `/teams/{team_id}` | Detalhes de um team |
 | `POST` | `/teams/{team_id}/runs` | **Executa o team** (resposta SSE streaming) |
+| `POST` | `/agents/{agent_id}/runs/{run_id}/cancel` | Cancela um run de agente **em andamento**: 200 `{}`; run inexistente ou já encerrado = 404 (nada é guardado) |
+| `POST` | `/teams/{team_id}/runs/{run_id}/cancel` | Idem para run de team |
 | `GET` | `/sessions` | Lista sessões |
 | `GET` | `/sessions/{session_id}` | Detalhes de uma sessão (histórico de mensagens) |
 | `GET` | `/knowledge/content` | Lista conteúdos RAG indexados |
@@ -557,6 +559,7 @@ Detalhes do AG-UI (F1-08):
 - `runId` do cliente só é aceito com 1 a 64 caracteres em `[A-Za-z0-9_-]` (cabe um UUID). Vazio ou fora disso, o servidor gera um UUID4 e devolve no `RUN_STARTED`/`RUN_FINISHED`: use o `runId` dos eventos, não o enviado. `runId` ausente do corpo segue sendo 422 (o campo é obrigatório no protocolo).
 - `user_id` continua vindo de `forwardedProps.user_id` (ver [Memória Inteligente](#memória-inteligente)); valor que não seja string é descartado (o run segue sem `user_id`; entidade com memória de usuário o recusa).
 - `GET /config` não lista o AG-UI (a lista `interfaces` vem vazia): use `POST /agui/{id}` com os ids de `GET /agents` e `GET /teams`.
+- Cancelar um run AG-UI: `POST /agents/{id}/runs/{runId}/cancel` (ou `/teams/...`) enquanto ele está em andamento. Antes de começar ou depois de terminar, a resposta é 404 e o pedido não fica guardado: cancelar antes do início não pré-cancela um run futuro com aquele `runId`. Um `runId` que já é o de um run em andamento é trocado por um UUID do servidor (use o `runId` dos eventos); dois pedidos simultâneos com o mesmo `runId` ainda podem colidir. Ainda não há dono do run: qualquer chave run cancela um run em andamento cujo `runId` conheça (amarrar à credencial fica para a F5).
 - No navegador, `Deprecation` e `Link` são os únicos headers de resposta expostos pelo CORS.
 
 ### Rotas Administrativas (customizadas)
@@ -568,7 +571,7 @@ Exceto `/livez` (público), exigem a chave admin.
 | `GET` | `/livez` | Liveness público (sem chave) e mínimo (`{"status":"ok"}`), sem dependências; alvo do HEALTHCHECK |
 | `GET` | `/admin/health` | Health check detalhado (MongoDB + memória + OTLP): 200 se `healthy`, **503** se algo está `unhealthy`/`error`; o corpo nunca traz texto de exceção (o detalhe fica no log, pelo tipo) |
 | `GET` | `/metrics/cache` | Estatísticas do cache de agentes |
-| `POST` | `/admin/refresh-cache` | Força recarga dos agentes do MongoDB |
+| `POST` | `/admin/refresh-cache` | Recarrega do MongoDB o cache interno de agentes e teams (o de `/metrics/cache`); documento inválido vira log de erro. **Não** muda o que o AgentOS e o AG-UI servem: agente/team novo, alterado ou removido só vale depois de reiniciar a aplicação (hot reload fora do escopo) |
 
 ### Documentação Interativa
 
@@ -740,6 +743,8 @@ Cada documento define um team multi-agente:
 | `summary_active` | bool | ❌ | Ativa sumários automáticos de sessão |
 | `active` | bool | ✅ | Se `false`, o team é ignorado na inicialização |
 
+Formato canônico: o do exemplo (`factoryIaModel` e o resto em snake_case), o mesmo dos agentes e do seed (`mongo-init/init-db.js`). Documentos antigos com `memberIds`, `userMemoryActive` e `summaryActive` (camelCase) continuam sendo lidos; com as duas grafias no mesmo documento vale a snake_case. Use o canônico em documento novo.
+
 **Modos de Team:**
 
 | Modo | Descrição |
@@ -750,6 +755,10 @@ Cada documento define um team multi-agente:
 | `tasks` | Cada membro recebe uma tarefa específica definida pelo líder |
 
 > **⚠️ Nota sobre IDs**: O agno converte underscores para hífens nos IDs internamente. Se um agente tem `id: "coding_agent"`, no prompt do team use `coding-agent` ao delegar.
+
+### Documento inválido
+
+Um documento inválido em `agents_config` ou `teams_config` não derruba o startup: ele é ignorado com log de erro (`Documento de agente inválido ignorado` / `Documento de team inválido ignorado`, com `agent_id`/`team_id` quando o `id` é texto, `mongo_id` quando o `_id` é ObjectId e `error_type`; nunca o conteúdo do documento) e os demais carregam. Inválido = `id`, `nome`, `model` ou `factoryIaModel` ausente, vazio ou que não seja texto; `descricao` que não seja texto (pode faltar ou ser `null`); `rag_config` que não seja objeto; `search_strategy` ou `mode` fora dos valores aceitos; team sem membros. Dois documentos ativos com o mesmo `id` (dois agentes ou dois teams): vale o mais antigo (menor `_id`; a leitura é ordenada por `_id`) e o outro vira log de erro (`Agente com id repetido ignorado` / `Team com id repetido ignorado`). Agente ou team válido que falha na criação (ex.: modelo recusado pela factory, team sem nenhum membro carregado) também vira log de erro (`Agente não carregado` / `Team não carregado`, com o id e `error_type`; modelo recusado pela validação traz também `reason`, ex.: `Configuração de modelo inválida: Tipo 'xyz' não suportado...`) sem afetar os outros.
 
 ### Adicionando um Novo Agente (sem alterar código)
 
@@ -769,12 +778,7 @@ db.agents_config.insertOne({
 });
 ```
 
-Depois, force a recarga:
-```bash
-curl -X POST -H "Authorization: Bearer $API_KEY_ADMIN" http://localhost:7777/admin/refresh-cache
-```
-
-O agente aparece imediatamente no frontend e na API.
+Depois, reinicie a aplicação: as rotas (`/agents/{id}`, `/agui/{id}`...) e as instâncias servidas são montadas no startup. O mesmo vale para alterar ou desativar um agente/team. `POST /admin/refresh-cache` só recarrega o cache interno (`/metrics/cache`) e não aplica a mudança ao que está sendo servido (hot reload fora do escopo).
 
 ---
 

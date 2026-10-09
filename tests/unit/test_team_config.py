@@ -78,3 +78,24 @@ class TestTeamConfigValidation:
     def test_invalid_mode_raises(self):
         with pytest.raises(ValueError, match="Modo inválido"):
             TeamConfig(**_valid_kwargs(mode="invalid"))
+
+
+@pytest.mark.parametrize("field", ["id", "nome", "model", "factory_ia_model"])
+@pytest.mark.parametrize("value", [7, ["x"], {"$gt": ""}, True])
+def test_campo_de_texto_com_outro_tipo_e_recusado_sem_ecoar_o_valor(field, value):
+    """Documento do Mongo sem schema (F1-10): tipo errado quebrava o AgentOS na montagem."""
+    with pytest.raises(ValueError, match="deve ser texto") as raised:
+        TeamConfig(**_valid_kwargs(**{field: value}))
+    assert str(value) not in str(raised.value)
+
+
+@pytest.mark.parametrize("value", [7, ["x"], {"pt": "x"}, True])
+def test_descricao_com_outro_tipo_e_recusada(value):
+    """``descricao`` vai para o ``TeamResponse.description`` do AgentOS (F1-10)."""
+    with pytest.raises(ValueError, match="Descrição do team deve ser texto"):
+        TeamConfig(**_valid_kwargs(descricao=value))
+
+
+@pytest.mark.parametrize("value", [None, "", "texto"])
+def test_descricao_opcional_aceita_none_e_texto(value):
+    assert TeamConfig(**_valid_kwargs(descricao=value)).descricao == value

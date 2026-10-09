@@ -522,6 +522,8 @@ After AgentOS mounts its routes, the application exposes ~75 endpoints. The main
 | `GET` | `/teams` | Lists all active teams |
 | `GET` | `/teams/{team_id}` | Team details |
 | `POST` | `/teams/{team_id}/runs` | **Run the team** (SSE streaming response) |
+| `POST` | `/agents/{agent_id}/runs/{run_id}/cancel` | Cancels an agent run **in progress**: 200 `{}`; unknown or already finished run = 404 (nothing is stored) |
+| `POST` | `/teams/{team_id}/runs/{run_id}/cancel` | Same for a team run |
 | `GET` | `/sessions` | Lists sessions |
 | `GET` | `/sessions/{session_id}` | Session details (message history) |
 | `GET` | `/knowledge/content` | Lists indexed RAG content |
@@ -543,6 +545,7 @@ AG-UI details (F1-08):
 - The client `runId` is accepted only with 1 to 64 characters in `[A-Za-z0-9_-]` (a UUID fits). Empty or anything else: the server generates a UUID4 and returns it in `RUN_STARTED`/`RUN_FINISHED`; use the events' `runId`, not the one you sent. A body without `runId` is still 422 (the field is required by the protocol).
 - `user_id` still comes from `forwardedProps.user_id` (see [Smart Memory](#smart-memory)); a non-string value is dropped (the run proceeds without `user_id`; an entity with user memory refuses it).
 - `GET /config` does not list AG-UI (its `interfaces` list is empty): use `POST /agui/{id}` with the ids from `GET /agents` and `GET /teams`.
+- Cancelling an AG-UI run: `POST /agents/{id}/runs/{runId}/cancel` (or `/teams/...`) while it is in progress. Before it starts or after it finishes the answer is 404 and the request is not stored: cancelling before the start does not pre-cancel a future run with that `runId`. A `runId` that already belongs to an in-progress run is replaced by a server UUID (use the events' `runId`); two simultaneous requests with the same `runId` can still collide. Runs have no owner yet: any run key can cancel an in-progress run whose `runId` it knows (binding to the credential is F5).
 - In the browser, `Deprecation` and `Link` are the only response headers exposed by CORS.
 
 ### Administrative Routes (custom)
@@ -554,7 +557,7 @@ Except `/livez` (public), they require the admin key.
 | `GET` | `/livez` | Minimal public (no key) liveness (`{"status":"ok"}`), no dependencies; HEALTHCHECK target |
 | `GET` | `/admin/health` | Detailed health check (MongoDB + memory + OTLP): 200 when `healthy`, **503** when anything is `unhealthy`/`error`; the body never carries exception text (details go to the log, by type) |
 | `GET` | `/metrics/cache` | Agent cache statistics |
-| `POST` | `/admin/refresh-cache` | Force agent reload from MongoDB |
+| `POST` | `/admin/refresh-cache` | Reloads the internal agent/team cache (the one in `/metrics/cache`) from MongoDB; an invalid document becomes an error log. It does **not** change what AgentOS and AG-UI serve: a new, changed or removed agent/team only takes effect after restarting the application (hot reload is out of scope) |
 
 ### Interactive Documentation
 
@@ -726,6 +729,8 @@ Each document defines a multi-agent team:
 | `summary_active` | bool | ❌ | Enables automatic session summaries |
 | `active` | bool | ✅ | If `false`, team is ignored at startup |
 
+Canonical format: the one in the example (`factoryIaModel`, everything else in snake_case), the same as agents and the seed (`mongo-init/init-db.js`). Older documents with `memberIds`, `userMemoryActive` and `summaryActive` (camelCase) are still read; with both spellings in the same document, snake_case wins. Use the canonical format for new documents.
+
 **Team Modes:**
 
 | Mode | Description |
@@ -736,6 +741,10 @@ Each document defines a multi-agent team:
 | `tasks` | Each member receives a specific task assigned by the leader |
 
 > **⚠️ Note on IDs**: agno converts underscores to hyphens in IDs internally. If an agent has `id: "coding_agent"`, use `coding-agent` in the team prompt when delegating.
+
+### Invalid documents
+
+An invalid document in `agents_config` or `teams_config` does not bring startup down: it is skipped with an error log (`Documento de agente inválido ignorado` / `Documento de team inválido ignorado`, with `agent_id`/`team_id` when `id` is a string, `mongo_id` when `_id` is an ObjectId, and `error_type`; never the document content) and the others load. Invalid = `id`, `nome`, `model` or `factoryIaModel` missing, empty or not a string; `descricao` that is not a string (it may be missing or `null`); `rag_config` that is not an object; `search_strategy` or `mode` outside the accepted values; a team without members. Two active documents with the same `id` (two agents or two teams): the oldest one wins (lowest `_id`; reads are sorted by `_id`) and the other becomes an error log (`Agente com id repetido ignorado` / `Team com id repetido ignorado`). A valid agent or team that fails to build (e.g. model refused by the factory, team with no loaded member) is also an error log (`Agente não carregado` / `Team não carregado`, with the id and `error_type`; a model refused by validation also carries `reason`, e.g. `Configuração de modelo inválida: Tipo 'xyz' não suportado...`) without affecting the others.
 
 ### Adding a New Agent (zero code)
 
@@ -755,12 +764,7 @@ db.agents_config.insertOne({
 });
 ```
 
-Then force a reload:
-```bash
-curl -X POST -H "Authorization: Bearer $API_KEY_ADMIN" http://localhost:7777/admin/refresh-cache
-```
-
-The agent appears immediately in the frontend and API.
+Then restart the application: routes (`/agents/{id}`, `/agui/{id}`...) and the served instances are built at startup. The same applies to changing or deactivating an agent/team. `POST /admin/refresh-cache` only reloads the internal cache (`/metrics/cache`) and does not apply the change to what is being served (hot reload is out of scope).
 
 ---
 

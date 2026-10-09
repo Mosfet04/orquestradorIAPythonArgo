@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 
+from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection
 
 from src.domain.ports import ILogger
@@ -47,6 +49,10 @@ class MongoClientFactory:
         return cls._instances[connection_string]
 
 
+# Erros do mapeamento documento -> entidade (campo ausente, tipo errado, valor fora do enum).
+INVALID_DOCUMENT_ERRORS = (ValueError, TypeError, AttributeError, KeyError)
+
+
 class AsyncMongoRepository:
     """Base para repositórios MongoDB async."""
 
@@ -62,6 +68,22 @@ class AsyncMongoRepository:
         self._client = MongoClientFactory.get_client(connection_string)
         self._db = self._client[database_name]
         self._collection: AsyncIOMotorCollection = self._db[collection_name]
+
+    def _log_invalid_document(
+        self, message: str, id_field: str, doc: Mapping[str, object], exc: Exception
+    ) -> None:
+        """Log de documento ignorado: id (se for texto), ``_id`` (se ObjectId) e tipo do erro.
+
+        Nunca o documento nem o texto do erro: config pode carregar segredo ou PII.
+        """
+        raw_id = doc.get("id")
+        mongo_id = doc.get("_id")
+        self._logger.error(
+            message,
+            **{id_field: raw_id if isinstance(raw_id, str) else None},
+            mongo_id=str(mongo_id) if isinstance(mongo_id, ObjectId) else None,
+            error_type=type(exc).__name__,
+        )
 
     async def ping(self) -> bool:
         """Verifica conectividade."""

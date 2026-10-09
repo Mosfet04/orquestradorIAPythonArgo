@@ -14,8 +14,8 @@ sumir (o conversor do agno não mapeia ``RunError``). Aqui:
   guardrail (texto escrito por quem o configurou) ou uma genérica; o texto de exceção
   (que pode carregar segredo de SDK) nunca vai ao cliente; este módulo loga só o tipo (o
   agno loga o texto do erro do run);
-- ``runId`` do cliente só vale em ``[A-Za-z0-9_-]{1,64}``; vazio ou fora disso, o
-  servidor gera um UUID4 e devolve no ``RUN_STARTED``;
+- ``runId`` do cliente só vale em ``[A-Za-z0-9_-]{1,64}`` e se não for o de um run em
+  andamento (F1-10); senão, o servidor gera um UUID4 e devolve no ``RUN_STARTED``;
 - ``GET /status`` da interface do agno é mantido (``{"status": "available"}``).
 
 A conversão de mensagens e de eventos é a do próprio agno
@@ -44,6 +44,7 @@ from agno.os.interfaces.agui.utils import (
 from agno.run.agent import RunCancelledEvent as AgentRunCancelledEvent
 from agno.run.agent import RunErrorEvent as AgentRunErrorEvent
 from agno.run.agent import RunOutputEvent
+from agno.run.cancel import get_cancellation_manager
 from agno.run.team import RunCancelledEvent as TeamRunCancelledEvent
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
 from agno.run.team import TeamRunOutputEvent
@@ -88,6 +89,16 @@ def build_agui_router(agents: Sequence[Agent], teams: Sequence[Team], logger: IL
                 entity_id=entity_id,
                 run_id=run_id,
                 client_run_id_length=len(run_input.run_id),
+            )
+        elif run_id in get_cancellation_manager().get_active_runs():
+            # Mesmo run_id de um run em andamento dividiria a entrada do gerenciador de
+            # cancelamento: o fim de um apagaria o registro do outro e um cancel atingiria os
+            # dois (F1-10). Não fecha a corrida de dois pedidos simultâneos com o mesmo id.
+            run_id = str(uuid.uuid4())
+            logger.info(
+                "runId do cliente já em uso por um run em andamento; gerado pelo servidor",
+                entity_id=entity_id,
+                run_id=run_id,
             )
 
         async def body() -> AsyncIterator[str]:

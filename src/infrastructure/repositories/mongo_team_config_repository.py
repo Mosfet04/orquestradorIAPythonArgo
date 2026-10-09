@@ -7,7 +7,10 @@ from typing import List, Optional
 from src.domain.entities.team_config import TeamConfig
 from src.domain.ports import ILogger
 from src.domain.repositories.team_config_repository import ITeamConfigRepository
-from src.infrastructure.repositories.mongo_base import AsyncMongoRepository
+from src.infrastructure.repositories.mongo_base import (
+    INVALID_DOCUMENT_ERRORS,
+    AsyncMongoRepository,
+)
 
 
 class MongoTeamConfigRepository(AsyncMongoRepository, ITeamConfigRepository):
@@ -30,8 +33,19 @@ class MongoTeamConfigRepository(AsyncMongoRepository, ITeamConfigRepository):
 
     async def get_active_teams(self) -> List[TeamConfig]:
         try:
-            cursor = self._collection.find({"active": True})
-            return [self._map_to_entity(doc) async for doc in cursor]
+            # Ordem determinística (o documento mais antigo primeiro): com id repetido, o
+            # use case fica com o primeiro.
+            cursor = self._collection.find({"active": True}).sort("_id", 1)
+            configs: List[TeamConfig] = []
+            async for doc in cursor:
+                # Documento inválido isola só ele: o startup segue com os válidos (F1-10).
+                try:
+                    configs.append(self._map_to_entity(doc))
+                except INVALID_DOCUMENT_ERRORS as exc:
+                    self._log_invalid_document(
+                        "Documento de team inválido ignorado", "team_id", doc, exc
+                    )
+            return configs
         except Exception as exc:
             self._logger.error("Erro ao buscar teams ativos", error=str(exc))
             raise
@@ -50,6 +64,13 @@ class MongoTeamConfigRepository(AsyncMongoRepository, ITeamConfigRepository):
 
     @staticmethod
     def _map_to_entity(data: dict) -> TeamConfig:
+        """Documento -> ``TeamConfig``.
+
+        Canônico (README e seed): ``factoryIaModel`` e o resto em snake_case
+        (``member_ids``, ``user_memory_active``, ``summary_active``). Ainda lê o legado
+        camelCase (``memberIds``, ``userMemoryActive``, ``summaryActive``) e
+        ``factory_ia_model``; com as duas grafias no documento, vale a snake_case.
+        """
         return TeamConfig(
             id=data.get("id", ""),
             nome=data.get("nome", ""),

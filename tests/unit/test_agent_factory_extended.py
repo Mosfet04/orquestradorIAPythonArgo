@@ -64,7 +64,7 @@ class TestBuildToolsError:
             "Erro ao buscar tools do agente; agente sobe sem elas",
             agent_id="test-agent",
             tool_ids=["t1"],
-            error="db error",
+            error_type="RuntimeError",
         )
 
 
@@ -160,5 +160,5 @@ class TestLoadDocument:
         mock_logger.error.assert_any_call(
             "Erro ao carregar documento RAG",
             path="docs/test.pdf",
-            error="unknown error",
+            error_type="RuntimeError",
         )

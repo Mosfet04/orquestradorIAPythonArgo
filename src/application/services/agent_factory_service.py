@@ -29,6 +29,7 @@ from src.application.services.knowledge_search_factory import KnowledgeSearchFac
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.rag_config import SearchStrategy
 from src.domain.ports import IEmbedderFactory, ILogger, IModelFactory, IToolFactory
+from src.domain.ports.model_factory_port import InvalidModelConfigError
 from src.domain.repositories.tool_repository import IToolRepository
 from src.infrastructure.tools.hierarchical_search_tool import (
     create_hierarchical_search_tool,
@@ -172,41 +173,33 @@ class AgentFactoryService:
     # ── public ──────────────────────────────────────────────────────
 
     async def create_agent(self, config: AgentConfig) -> Agent:
-        """Cria um agente baseado na configuração fornecida."""
+        """Cria um agente baseado na configuração fornecida.
+
+        Falha sobe sem log aqui: quem chama loga uma vez, com id e tipo do erro
+        (``GetActiveAgentsUseCase``); o texto de exceção de SDK pode trazer segredo.
+        """
         start = datetime.now(timezone.utc)
-        try:
-            self._validate_model_config(config)
-            model = self._model_factory.create_model(
-                config.factory_ia_model, config.model
-            )
-            tools = await self._build_tools(config)
-            # Knowledge() consulta o Mongo (exists/create) e o insert lê, embeda e grava:
-            # tudo síncrono no agno; fora do event loop.
-            knowledge = await asyncio.to_thread(self._build_knowledge, config)
+        self._validate_model_config(config)
+        model = self._model_factory.create_model(config.factory_ia_model, config.model)
+        tools = await self._build_tools(config)
+        # Knowledge() consulta o Mongo (exists/create) e o insert lê, embeda e grava:
+        # tudo síncrono no agno; fora do event loop.
+        knowledge = await asyncio.to_thread(self._build_knowledge, config)
 
-            # ── Estratégia hierárquica ──
-            hierarchical_tool = await self._build_hierarchical_tool(config)
-            if hierarchical_tool:
-                tools.append(hierarchical_tool)
+        # ── Estratégia hierárquica ──
+        hierarchical_tool = await self._build_hierarchical_tool(config)
+        if hierarchical_tool:
+            tools.append(hierarchical_tool)
 
-            db = self._build_db()
-            agent = self._assemble_agent(config, model, db, tools, knowledge)
-            elapsed = (datetime.now(timezone.utc) - start).total_seconds()
-            self._logger.info(
-                "Agente criado",
-                agent_id=config.id,
-                elapsed_s=round(elapsed, 3),
-            )
-            return agent
-        except Exception as exc:
-            elapsed = (datetime.now(timezone.utc) - start).total_seconds()
-            self._logger.error(
-                "Erro ao criar agente",
-                agent_id=config.id,
-                error=str(exc),
-                elapsed_s=round(elapsed, 3),
-            )
-            raise
+        db = self._build_db()
+        agent = self._assemble_agent(config, model, db, tools, knowledge)
+        elapsed = (datetime.now(timezone.utc) - start).total_seconds()
+        self._logger.info(
+            "Agente criado",
+            agent_id=config.id,
+            elapsed_s=round(elapsed, 3),
+        )
+        return agent
 
     # ── private ─────────────────────────────────────────────────────
 
@@ -216,7 +209,7 @@ class AgentFactoryService:
         )
         if not result["valid"]:
             errors = "; ".join(result["errors"])
-            raise ValueError(f"Configuração de modelo inválida: {errors}")
+            raise InvalidModelConfigError(f"Configuração de modelo inválida: {errors}")
 
     def _build_db(self) -> MongoAgentDb:
         """Cria instância unificada de db (storage + memory) — agno v2."""
@@ -238,7 +231,7 @@ class AgentFactoryService:
                 "Erro ao buscar tools do agente; agente sobe sem elas",
                 agent_id=config.id,
                 tool_ids=list(config.tools_ids),
-                error=str(exc),
+                error_type=type(exc).__name__,
             )
             return []
 
@@ -264,7 +257,6 @@ class AgentFactoryService:
                     agent_id=config.id,
                     tool_id=tool_config.id,
                     error_type=type(exc).__name__,
-                    error=str(exc),
                 )
                 continue
             if not created:
@@ -322,7 +314,9 @@ class AgentFactoryService:
             self._load_document(knowledge, doc_path)
             return knowledge
         except Exception as exc:
-            self._logger.warning("Erro ao criar RAG", error=str(exc))
+            self._logger.warning(
+                "Erro ao criar RAG", agent_id=config.id, error_type=type(exc).__name__
+            )
             return None
 
     async def _build_hierarchical_tool(self, config: AgentConfig) -> Optional[Any]:
@@ -370,7 +364,9 @@ class AgentFactoryService:
             return create_hierarchical_search_tool(strategy)
         except Exception as exc:
             self._logger.warning(
-                "Erro ao criar tool hierárquica", error=str(exc)
+                "Erro ao criar tool hierárquica",
+                agent_id=config.id,
+                error_type=type(exc).__name__,
             )
             return None
 
@@ -398,7 +394,7 @@ class AgentFactoryService:
             self._logger.error(
                 "Erro ao carregar documento RAG",
                 path=doc_path,
-                error=str(exc),
+                error_type=type(exc).__name__,
             )
 
     def _assemble_agent(

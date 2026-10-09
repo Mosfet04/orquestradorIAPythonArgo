@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Optional
 
+from src.domain.entities.validation import require_optional_text, require_text
+
 
 @dataclass
 class TeamConfig:
@@ -23,14 +25,11 @@ class TeamConfig:
     active: bool = True
 
     def __post_init__(self) -> None:
-        if not self.id:
-            raise ValueError("ID do team não pode estar vazio")
-        if not self.nome:
-            raise ValueError("Nome do team não pode estar vazio")
-        if not self.model:
-            raise ValueError("Modelo do team não pode estar vazio")
-        if not self.factory_ia_model:
-            raise ValueError("Factory do modelo do team não pode estar vazio")
+        require_text(self.id, "ID do team")
+        require_text(self.nome, "Nome do team")
+        require_text(self.model, "Modelo do team")
+        require_text(self.factory_ia_model, "Factory do modelo do team")
+        require_optional_text(self.descricao, "Descrição do team")
         if not self.member_ids:
             raise ValueError("Team precisa de pelo menos um membro")
         if self.mode not in ("route", "coordinate", "broadcast", "tasks"):

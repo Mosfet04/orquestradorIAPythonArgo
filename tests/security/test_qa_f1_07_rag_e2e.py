@@ -417,7 +417,7 @@ async def test_doc_name_hostil_num_agente_nao_derruba_os_outros_nem_o_startup(
         _config("abs-sem", str(workspace / ".env"), SEM),
         _config("tipo-ruim", 123, HIER),
     ]
-    use_case = GetActiveAgentsUseCase(asm.service, InMemoryAgentConfigRepository(configs))
+    use_case = GetActiveAgentsUseCase(asm.service, InMemoryAgentConfigRepository(configs), asm.logger)
 
     agents = await use_case.execute()  # gather: um create_agent que levantasse sumiria da lista
 
