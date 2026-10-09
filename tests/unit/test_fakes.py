@@ -6,6 +6,7 @@ import math
 
 import pytest
 from agno.agent import Agent
+from agno.models.message import Message
 from agno.run.base import RunStatus
 
 from tests.fakes import (
@@ -45,22 +46,31 @@ def test_fake_chat_model_responde_em_execucao_sincrona_e_streaming():
     assert [c.last_user_message for c in model.calls] == ["a", "b"]
 
 
-def test_fake_chat_model_aceita_prompt_posicional_como_o_llm_summary_generator():
+async def test_fake_chat_model_responde_pela_api_publica_aresponse_com_message():
     model = FakeChatModel(responses=["resumo"])
 
-    response = model.invoke("Resuma isto")
+    response = await model.aresponse(messages=[Message(role="user", content="Resuma isto")])
 
     assert response.content == "resumo"
     assert model.calls[0].last_user_message == "Resuma isto"
 
 
+def test_fake_chat_model_recusa_prompt_solto_como_o_provider_real_do_agno():
+    """F1-07 (B8): ``invoke("texto")`` quebra no provider real; o fake não pode mascarar isso."""
+    model = FakeChatModel(responses=["resumo"])
+
+    with pytest.raises(TypeError, match="List\\[Message\\]"):
+        model.invoke("Resuma isto")
+    assert model.calls == []
+
+
 def test_fake_chat_model_falha_alto_quando_o_roteiro_acaba():
     model = FakeChatModel(responses=["única"])
-    model.invoke("1")
+    model.invoke(messages=[Message(role="user", content="1")])
     assert model.exhausted is False
 
     with pytest.raises(ScriptExhaustedError, match="roteiro"):
-        model.invoke("2")
+        model.invoke(messages=[Message(role="user", content="2")])
     assert model.exhausted is True
 
 

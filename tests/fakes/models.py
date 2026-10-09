@@ -8,6 +8,7 @@ deixar de ser o agno (F2), estes fakes acompanham o adapter.
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import hashlib
 import math
@@ -21,6 +22,19 @@ from agno.models.base import Model
 from agno.models.response import ModelResponse
 
 from src.domain.ports import IEmbedderFactory, IModelFactory
+
+
+def running_on_event_loop() -> bool:
+    """``True`` se a thread atual está rodando um event loop asyncio.
+
+    Detector simples de I/O síncrono no caminho async: chamada bloqueante feita via
+    ``asyncio.to_thread`` roda numa thread sem loop e devolve ``False``.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
 
 
 class ScriptExhaustedError(AssertionError):
@@ -66,10 +80,12 @@ class FakeChatModel(Model):
     como está (ex.: ``ModelResponse(role="assistant", tool_calls=[...])`` para o agno
     executar uma tool e chamar o modelo de novo com o resultado).
 
-    Aceita tanto a assinatura do agno (``invoke(messages=..., tools=...)``) quanto um
-    prompt posicional (``invoke("texto")``), usado pelo ``LLMSummaryGenerator``. Toda
-    chamada é registrada em ``calls`` (``messages=()`` quando não há mensagens) antes de
-    escolher a resposta, então a chamada nº N recebe sempre ``responses[N-1]``.
+    Segue o contrato dos providers do agno 2.5.8 (``invoke(messages: List[Message], ...)``,
+    ex.: ``agno/models/openai/chat.py``): prompt solto (``invoke("texto")``) levanta
+    ``TypeError`` como no provider real, em vez de mascarar a chamada errada (F1-07, B8).
+    Use ``await model.aresponse(messages=[Message(...)])`` ou ``Agent``/``Team``. Toda
+    chamada válida é registrada em ``calls`` (``messages=()`` quando não há mensagens)
+    antes de escolher a resposta, então a chamada nº N recebe sempre ``responses[N-1]``.
 
     Roteiro esgotado levanta ``ScriptExhaustedError``. Chamado direto, o erro sobe para o
     teste; dentro de ``Agent.run``/``Agent.arun`` (e ``Team``) o agno captura a exceção e
@@ -94,9 +110,12 @@ class FakeChatModel(Model):
     def _as_call(args: tuple[Any, ...], kwargs: dict[str, Any]) -> FakeModelCall:
         messages = kwargs.get("messages")
         if messages is None and args:
-            if not isinstance(args[0], list):
-                return FakeModelCall(messages=(("user", str(args[0])),))
             messages = args[0]
+        if messages is not None and not isinstance(messages, list):
+            raise TypeError(
+                f"FakeChatModel: messages deve ser List[Message] como nos providers do agno, "
+                f"recebeu {type(messages).__name__}"
+            )
         tools = tuple(copy.deepcopy(t) if isinstance(t, dict) else t for t in kwargs.get("tools") or ())
         return FakeModelCall(
             messages=tuple((str(m.role), _message_text(m)) for m in messages or ()),
@@ -145,9 +164,12 @@ class FakeEmbedder(Embedder):
     provider: str = "fake"
     dimensions: int | None = 32
     calls: list[str] = field(default_factory=list)
+    on_event_loop: list[bool] = field(default_factory=list)
+    """Por chamada de ``get_embedding``: ``True`` se rodou na thread do event loop (bloqueante)."""
 
     def get_embedding(self, text: str) -> list[float]:
         self.calls.append(text)
+        self.on_event_loop.append(running_on_event_loop())
         size = self.dimensions or 32
         raw: list[float] = []
         counter = 0
@@ -180,10 +202,14 @@ class FakeModelFactory(IModelFactory):
         self._responses = list(responses or [])
         self._invalid = set(invalid_models or ())
         self.created: list[FactoryCall] = []
+        self.models: list[FakeChatModel] = []
+        """Instâncias devolvidas por ``create_model``, na ordem (para assertar ``calls``)."""
 
     def create_model(self, factory_ia_model: str, model_id: str, **kwargs: Any) -> FakeChatModel:
         self.created.append((factory_ia_model, model_id, dict(kwargs)))
-        return FakeChatModel(id=model_id, provider=factory_ia_model, responses=list(self._responses))
+        model = FakeChatModel(id=model_id, provider=factory_ia_model, responses=list(self._responses))
+        self.models.append(model)
+        return model
 
     def validate_model_config(self, factory_ia_model: str, model_id: str) -> dict[str, Any]:
         errors = [f"modelo {model_id!r} marcado como inválido no fake"] if model_id in self._invalid else []
@@ -196,7 +222,11 @@ class FakeEmbedderFactory(IEmbedderFactory):
     def __init__(self, *, dimensions: int = 32) -> None:
         self._dimensions = dimensions
         self.created: list[FactoryCall] = []
+        self.embedders: list[FakeEmbedder] = []
+        """Instâncias devolvidas por ``create_model``, na ordem (para assertar ``calls``/``on_event_loop``)."""
 
     def create_model(self, factory_ia_model: str, model_id: str, **kwargs: Any) -> FakeEmbedder:
         self.created.append((factory_ia_model, model_id, dict(kwargs)))
-        return FakeEmbedder(id=model_id, provider=factory_ia_model, dimensions=self._dimensions)
+        embedder = FakeEmbedder(id=model_id, provider=factory_ia_model, dimensions=self._dimensions)
+        self.embedders.append(embedder)
+        return embedder

@@ -5,10 +5,9 @@ módulo que as importa). Assim o golden continua valendo quando a montagem sair 
 ``src/application/services`` para o adapter do runtime (F2): quem quer que construa o
 ``Agent``/``Team``, a chamada passa pelo espião.
 
-I/O real é cortado na borda do agno, de forma estável:
-- ``agno.db.mongo.mongo.MongoClient`` cria o cliente com ``connect=False`` (nada abre socket);
-- ``MongoVectorDb.exists`` responde ``True`` (``Knowledge`` não tenta criar coleção/índice);
-- ``Knowledge.insert`` só registra a chamada (sem leitura de arquivo, embedding ou escrita).
+I/O real é cortado na borda do agno por ``tests.fakes.knowledge.cut_agno_io`` (o mesmo
+corte do ``offline_knowledge``): cliente Mongo com ``connect=False``, ``MongoVectorDb.exists``
+``True`` e ``Knowledge.insert`` só registrado (sem leitura de arquivo, embedding ou escrita).
 
 Snapshots: ``tests/golden/snapshots/<nome>.json``. Só são regravados com ``--update-golden``.
 """
@@ -23,14 +22,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import agno.db.mongo.mongo as agno_mongo_db
 import pytest
 from agno.agent import Agent
 from agno.knowledge import Knowledge
 from agno.team import Team
-from agno.vectordb.mongodb import MongoDb as MongoVectorDb
-from pymongo import MongoClient
 
+from tests.fakes.knowledge import cut_agno_io
 from tests.golden.normalize import JsonValue, normalize
 
 SNAPSHOT_DIR = Path(__file__).parent / "snapshots"
@@ -106,25 +103,11 @@ def _spy_init(cls: type, calls: AgnoCalls) -> Callable[..., None]:
 @pytest.fixture
 def agno_calls(monkeypatch: pytest.MonkeyPatch) -> Iterator[AgnoCalls]:
     calls = AgnoCalls()
-    clients: list[MongoClient[Any]] = []
 
-    def lazy_client(*args: Any, **kwargs: Any) -> MongoClient[Any]:
-        client: MongoClient[Any] = MongoClient(*args, connect=False, **kwargs)
-        clients.append(client)
-        return client
-
-    def record_insert(self: Knowledge, *args: Any, **kwargs: Any) -> None:
+    def record_insert(knowledge: Knowledge, args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
         calls.knowledge_inserts.append(normalize({"args": list(args), "kwargs": kwargs}))
-
-    def refuse_create(self: MongoVectorDb) -> None:
-        raise AssertionError("golden: MongoVectorDb.create não deveria ser chamado")
 
     monkeypatch.setattr(Agent, "__init__", _spy_init(Agent, calls))
     monkeypatch.setattr(Team, "__init__", _spy_init(Team, calls))
-    monkeypatch.setattr(agno_mongo_db, "MongoClient", lazy_client)
-    monkeypatch.setattr(MongoVectorDb, "exists", lambda self: True)
-    monkeypatch.setattr(MongoVectorDb, "create", refuse_create)
-    monkeypatch.setattr(Knowledge, "insert", record_insert)
-    yield calls
-    for client in clients:
-        client.close()
+    with cut_agno_io(monkeypatch, on_insert=record_insert):
+        yield calls

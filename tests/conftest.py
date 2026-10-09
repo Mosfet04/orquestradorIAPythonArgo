@@ -9,6 +9,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from tests.fakes.knowledge import offline_knowledge  # noqa: F401  (fixture compartilhada)
+
 TESTS_DIR = Path(__file__).resolve().parent
 
 # Diretório de primeiro nível em tests/ -> marker da pirâmide aplicado a todo teste dele.

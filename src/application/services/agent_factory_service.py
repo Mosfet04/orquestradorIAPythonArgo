@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import re
 import unicodedata
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, List, Optional
 
 from agno.agent import Agent
@@ -17,6 +21,10 @@ from agno.team import Team
 from agno.vectordb.mongodb import MongoDb as MongoVectorDb
 
 from src.application.services.document_indexing_service import DocumentIndexingService
+from src.application.services.document_path import (
+    DocumentPathError,
+    resolve_document_path,
+)
 from src.application.services.knowledge_search_factory import KnowledgeSearchFactory
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.rag_config import SearchStrategy
@@ -25,6 +33,38 @@ from src.domain.repositories.tool_repository import IToolRepository
 from src.infrastructure.tools.hierarchical_search_tool import (
     create_hierarchical_search_tool,
 )
+
+_SIMPLE_AGENT_ID = re.compile(r"[a-z0-9-]{1,64}")
+_SLUG_MAX_LENGTH = 40
+_HASH_LENGTH = 12
+
+
+def rag_collection_name(agent_id: str) -> str:
+    """Coleção vetorial do RAG semântico de um agente (F1-07, B6).
+
+    Antes, todos os agentes usavam a coleção ``rag``: um agente buscava nos documentos dos
+    outros e embedders de dimensões diferentes colidiam no mesmo índice vetorial.
+
+    - id simples (``[a-z0-9-]{1,64}``): ``rag_<id>`` (ex.: ``rag_suporte-n1``);
+    - qualquer outro id: ``rag_<slug>_<sha256(id)[:12]>``, com o slug só em ``[a-z0-9-]``.
+
+    Nunca colide entre ids diferentes: o id simples não tem ``_`` e a forma com hash tem
+    sempre o ``_`` antes do hash, então os dois conjuntos são disjuntos; dentro da forma
+    com hash, a colisão exigiria o mesmo prefixo de 48 bits do SHA-256. O nome resultante
+    é válido no MongoDB (sem ``$``, NUL, ``.`` nem prefixo ``system.``) e curto (≤ 68).
+    """
+    if _SIMPLE_AGENT_ID.fullmatch(agent_id):
+        return f"rag_{agent_id}"
+    slug = re.sub(r"[^a-z0-9-]+", "-", agent_id.lower()).strip("-")
+    slug = slug[:_SLUG_MAX_LENGTH].strip("-") or "agente"
+    digest = hashlib.sha256(agent_id.encode("utf-8", "surrogatepass")).hexdigest()
+    return f"rag_{slug}_{digest[:_HASH_LENGTH]}"
+
+
+def _read_document(doc_name: str) -> str:
+    """Lê ``docs/<doc_name>`` já confinado a ``docs/`` (síncrono: rode em thread)."""
+    return resolve_document_path(doc_name).read_text(encoding="utf-8")
+
 
 # Usuário que o agno 2.5.8 usa para memória sem ``user_id`` (``agno/agent/_messages.py``,
 # ``agno/memory/manager.py``): pool compartilhado, nunca um usuário de requisição.
@@ -140,7 +180,9 @@ class AgentFactoryService:
                 config.factory_ia_model, config.model
             )
             tools = await self._build_tools(config)
-            knowledge = self._build_knowledge(config)
+            # Knowledge() consulta o Mongo (exists/create) e o insert lê, embeda e grava:
+            # tudo síncrono no agno; fora do event loop.
+            knowledge = await asyncio.to_thread(self._build_knowledge, config)
 
             # ── Estratégia hierárquica ──
             hierarchical_tool = await self._build_hierarchical_tool(config)
@@ -234,7 +276,15 @@ class AgentFactoryService:
             tools.extend(created)
         return tools
 
+    def _log_rejected_doc_name(self, agent_id: str, exc: DocumentPathError) -> None:
+        self._logger.error(
+            "doc_name do RAG rejeitado; RAG do agente desativado",
+            agent_id=agent_id,
+            reason=str(exc),
+        )
+
     def _build_knowledge(self, config: AgentConfig) -> Optional[Knowledge]:
+        """Knowledge do RAG semântico. Síncrono e com I/O: chame via ``asyncio.to_thread``."""
         rag = config.rag_config
         if not rag or not rag.active:
             return None
@@ -249,19 +299,27 @@ class AgentFactoryService:
             )
             return None
 
+        doc_path: Optional[Path] = None
+        if rag.doc_name:
+            try:
+                doc_path = resolve_document_path(rag.doc_name)
+            except DocumentPathError as exc:
+                self._log_rejected_doc_name(config.id, exc)
+                return None
+
         try:
             embedder = self._embedder_factory.create_model(
                 rag.factory_ia_model, rag.model
             )
             knowledge = Knowledge(
                 vector_db=MongoVectorDb(
-                    collection_name="rag",
+                    collection_name=rag_collection_name(config.id),
                     db_url=self._db_url,
                     database=self._db_name,
                     embedder=embedder,
                 ),
             )
-            self._load_document(knowledge, rag.doc_name)
+            self._load_document(knowledge, doc_path)
             return knowledge
         except Exception as exc:
             self._logger.warning("Erro ao criar RAG", error=str(exc))
@@ -285,13 +343,16 @@ class AgentFactoryService:
             return None
 
         try:
-            # Indexar documento (idempotente)
-            doc_path = f"docs/{rag.doc_name}"
+            # Indexar documento (idempotente); leitura confinada a docs/, fora do loop
             try:
-                with open(doc_path, "r", encoding="utf-8") as f:
-                    content = f.read()
+                content = await asyncio.to_thread(_read_document, rag.doc_name)
+            except DocumentPathError as exc:
+                self._log_rejected_doc_name(config.id, exc)
+                return None
             except FileNotFoundError:
-                self._logger.warning("Documento não encontrado", path=doc_path)
+                self._logger.warning(
+                    "Documento não encontrado", path=f"docs/{rag.doc_name}"
+                )
                 return None
 
             await self._indexing_service.index_document(
@@ -314,12 +375,18 @@ class AgentFactoryService:
             return None
 
     def _load_document(
-        self, knowledge: Knowledge, doc_name: Optional[str]
+        self, knowledge: Knowledge, resolved_path: Optional[Path]
     ) -> None:
-        if not doc_name:
+        """Indexa o documento na coleção do agente (já confinado a ``docs/``).
+
+        ``skip_if_exists`` é checado na coleção do próprio agente (``content_hash_exists``
+        do vector db, agno 2.5.8): coleção nova (inclusive a migração da ``rag``
+        compartilhada) reindexa o documento no primeiro startup.
+        """
+        if resolved_path is None:
             self._logger.info("Nenhum documento especificado para RAG")
             return
-        doc_path = f"docs/{doc_name}"
+        doc_path = resolved_path.as_posix()
         try:
             knowledge.insert(path=doc_path, skip_if_exists=True)
             self._logger.info("Documento RAG inserido", path=doc_path)

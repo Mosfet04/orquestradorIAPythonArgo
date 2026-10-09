@@ -24,7 +24,7 @@
         "name": null,
         "vector_db": {
           "__type__": "agno.vectordb.mongodb.mongodb.MongoDb",
-          "collection_name": "rag",
+          "collection_name": "rag_rag-semantic",
           "connection_string": "mongodb://mongo.golden.invalid:27017",
           "database": "golden_db",
           "distance_metric": "cosine",

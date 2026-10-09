@@ -602,7 +602,7 @@ O MongoDB é o coração da configuração. Todas as collections estão no datab
 | `agents_config` | **Você** (manual) | Configuração de cada agente |
 | `teams_config` | **Você** (manual) | Configuração de cada team multi-agente |
 | `tools` | **Você** (manual) | Definição de ferramentas HTTP |
-| `rag` | **agno** (automático) | Chunks embedados dos documentos RAG |
+| `rag_<agent_id>` | **agno** (automático) | Chunks embedados dos documentos do RAG semântico, uma collection por agente (ver [RAG](#rag-retrieval-augmented-generation)) |
 | `document_tree` | **Aplicação** (automático) | Árvore hierárquica de documentos para RAG hierárquico |
 | `agno_sessions` | **agno** (automático) | Sessões, histórico de runs |
 | `agno_memories` | **agno** (automático) | Memórias de longo prazo por usuário |
@@ -658,7 +658,7 @@ Esta é a collection que você gerencia. Cada documento define um agente:
 | Campo | Descrição |
 |---|---|
 | `active` | `true` para ativar RAG |
-| `doc_name` | Nome do arquivo na pasta `docs/` (ex: `basic-prog.txt`) |
+| `doc_name` | Caminho relativo de um arquivo regular dentro da pasta `docs/` (ex: `basic-prog.txt`). Caminho absoluto, `..`, diretório e symlink para fora de `docs/` são recusados: o agente sobe sem RAG e um erro é logado |
 | `model` | Modelo de embedding (ex: `gemini-embedding-001`, `text-embedding-3-small`) |
 | `factoryIaModel` | Provider do embedder: `gemini`, `openai`, `ollama`, `azure` |
 | `search_strategy` | Estratégia de busca: `semantic` (padrão, agno nativo) ou `hierarchical` (árvore de documentos) |
@@ -782,8 +782,10 @@ Utiliza o knowledge base nativo do agno com busca vetorial direta.
 **Como funciona:**
 1. Coloque um arquivo de texto na pasta `docs/` (ex: `docs/basic-prog.txt`)
 2. No `agents_config`, configure `rag_config` com `active: true` e `doc_name: "basic-prog.txt"`
-3. Na inicialização, o documento é embedado e persistido na collection `rag` do MongoDB
+3. Na inicialização, o documento é embedado e persistido na collection do próprio agente no MongoDB, `rag_<agent_id>` (um agente nunca busca nos documentos de outro, e embedders de dimensões diferentes nunca dividem um índice). `id` em `[a-z0-9-]` (até 64 caracteres) é usado como está (`rag_suporte-n1`); qualquer outro `id` vira `rag_<slug>_<12 hex do sha256(id)>`, então ids diferentes nunca dividem collection
 4. A cada mensagem, o agente busca trechos relevantes para compor a resposta
+
+**Nota de operação (atualização para o F1-07):** antes do F1-07 todos os agentes dividiam a collection `rag`. No primeiro startup depois da atualização cada agente reembeda o seu documento em `rag_<agent_id>` (o `skip_if_exists` é checado por collection), o que custa uma passada de embedding por agente. A collection legada `rag` deixa de ser lida e escrita e não é apagada automaticamente; remova-a (`db.rag.drop()`) depois que as novas collections estiverem populadas. No MongoDB Atlas, cada collection nova precisa do próprio índice de busca vetorial (criado pelo agno como o antigo).
 
 #### Estratégia Hierárquica
 
@@ -792,8 +794,8 @@ Constrói uma árvore de documentos (Document → Section → Chunk) e realiza b
 **Como funciona:**
 1. Coloque um arquivo de texto na pasta `docs/`
 2. Configure `rag_config` com `search_strategy: "hierarchical"`
-3. Na inicialização, o documento é parseado em nós hierárquicos (Document → Section → Chunk), cada nó é embedado e persistido na collection `document_tree`
-4. O agente recebe uma tool `search_knowledge` que faz busca vetorial nos chunks e retorna os resultados com o contexto da seção pai
+3. Na inicialização, o documento é parseado em nós hierárquicos (Document → Section → Chunk), cada nó é embedado e persistido na collection `document_tree`. Cada nó interno (documento/seção) recebe um sumário gerado pelo modelo de sumário (padrão `ollama` / `llama3.2:latest`, ligado em `dependency_injection.py`), uma chamada por nó com timeout de 60 s; em erro, timeout ou resposta vazia o sumário cai para os primeiros 200 caracteres do nó (warning no log só com o tipo do erro); depois do primeiro timeout, os demais nós daquele documento nem chamam o modelo. A árvore é indexada uma vez por `doc_name`, mesmo quando vários agentes com o mesmo arquivo sobem ao mesmo tempo
+4. O agente recebe uma tool `search_knowledge` que faz busca vetorial nos chunks e retorna os resultados com o contexto da seção pai; resultados com similaridade cosseno abaixo de 0.3 são descartados (um log `debug` registra quantos foram descartados, o melhor score e o limiar)
 
 **Vantagens:**
 - Preserva a estrutura do documento (seções, subseções)
@@ -858,7 +860,7 @@ sequenceDiagram
 
     U->>A: "Como criar um agent no agno?"
     A->>K: Busca semântica no RAG
-    K->>DB: Query vetorial (collection rag)
+    K->>DB: Query vetorial (collection rag_<agent_id>)
     DB-->>K: Chunks relevantes
     A->>M: Busca memórias do usuário
     M->>DB: Query (collection user_memories)

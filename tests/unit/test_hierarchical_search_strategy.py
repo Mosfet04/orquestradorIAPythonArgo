@@ -10,6 +10,7 @@ from src.application.services.search_strategies.hierarchical_search_strategy imp
     HierarchicalSearchStrategy,
 )
 from src.domain.entities.document_node import DocumentNode
+from tests.fakes import FakeEmbedder, InMemoryDocumentTreeRepository, RecordingLogger
 
 
 def _make_node(
@@ -152,3 +153,126 @@ class TestCosineSimililarity:
     def test_similar_vectors(self):
         sim = HierarchicalSearchStrategy._cosine_similarity([1.0, 1.0], [1.0, 0.9])
         assert sim > 0.9
+
+
+# ── F1-07 (B9): limiar com efeito e embedding fora do event loop ────
+
+
+def _strategy(repo, embedder, **kwargs) -> HierarchicalSearchStrategy:
+    return HierarchicalSearchStrategy(
+        tree_repository=repo,
+        embedder=embedder,
+        doc_name="test.txt",
+        logger=RecordingLogger(),
+        **kwargs,
+    )
+
+
+async def test_limiar_descarta_resultados_abaixo_dele():
+    repo = InMemoryDocumentTreeRepository()
+    await repo.save_nodes(
+        [
+            _make_node("alto", embedding=[1.0, 0.0], content="relevante"),  # score 1.0
+            _make_node("medio", embedding=[0.8, 0.6], content="parcial"),  # score 0.8
+            _make_node("baixo", embedding=[0.2, 0.98], content="ruído"),  # score ~0.2
+        ]
+    )
+    embedder = MagicMock()
+    embedder.get_embedding.return_value = [1.0, 0.0]
+
+    results = await _strategy(repo, embedder, beam_width=3, confidence_threshold=0.75).search("q", top_k=10)
+
+    assert [r.content for r in results] == ["relevante", "parcial"]
+    assert all(r.score >= 0.75 for r in results)
+
+
+async def test_limiar_vale_para_folhas_alcancadas_pela_travessia():
+    repo = InMemoryDocumentTreeRepository()
+    await repo.save_nodes(
+        [
+            _make_node("raiz", embedding=[1.0, 0.0], children_ids=["f1", "f2"]),
+            _make_node("f1", level=1, embedding=[1.0, 0.0], content="folha boa", parent_id="raiz"),
+            _make_node("f2", level=1, embedding=[0.0, 1.0], content="folha ruim", parent_id="raiz"),
+        ]
+    )
+    embedder = MagicMock()
+    embedder.get_embedding.return_value = [1.0, 0.0]
+
+    results = await _strategy(repo, embedder, confidence_threshold=0.5).search("q")
+
+    assert [r.content for r in results] == ["folha boa"]
+
+
+async def test_todos_abaixo_do_limiar_devolve_lista_vazia():
+    repo = InMemoryDocumentTreeRepository()
+    await repo.save_nodes([_make_node("n", embedding=[0.0, 1.0], content="ortogonal")])
+    embedder = MagicMock()
+    embedder.get_embedding.return_value = [1.0, 0.0]
+
+    assert await _strategy(repo, embedder, confidence_threshold=0.1).search("q") == []
+
+
+async def test_limiar_padrao_descarta_no_sem_embedding():
+    """Score 0.0 (sem embedding ou dimensão diferente) não é resultado."""
+    repo = InMemoryDocumentTreeRepository()
+    await repo.save_nodes(
+        [
+            _make_node("com", embedding=[1.0, 0.0], content="com embedding"),
+            _make_node("sem", content="sem embedding"),
+        ]
+    )
+    embedder = MagicMock()
+    embedder.get_embedding.return_value = [1.0, 0.0]
+
+    results = await _strategy(repo, embedder).search("q", top_k=10)
+
+    assert [r.content for r in results] == ["com embedding"]
+
+
+async def test_embedding_da_query_e_calculado_fora_do_event_loop():
+    repo = InMemoryDocumentTreeRepository()
+    embedder = FakeEmbedder(dimensions=4)
+    query_vector = embedder.get_embedding("q")
+    embedder.on_event_loop.clear()
+    await repo.save_nodes([_make_node("n", embedding=query_vector, content="igual à query")])
+
+    results = await _strategy(repo, embedder).search("q")
+
+    assert [r.content for r in results] == ["igual à query"]
+    assert embedder.on_event_loop == [False]
+
+
+async def test_descarte_pelo_limiar_e_logado_sem_conteudo():
+    """Review R3: sem log, um limiar mal calibrado esvazia a busca em silêncio."""
+    repo = InMemoryDocumentTreeRepository()
+    await repo.save_nodes(
+        [
+            _make_node("alto", embedding=[0.6, 0.8], content="CONTEUDO-RELEVANTE"),  # score 0.6
+            _make_node("baixo", embedding=[0.1, 0.995], content="CONTEUDO-RUIDO"),  # score ~0.1
+        ]
+    )
+    embedder = MagicMock()
+    embedder.get_embedding.return_value = [1.0, 0.0]
+    logger = RecordingLogger()
+    strategy = HierarchicalSearchStrategy(
+        tree_repository=repo, embedder=embedder, doc_name="test.txt", logger=logger, confidence_threshold=0.7
+    )
+
+    assert await strategy.search("q") == []
+
+    [record] = [r for r in logger.records if r.message == "Resultados abaixo do limiar descartados"]
+    assert record.level == "debug"
+    assert record.context == {"doc_name": "test.txt", "discarded": 2, "best_score": 0.6, "threshold": 0.7}
+    assert "CONTEUDO" not in repr(logger.records)
+
+
+async def test_sem_descarte_nao_loga_limiar():
+    repo = InMemoryDocumentTreeRepository()
+    await repo.save_nodes([_make_node("alto", embedding=[1.0, 0.0], content="relevante")])
+    embedder = MagicMock()
+    embedder.get_embedding.return_value = [1.0, 0.0]
+    logger = RecordingLogger()
+    strategy = HierarchicalSearchStrategy(tree_repository=repo, embedder=embedder, doc_name="test.txt", logger=logger)
+
+    assert [r.content for r in await strategy.search("q")] == ["relevante"]
+    assert logger.records == []

@@ -8,6 +8,7 @@ from tests.fakes.models import (
     FakeModelCall,
     FakeModelFactory,
     ScriptExhaustedError,
+    running_on_event_loop,
 )
 from tests.fakes.repositories import (
     InMemoryAgentConfigRepository,
@@ -33,4 +34,5 @@ __all__ = [
     "RecordingTelemetryMetrics",
     "ScriptExhaustedError",
     "loopback_client",
+    "running_on_event_loop",
 ]
