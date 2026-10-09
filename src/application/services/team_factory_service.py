@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Sequence, Union
+from typing import Any, Dict, List, Sequence, Union
 
 from agno.agent import Agent
 from agno.db.mongo import MongoDb as MongoAgentDb
@@ -46,12 +46,11 @@ class TeamFactoryService:
         config: TeamConfig,
         agents: List[Agent],
     ) -> Team:
-        """Cria um Team usando os agentes fornecidos como membros."""
+        """Cria um Team usando os agentes fornecidos como membros (síncrono, com I/O)."""
         members: Sequence[Union[Agent, Team]] = self._resolve_members(config, agents)
-        model_config = config.model_config
-        model = self._model_factory.create_model(
-            model_config.provider, model_config.model_id
-        )
+        # Síncrono e com I/O (segredo file:, DNS do destino): quem chama do caminho async
+        # roda create_team via asyncio.to_thread (GetActiveTeamsUseCase).
+        model: Any = self._model_factory.create_model(config.model_config)
         mode = _MODE_MAP.get(config.mode, TeamMode.route)
         db = MongoAgentDb(db_url=self._db_url, db_name=self._db_name)
         # O team repassa o user_id da requisição aos membros: exige se ele ou um membro

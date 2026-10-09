@@ -184,13 +184,14 @@ graph TB
 
     subgraph "📋 Application"
         UC["Use Cases<br/>(GetActiveAgentsUseCase,<br/>GetActiveTeamsUseCase)"]
-        AS["Services<br/>(AgentFactoryService, TeamFactoryService,<br/>ModelFactory, EmbedderModelFactory)"]
+        AS["Services<br/>(AgentFactoryService, TeamFactoryService,<br/>DocumentIndexingService)"]
     end
 
     subgraph "🔧 Infrastructure"
         DB["Repositories MongoDB"]
         WEB["Web - AppFactory + Middleware"]
         HTTP["HttpToolFactory"]
+        PROV["ProviderRegistry<br/>(modelos e embedders)"]
         LOG["Logging Structlog"]
         CACHE["ModelCacheService"]
         DI["DependencyContainer"]
@@ -212,6 +213,8 @@ graph TB
     AS --> RP
     DB -.->|implementa| RI
     HTTP -.->|implementa| RP
+    PROV -.->|implementa| RP
+    DI --> PROV
     DI --> CTRL
     DI --> AS
     DI --> DB
@@ -271,8 +274,6 @@ orquestradorIAPythonArgo/
 │   │   ├── services/
 │   │   │   ├── agent_factory_service.py       # Cria agentes agno a partir de AgentConfig
 │   │   │   ├── team_factory_service.py        # Cria teams agno a partir de TeamConfig
-│   │   │   ├── model_factory_service.py       # Factory de modelos (Ollama, OpenAI, etc.)
-│   │   │   ├── embedder_model_factory_service.py # Factory de embedders para RAG
 │   │   │   ├── knowledge_search_factory.py    # Factory de estratégias de busca RAG
 │   │   │   ├── document_indexing_service.py   # Indexação de documentos hierárquicos
 │   │   │   └── search_strategies/             # Strategy Pattern para busca RAG
@@ -290,6 +291,11 @@ orquestradorIAPythonArgo/
 │   │   ├── database/               #   (reservado para futuras conexões)
 │   │   ├── http/
 │   │   │   └── http_tool_factory.py #   Cria Functions agno a partir de configs HTTP
+│   │   ├── providers/
+│   │   │   ├── registry.py         #   ProviderRegistry: modelos e embedders por spec (IModelFactory/IEmbedderFactory)
+│   │   │   └── builtins.py         #   Specs built-in: ollama, openai, anthropic, gemini, groq, azure, openai_compatible
+│   │   ├── security/
+│   │   │   └── ssrf.py             #   Guarda de destino: metadata/link-local sempre recusados
 │   │   ├── logging/
 │   │   │   ├── structlog_logger.py #   Configuração única do logging (structlog) + sanitização
 │   │   │   ├── logger_adapter.py   #   Adapter: structlog → ILogger
@@ -330,8 +336,7 @@ orquestradorIAPythonArgo/
         ├── test_dependency_injection.py
         ├── test_document_indexing_service.py
         ├── test_document_node.py
-        ├── test_embedder_model_factory_service.py
-        ├── test_embedder_factory_extended.py
+        ├── test_builtin_providers.py
         ├── test_get_active_agents_use_case.py
         ├── test_get_active_teams_use_case.py
         ├── test_hierarchical_integration.py
@@ -345,8 +350,8 @@ orquestradorIAPythonArgo/
         ├── test_logging_decorators_extended.py
         ├── test_metrics_middleware.py
         ├── test_model_cache_service.py
-        ├── test_model_factory_service.py
-        ├── test_model_factory_extended.py
+        ├── test_provider_matrix.py
+        ├── test_provider_registry.py
         ├── test_mongo_agent_config_repository.py
         ├── test_mongo_base.py
         ├── test_mongo_team_config_repository.py
@@ -477,6 +482,7 @@ OLLAMA_BASE_URL=http://localhost:11434
 # AZURE_ENDPOINT=https://xxx.openai.azure.com/
 # AZURE_VERSION=2024-02-01
 # SECRETS_DIR=/run/secrets   # raiz dos api_key_ref "file:/..." (arquivo fora dela é recusado); relativo ou "/" impede o app de iniciar
+# MODEL_BASE_URL_ALLOWLIST=llm.interno.example,10.0.0.5   # hosts aceitos em base_url dos documentos (só host); liste só hosts confiáveis para receber as chaves de provider do processo
 
 # ═══ OpenTelemetry (opcional) ═══
 OTEL_ENABLED=true
@@ -656,7 +662,7 @@ Esta é a collection que você gerencia. Cada documento define um agente:
 |---|---|---|---|
 | `id` | string | ✅ | Identificador único do agente |
 | `nome` | string | ✅ | Nome de exibição |
-| `factoryIaModel` | string | ✅ | Provider do modelo: `ollama`, `openai`, `anthropic`, `gemini`, `groq`, `azure` |
+| `factoryIaModel` | string | ✅ | Provider do modelo: `ollama`, `openai`, `anthropic`, `gemini`, `groq`, `azure`, `openai_compatible` |
 | `model` | string | ✅ | ID do modelo (ex: `gpt-4`, `llama3.2:latest`, `gemini-3-flash-preview`) |
 | `descricao` | string | ✅ | Descrição do agente (visível no frontend) |
 | `prompt` | string[] | ✅ | Instruções do sistema (aceita array de strings) |
@@ -669,7 +675,14 @@ Esta é a collection que você gerencia. Cada documento define um agente:
 | `base_url` | string | ❌ | Endpoint do provider: `http(s)://host[:porta][/caminho]`, até 2048 caracteres, sem credencial, query, fragmento, espaço ou `\`; host só em ASCII (IDN em punycode) e sem `%`; porta, se houver, de 1 a 65535 |
 | `api_key_ref` | string | ❌ | Referência da chave: `env:<PROVEDOR>_API_KEY` (só variáveis em maiúsculas terminadas em `_API_KEY`, ex.: `env:OPENAI_API_KEY`; `API_KEY_RUN`, `API_KEY_ADMIN`, `MONGO_*` e qualquer outra são recusadas: quem grava a config não escolhe que segredo do processo ler) ou `file:/caminho/absoluto` (dentro de `SECRETS_DIR`, default `/run/secrets`; só em Linux, que confere o arquivo aberto em `/proc/self/fd`: em outro sistema, use `env:`). Nunca a chave em si |
 
-`model_params`, `base_url` e `api_key_ref` (também em `rag_config` e em `teams_config`, sempre em snake_case) são opcionais: documento sem eles continua igual. Hoje são lidos e validados, mas ainda não mudam a criação do modelo (o provider segue lendo `{PROVIDER}_API_KEY`); passam a ser usados no registry de providers (F2-02). Valor inválido torna o documento inválido (ver [Documento inválido](#documento-inválido)) e a mensagem nunca traz o valor.
+`model_params`, `base_url` e `api_key_ref` (também em `rag_config` e em `teams_config`, sempre em snake_case; a grafia camelCase `modelParams`/`baseUrl`/`apiKeyRef` é ignorada com um aviso no log que cita só o id e os nomes das chaves) são opcionais: documento sem eles continua igual (chave `{PROVIDER}_API_KEY` do ambiente, `OLLAMA_BASE_URL` no Ollama). Valor fora do formato torna o documento inválido (ver [Documento inválido](#documento-inválido)) e a mensagem nunca traz o valor. Na criação do modelo (registry de providers, F2-02):
+
+- `model_params`: só as chaves permitidas para o provider/classe (ex.: `temperature`, `top_p`, `max_tokens`, `seed`; no Ollama `temperature`/`top_k`/`num_ctx`/`num_predict`... vão para `options`), números finitos; outra chave recusa o modelo e o erro lista as permitidas.
+- `base_url`: aceita só o host do próprio provider (ex.: `api.openai.com`, e só com `https`, mesmo que também esteja na allowlist), um host de `MODEL_BASE_URL_ALLOWLIST` ou, no modo dev local (sem `API_KEY_*`, `APP_HOST` em loopback, `ENVIRONMENT` development/test), loopback literal (esses dois aceitam `http`; IP com ponto final, como `127.0.0.1.`, é nome DNS e não conta). Vale com ou sem `api_key_ref` (os SDKs leem chave do ambiente sozinhos). A allowlist vale para todos os providers: o documento escolhe o provider e o `api_key_ref`, então um host listado pode receber qualquer `<PROVEDOR>_API_KEY` do processo; liste só hosts confiáveis para receber as chaves de provider do processo. Metadata de nuvem e link-local (`169.254.0.0/16`, `fe80::/10`, inclusive formas como `2852039166` ou `[::ffff:169.254.169.254]`, ou um nome que resolva para eles) são sempre recusados. `anthropic`, `gemini` e `azure` não aceitam `base_url` (no Azure o endpoint vem só de `AZURE_ENDPOINT`: a chave vai no header `api-key`, que o cliente HTTP não remove num redirect para outra origem).
+- `api_key_ref`: lida só depois de destino, `model_params` e SDK conferidos; substitui a `{PROVIDER}_API_KEY`.
+- `factoryIaModel: openai_compatible` (servidor compatível com a API da OpenAI: vLLM, LM Studio, gateways): exige `base_url`; a chave vem só do `api_key_ref` (sem ele, nenhuma chave é enviada; nunca a `OPENAI_API_KEY`).
+
+Modelo recusado vira `Agente não carregado`/`Team não carregado` com `reason` (ver [Documento inválido](#documento-inválido)); os outros sobem.
 
 **`rag_config`:**
 
@@ -678,7 +691,7 @@ Esta é a collection que você gerencia. Cada documento define um agente:
 | `active` | `true` para ativar RAG |
 | `doc_name` | Caminho relativo de um arquivo regular dentro da pasta `docs/` (ex: `basic-prog.txt`). Caminho absoluto, `..`, diretório e symlink para fora de `docs/` são recusados: o agente sobe sem RAG e um erro é logado |
 | `model` | Modelo de embedding (ex: `gemini-embedding-001`, `text-embedding-3-small`) |
-| `factoryIaModel` | Provider do embedder: `gemini`, `openai`, `ollama`, `azure` |
+| `factoryIaModel` | Provider do embedder: `gemini`, `openai`, `ollama`, `azure`, `openai_compatible` |
 | `search_strategy` | Estratégia de busca: `semantic` (padrão, agno nativo) ou `hierarchical` (árvore de documentos) |
 | `model_params`, `base_url`, `api_key_ref` | Opcionais do embedder, como no agente. Com algum deles, `model` e `factoryIaModel` precisam estar no documento, não vazios (os defaults `ollama`/`nomic-embed-text:latest` valem só para `rag_config` sem campos novos) |
 
@@ -766,7 +779,7 @@ Formato canônico: o do exemplo (`factoryIaModel` e o resto em snake_case), o me
 
 ### Documento inválido
 
-Um documento inválido em `agents_config` ou `teams_config` não derruba o startup: ele é ignorado com log de erro (`Documento de agente inválido ignorado` / `Documento de team inválido ignorado`, com `agent_id`/`team_id` quando o `id` é texto, `mongo_id` quando o `_id` é ObjectId e `error_type`; nunca o conteúdo do documento) e os demais carregam. Inválido = `id`, `nome`, `model` ou `factoryIaModel` ausente, vazio ou que não seja texto; `descricao` que não seja texto (pode faltar ou ser `null`); `rag_config` que não seja objeto; `search_strategy` ou `mode` fora dos valores aceitos; team sem membros; `model_params`, `base_url` ou `api_key_ref` fora do formato descrito nos campos (no `rag_config`, também presentes sem `model`/`factoryIaModel`). Dois documentos ativos com o mesmo `id` (dois agentes ou dois teams): vale o mais antigo (menor `_id`; a leitura é ordenada por `_id`) e o outro vira log de erro (`Agente com id repetido ignorado` / `Team com id repetido ignorado`). Agente ou team válido que falha na criação (ex.: modelo recusado pela factory, team sem nenhum membro carregado) também vira log de erro (`Agente não carregado` / `Team não carregado`, com o id e `error_type`; modelo recusado pela validação traz também `reason`, ex.: `Configuração de modelo inválida: Tipo 'xyz' não suportado...`) sem afetar os outros.
+Um documento inválido em `agents_config` ou `teams_config` não derruba o startup: ele é ignorado com log de erro (`Documento de agente inválido ignorado` / `Documento de team inválido ignorado`, com `agent_id`/`team_id` quando o `id` é texto, `mongo_id` quando o `_id` é ObjectId e `error_type`; nunca o conteúdo do documento) e os demais carregam. Inválido = `id`, `nome`, `model` ou `factoryIaModel` ausente, vazio ou que não seja texto; `descricao` que não seja texto (pode faltar ou ser `null`); `rag_config` que não seja objeto; `search_strategy` ou `mode` fora dos valores aceitos; team sem membros; `model_params`, `base_url` ou `api_key_ref` fora do formato descrito nos campos (no `rag_config`, também presentes sem `model`/`factoryIaModel`). Dois documentos ativos com o mesmo `id` (dois agentes ou dois teams): vale o mais antigo (menor `_id`; a leitura é ordenada por `_id`) e o outro vira log de erro (`Agente com id repetido ignorado` / `Team com id repetido ignorado`). Agente ou team válido que falha na criação (ex.: modelo recusado pela factory, team sem nenhum membro carregado) também vira log de erro (`Agente não carregado` / `Team não carregado`, com o id e `error_type`; modelo recusado pelo registry de providers traz também `reason`, texto nosso sem valor de segredo, ex.: `Tipo 'xyz' não suportado para modelo. Suportados: ...` ou `modelo do provider 'openai_compatible': host da base_url não é do provider nem está em MODEL_BASE_URL_ALLOWLIST`) sem afetar os outros.
 
 ### Adicionando um Novo Agente (sem alterar código)
 
@@ -936,10 +949,6 @@ tests/
     ├── test_agent_factory_service.py      # Application: criação de agentes
     ├── test_agent_factory_extended.py     # Application: criação de agentes (extended)
     ├── test_team_factory_service.py       # Application: criação de teams
-    ├── test_model_factory_service.py      # Application: factory de modelos
-    ├── test_model_factory_extended.py     # Application: factory de modelos (extended)
-    ├── test_embedder_model_factory_service.py # Application: factory de embedders
-    ├── test_embedder_factory_extended.py   # Application: factory de embedders (extended)
     ├── test_knowledge_search_factory.py   # Application: factory de estratégias de busca
     ├── test_document_indexing_service.py  # Application: indexação de documentos
     ├── test_hierarchical_search_strategy.py # Application: busca hierárquica
@@ -951,6 +960,10 @@ tests/
     ├── test_app_factory_extended.py       # Infrastructure: AppFactory (extended)
     ├── test_app_integration.py            # Infrastructure: integração FastAPI
     ├── test_dependency_injection.py       # Infrastructure: container DI
+    ├── test_provider_registry.py          # Infrastructure: registry de providers (specs fake)
+    ├── test_provider_matrix.py            # Infrastructure: matriz de providers built-in
+    ├── test_builtin_providers.py          # Infrastructure: comportamento dos built-ins
+    ├── test_ssrf.py                       # Infrastructure: guarda de destino (SSRF)
     ├── test_http_tool_factory.py          # Infrastructure: HTTP tools
     ├── test_http_tool_factory_extended.py  # Infrastructure: HTTP tools (extended)
     ├── test_hierarchical_search_tool.py   # Infrastructure: tool de busca hierárquica
@@ -995,34 +1008,32 @@ tests/
 | **Onion Architecture** | Toda a aplicação | Separação de responsabilidades por camadas |
 | **Dependency Injection** | `dependency_injection.py` | Composition Root — todas as dependências são criadas e injetadas em um único ponto |
 | **Repository Pattern** | `domain/repositories/` → `infrastructure/repositories/` | Abstração de acesso a dados (interface → implementação MongoDB) |
-| **Factory Pattern** | `ModelFactory`, `EmbedderModelFactory`, `AgentFactoryService`, `TeamFactoryService` | Criação de objetos complexos sem expor a lógica de construção |
-| **Strategy Pattern** | `ModelFactory._IMPORT_SPECS`, `search_strategies/` | Cada provider de modelo e cada estratégia de busca RAG é intercambiável |
+| **Factory Pattern** | `ProviderRegistry`, `AgentFactoryService`, `TeamFactoryService` | Criação de objetos complexos sem expor a lógica de construção |
+| **Registry / Strategy** | `ProviderSpec` em `infrastructure/providers/`, `search_strategies/` | Cada provider de modelo é uma spec registrada; cada estratégia de busca RAG é intercambiável |
 | **Ports & Adapters** | `domain/ports/` | Interfaces que a infraestrutura implementa |
 | **Cache-Aside** | `OrquestradorController` | Cache de agentes com TTL + fallback |
 
 ### Adicionando um Novo Provider de Modelo
 
-1. Edite `src/application/services/model_factory_service.py`
-2. Adicione a entrada em `_IMPORT_SPECS`:
+Provider é uma `ProviderSpec` registrada no `ProviderRegistry` (`src/infrastructure/providers/`); `domain` e `application` não mudam. Para um built-in, acrescente a spec em `builtins.py` e em `BUILTIN_PROVIDERS`:
 
 ```python
-_IMPORT_SPECS = {
-    ...
-    "novo_provider": ("agno.models.novo.chat", "NovoChat", "pip-package", "Novo Provider"),
-}
+NOVO = ProviderSpec(
+    id="novo",                         # valor de factoryIaModel (sem caixa)
+    sdk_package="novo-sdk",            # citado no erro quando o SDK não está instalado
+    aliases=("novo-ai",),
+    chat=ClassSpec(
+        class_path="agno.models.novo.chat.NovoChat",  # caminho conferido no agno instalado
+        params={"temperature": "temperature", "max_tokens": "max_tokens"},  # allowlist de model_params
+        base_url_kwarg="base_url",     # None = o provider não aceita base_url
+    ),
+    embedder=None,                     # ou ClassSpec(...) do embedder
+    default_hosts=frozenset({"api.novo.example"}),  # hosts do próprio provider (base_url sem allowlist)
+    api_key_env="NOVO_API_KEY",        # chave do ambiente quando o documento não tem api_key_ref
+)
 ```
 
-3. Adicione o provider na lista `get_supported_models()`:
-
-```python
-@staticmethod
-def get_supported_models() -> List[str]:
-    return [..., "novo_provider"]
-```
-
-4. Certifique-se de que a API key está no `.env` como `NOVO_PROVIDER_API_KEY`
-
-Para **embedders**, o processo é idêntico em `embedder_model_factory_service.py`.
+Teste com a matriz (`tests/unit/test_provider_matrix.py`: instancia a classe real ou falha nomeando o pacote) e documente a variável no `.env.example`. Plugins de terceiros (entry point `orquestrador.providers`) chegam no F2-03, pelo mesmo `register`.
 
 ### Adicionando uma Nova Tool (sem alterar código)
 

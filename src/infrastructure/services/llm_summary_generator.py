@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from typing import cast
 
 from agno.models.base import Model
 from agno.models.message import Message
 
+from src.domain.entities.model_config import ModelConfig
 from src.domain.ports.logger_port import ILogger
 from src.domain.ports.model_factory_port import IModelFactory
 from src.domain.ports.summary_generator_port import (
@@ -49,10 +51,11 @@ class LLMSummaryGenerator(ISummaryGenerator):
     ) -> None:
         self._model_factory = model_factory
         self._timeout_seconds = timeout_seconds
-        self._factory_ia_model = factory_ia_model
-        self._model_id = model_id
+        self._model_config = ModelConfig(provider=factory_ia_model, model_id=model_id)
         self._logger = logger
         self._model: Model | None = None
+        # Single-flight da criação: os sumários de um documento rodam em gather.
+        self._model_lock = asyncio.Lock()
 
     async def generate_summary(self, content: str) -> str:
         """Gera sumário conciso do conteúdo via LLM."""
@@ -63,7 +66,7 @@ class LLMSummaryGenerator(ISummaryGenerator):
         prompt = _SUMMARY_PROMPT.format(content=truncated)
 
         try:
-            model = self._get_or_create_model()
+            model = await self._get_or_create_model()
             response = await asyncio.wait_for(
                 model.aresponse(messages=[Message(role="user", content=prompt)]),
                 timeout=self._timeout_seconds,
@@ -71,8 +74,8 @@ class LLMSummaryGenerator(ISummaryGenerator):
         except TimeoutError as exc:
             self._logger.warning(
                 "Sumário: modelo não respondeu no prazo",
-                factory_ia_model=self._factory_ia_model,
-                model_id=self._model_id,
+                factory_ia_model=self._model_config.provider,
+                model_id=self._model_config.model_id,
                 error_type=type(exc).__name__,
                 timeout_s=self._timeout_seconds,
             )
@@ -82,8 +85,8 @@ class LLMSummaryGenerator(ISummaryGenerator):
         except Exception as exc:
             self._logger.warning(
                 "Fallback de sumário: falha ao chamar o modelo",
-                factory_ia_model=self._factory_ia_model,
-                model_id=self._model_id,
+                factory_ia_model=self._model_config.provider,
+                model_id=self._model_config.model_id,
                 error_type=type(exc).__name__,
             )
             return content[:_FALLBACK_LENGTH]
@@ -92,16 +95,17 @@ class LLMSummaryGenerator(ISummaryGenerator):
         if not summary:
             self._logger.warning(
                 "Fallback de sumário: modelo devolveu resposta vazia",
-                factory_ia_model=self._factory_ia_model,
-                model_id=self._model_id,
+                factory_ia_model=self._model_config.provider,
+                model_id=self._model_config.model_id,
             )
             return content[:_FALLBACK_LENGTH]
         return summary
 
-    def _get_or_create_model(self) -> Model:
-        """Lazy init do modelo LLM."""
-        if self._model is None:
-            self._model = self._model_factory.create_model(
-                self._factory_ia_model, self._model_id
-            )
-        return self._model
+    async def _get_or_create_model(self) -> Model:
+        """Lazy init do modelo LLM, uma vez só; a criação (segredo file:, DNS) roda fora do loop."""
+        async with self._model_lock:
+            if self._model is None:
+                created = await asyncio.to_thread(self._model_factory.create_model, self._model_config)
+                # A fábrica do runtime agno devolve um ``agno.models.base.Model``.
+                self._model = cast(Model, created)
+            return self._model

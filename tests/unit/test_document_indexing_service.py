@@ -73,7 +73,7 @@ class TestDocumentIndexingService:
 
         mock_embedder = MagicMock()
         mock_embedder.get_embedding.return_value = [0.1, 0.2, 0.3]
-        self.mock_embedder_factory.create_model.return_value = mock_embedder
+        self.mock_embedder_factory.create_embedder.return_value = mock_embedder
 
         rag = RagConfig(
             active=True,
@@ -108,7 +108,7 @@ class TestDocumentIndexingService:
 
         mock_embedder = MagicMock()
         mock_embedder.get_embedding.return_value = [0.1]
-        self.mock_embedder_factory.create_model.return_value = mock_embedder
+        self.mock_embedder_factory.create_embedder.return_value = mock_embedder
 
         rag = RagConfig(
             active=True,
@@ -135,7 +135,7 @@ class TestDocumentIndexingService:
 
         mock_embedder = MagicMock()
         mock_embedder.get_embedding.side_effect = Exception("emb fail")
-        self.mock_embedder_factory.create_model.return_value = mock_embedder
+        self.mock_embedder_factory.create_embedder.return_value = mock_embedder
 
         rag = RagConfig(active=True, doc_name="t.txt", model="m", factory_ia_model="o")
         result = await self.service.index_document("t.txt", "content", rag)
@@ -165,6 +165,8 @@ async def test_embeddings_da_indexacao_sao_calculados_fora_do_event_loop():
     assert nodes and all(n.embedding for n in nodes)
     [embedder] = embedder_factory.embedders
     assert embedder.on_event_loop and not any(embedder.on_event_loop)
+    # F2-02: a criação do embedder (segredo file:, DNS do destino) também sai do loop.
+    assert embedder_factory.on_event_loop == [False]
 
 
 def _indexing_service(tree_repo, summary, logger=None) -> DocumentIndexingService:

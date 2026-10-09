@@ -28,8 +28,13 @@ from src.application.services.document_path import (
 from src.application.services.knowledge_search_factory import KnowledgeSearchFactory
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.rag_config import SearchStrategy
-from src.domain.ports import IEmbedderFactory, ILogger, IModelFactory, IToolFactory
-from src.domain.ports.model_factory_port import InvalidModelConfigError
+from src.domain.ports import (
+    IEmbedderFactory,
+    ILogger,
+    IModelFactory,
+    InvalidModelConfigError,
+    IToolFactory,
+)
 from src.domain.repositories.tool_repository import IToolRepository
 from src.infrastructure.tools.hierarchical_search_tool import (
     create_hierarchical_search_tool,
@@ -60,6 +65,15 @@ def rag_collection_name(agent_id: str) -> str:
     slug = slug[:_SLUG_MAX_LENGTH].strip("-") or "agente"
     digest = hashlib.sha256(agent_id.encode("utf-8", "surrogatepass")).hexdigest()
     return f"rag_{slug}_{digest[:_HASH_LENGTH]}"
+
+
+def _failure(exc: BaseException) -> dict[str, str]:
+    """Contexto de log de uma falha: só o tipo (texto de SDK pode ter segredo); a recusa da
+    fábrica de modelo/embedder é texto nosso e vai também como ``reason``."""
+    context = {"error_type": type(exc).__name__}
+    if isinstance(exc, InvalidModelConfigError):
+        context["reason"] = str(exc)
+    return context
 
 
 def _read_document(doc_name: str) -> str:
@@ -179,9 +193,9 @@ class AgentFactoryService:
         (``GetActiveAgentsUseCase``); o texto de exceção de SDK pode trazer segredo.
         """
         start = datetime.now(timezone.utc)
-        self._validate_model_config(config)
-        model_config = config.model_config
-        model = self._model_factory.create_model(model_config.provider, model_config.model_id)
+        # Config recusada sobe como InvalidModelConfigError; a criação pode ler segredo
+        # (file:) e resolver DNS do destino: fora do event loop.
+        model = await asyncio.to_thread(self._model_factory.create_model, config.model_config)
         tools = await self._build_tools(config)
         # Knowledge() consulta o Mongo (exists/create) e o insert lê, embeda e grava:
         # tudo síncrono no agno; fora do event loop.
@@ -203,15 +217,6 @@ class AgentFactoryService:
         return agent
 
     # ── private ─────────────────────────────────────────────────────
-
-    def _validate_model_config(self, config: AgentConfig) -> None:
-        model_config = config.model_config
-        result = self._model_factory.validate_model_config(
-            model_config.provider, model_config.model_id
-        )
-        if not result["valid"]:
-            errors = "; ".join(result["errors"])
-            raise InvalidModelConfigError(f"Configuração de modelo inválida: {errors}")
 
     def _build_db(self) -> MongoAgentDb:
         """Cria instância unificada de db (storage + memory) — agno v2."""
@@ -303,9 +308,8 @@ class AgentFactoryService:
                 return None
 
         try:
-            embedder = self._embedder_factory.create_model(
-                embedder_config.provider, embedder_config.model_id
-            )
+            # Objeto do runtime (agno) criado pela fábrica do mesmo runtime; já fora do loop.
+            embedder: Any = self._embedder_factory.create_embedder(embedder_config)
             knowledge = Knowledge(
                 vector_db=MongoVectorDb(
                     collection_name=rag_collection_name(config.id),
@@ -317,9 +321,7 @@ class AgentFactoryService:
             self._load_document(knowledge, doc_path)
             return knowledge
         except Exception as exc:
-            self._logger.warning(
-                "Erro ao criar RAG", agent_id=config.id, error_type=type(exc).__name__
-            )
+            self._logger.warning("Erro ao criar RAG", agent_id=config.id, **_failure(exc))
             return None
 
     async def _build_hierarchical_tool(self, config: AgentConfig) -> Optional[Any]:
@@ -357,9 +359,8 @@ class AgentFactoryService:
             )
 
             # Criar embedder e estratégia
-            embedder_config = rag.embedder_model_config()
-            embedder = self._embedder_factory.create_model(
-                embedder_config.provider, embedder_config.model_id
+            embedder = await asyncio.to_thread(
+                self._embedder_factory.create_embedder, rag.embedder_model_config()
             )
             strategy = self._search_factory.create_strategy(
                 rag, embedder=embedder
@@ -367,9 +368,7 @@ class AgentFactoryService:
             return create_hierarchical_search_tool(strategy)
         except Exception as exc:
             self._logger.warning(
-                "Erro ao criar tool hierárquica",
-                agent_id=config.id,
-                error_type=type(exc).__name__,
+                "Erro ao criar tool hierárquica", agent_id=config.id, **_failure(exc)
             )
             return None
 

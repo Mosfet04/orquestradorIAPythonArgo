@@ -1,11 +1,13 @@
 """QA F2-01: startup real (AppFactory + repositórios Mongo reais sobre coleção fake) com
 documentos legados, com os campos novos e com campos novos hostis.
 
-Critérios: (a) documentos antigos sobem iguais (respostas HTTP e chamadas às fábricas de
-modelo/embedder idênticas) com e sem ``model_params``/``base_url``/``api_key_ref`` — a criação
-do modelo ainda não os usa; (b) documento com campo novo inválido é isolado e o app sobe com os
-demais; (c) nenhum valor de segredo/URL com credencial chega a log nem a resposta HTTP;
-(d) a indexação hierárquica mantém o fallback de embedder (ollama / nomic-embed-text).
+Critérios: (a) documentos antigos sobem iguais (respostas HTTP e provider/modelo pedidos às
+fábricas de modelo/embedder idênticos) com e sem ``model_params``/``base_url``/``api_key_ref``;
+desde a F2-02 a criação usa os campos novos, então eles chegam à fábrica junto (antes a premissa
+era "a criação ainda não os usa"); (b) documento com campo novo inválido é isolado e o app sobe
+com os demais; (c) nenhum valor de segredo/URL com credencial chega a log nem a resposta HTTP,
+inclusive com o ``ProviderRegistry`` real recusando o destino; (d) a indexação hierárquica
+mantém o fallback de embedder (ollama / nomic-embed-text).
 """
 
 from __future__ import annotations
@@ -24,9 +26,12 @@ from src.application.services.team_factory_service import TeamFactoryService
 from src.application.use_cases.get_active_agents_use_case import GetActiveAgentsUseCase
 from src.application.use_cases.get_active_teams_use_case import GetActiveTeamsUseCase
 from src.domain.entities.rag_config import RagConfig, SearchStrategy
+from src.domain.ports import IEmbedderFactory, IModelFactory
 from src.domain.ports.summary_generator_port import ISummaryGenerator
 from src.infrastructure.http.http_tool_factory import HttpToolFactory
 from src.infrastructure.parsers.text_document_parser import TextDocumentParser
+from src.infrastructure.providers import DestinationPolicy, ProviderRegistry
+from src.infrastructure.providers.builtins import BUILTIN_PROVIDERS
 from src.infrastructure.repositories import mongo_base
 from src.infrastructure.repositories.mongo_agent_config_repository import MongoAgentConfigRepository
 from src.infrastructure.repositories.mongo_team_config_repository import MongoTeamConfigRepository
@@ -133,6 +138,8 @@ class Boot:
         self.logger = RecordingLogger()
         self.models = FakeModelFactory(responses=["oi"])
         self.embedders = FakeEmbedderFactory()
+        self.registry: ProviderRegistry | None = None
+        """Se definido, substitui as duas fábricas fake (modelo e embedder)."""
 
     def errors(self) -> list[tuple[str, dict[str, Any]]]:
         return [(r.message, r.context) for r in self.logger.records if r.level == "error"]
@@ -141,8 +148,16 @@ class Boot:
         return repr(self.logger.records) + json.dumps([self.agents, self.teams, self.config], default=str)
 
 
-def boot(monkeypatch: pytest.MonkeyPatch, agent_docs: list[dict[str, Any]], team_docs: list[dict[str, Any]]) -> Boot:
+def boot(
+    monkeypatch: pytest.MonkeyPatch,
+    agent_docs: list[dict[str, Any]],
+    team_docs: list[dict[str, Any]],
+    registry: ProviderRegistry | None = None,
+) -> Boot:
     result = Boot()
+    result.registry = registry
+    models: IModelFactory = registry or result.models
+    embedders: IEmbedderFactory = registry or result.embedders
     client = FakeMongoClient(
         {"agents_config": FakeMongoCollection(agent_docs), "teams_config": FakeMongoCollection(team_docs)}
     )
@@ -157,8 +172,8 @@ def boot(monkeypatch: pytest.MonkeyPatch, agent_docs: list[dict[str, Any]], team
         AgentFactoryService(
             db_url=CONN,
             logger=logger,
-            model_factory=result.models,
-            embedder_factory=result.embedders,
+            model_factory=models,
+            embedder_factory=embedders,
             tool_factory=HttpToolFactory(logger=logger),
             tool_repository=InMemoryToolRepository(),
         ),
@@ -166,7 +181,7 @@ def boot(monkeypatch: pytest.MonkeyPatch, agent_docs: list[dict[str, Any]], team
         logger,
     )
     teams_uc = GetActiveTeamsUseCase(
-        TeamFactoryService(db_url=CONN, logger=logger, model_factory=result.models),
+        TeamFactoryService(db_url=CONN, logger=logger, model_factory=models),
         MongoTeamConfigRepository(connection_string=CONN, logger=logger),
         logger,
     )
@@ -203,8 +218,9 @@ def _comparable(boot_result: Boot) -> dict[str, Any]:
         "agents": sorted(boot_result.agents, key=lambda a: a["id"]),
         "teams": sorted(boot_result.teams, key=lambda t: t["id"]),
         "config": {k: v for k, v in boot_result.config.items() if k != "os_id"},  # os_id é aleatório
-        "model_calls": sorted(boot_result.models.created, key=repr),
-        "embedder_calls": sorted(boot_result.embedders.created, key=repr),
+        # provider/modelo pedidos; os campos novos (3º item) são conferidos à parte
+        "model_calls": sorted(((p, m) for p, m, _ in boot_result.models.created), key=repr),
+        "embedder_calls": sorted(((p, m) for p, m, _ in boot_result.embedders.created), key=repr),
         "log": sorted((m, repr(sorted(c.items()))) for m, c in boot_result.errors()),
     }
 
@@ -242,7 +258,9 @@ def test_startup_legado_expoe_todos_e_cria_modelos_com_provider_e_model_de_sempr
     )
 
 
-def test_startup_com_campos_novos_validos_e_identico_ao_legado(monkeypatch: pytest.MonkeyPatch):
+def test_startup_com_campos_novos_validos_e_identico_ao_legado_e_os_campos_chegam_a_fabrica(
+    monkeypatch: pytest.MonkeyPatch,
+):
     legacy = boot(monkeypatch, legacy_agent_docs(), legacy_team_docs())
     new = boot(
         monkeypatch,
@@ -251,6 +269,20 @@ def test_startup_com_campos_novos_validos_e_identico_ao_legado(monkeypatch: pyte
     )
 
     assert _comparable(new) == _comparable(legacy)
+    # F2-02: a criação usa os campos novos; todo modelo de agente/team os recebe
+    assert [extras for _, _, extras in new.models.created] == [NEW_FIELDS] * len(new.models.created)
+    assert sorted(new.embedders.created, key=repr) == sorted(
+        [
+            ("ollama", "nomic-embed-text:latest", {}),  # rag-padrao: sem provider/modelo explícitos
+            (
+                "gemini",
+                "gemini-embedding-001",
+                {"model_params": {"dimensions": 8}, "base_url": "http://emb.invalid:8080/v1",
+                 "api_key_ref": "env:EMB_API_KEY"},
+            ),
+        ],
+        key=repr,
+    )
 
 
 def test_campos_novos_nao_aparecem_em_resposta_http_nem_em_log(monkeypatch: pytest.MonkeyPatch):
@@ -373,12 +405,12 @@ class _Summary(ISummaryGenerator):
         (RagConfig(active=True, model="e", factory_ia_model="gemini"), ("gemini", "e")),
         (
             RagConfig(active=True, model="e", factory_ia_model="gemini", **NEW_FIELDS),  # type: ignore[arg-type]
-            ("gemini", "e"),  # criação do embedder ainda não usa os campos novos
+            ("gemini", "e", NEW_FIELDS),  # F2-02: os campos novos chegam à fábrica
         ),
     ],
     ids=["sem-nada", "so-provider", "so-modelo", "vazios", "completo", "completo-com-campos-novos"],
 )
-async def test_indexacao_hierarquica_mantem_o_fallback_de_embedder(rag: RagConfig, expected: tuple[str, str]):
+async def test_indexacao_hierarquica_mantem_o_fallback_de_embedder(rag: RagConfig, expected: tuple[Any, ...]):
     embedders = FakeEmbedderFactory()
     service = DocumentIndexingService(
         parser=TextDocumentParser(),
@@ -392,4 +424,39 @@ async def test_indexacao_hierarquica_mantem_o_fallback_de_embedder(rag: RagConfi
     nodes = await service.index_document("doc.md", "# Titulo\n\nTexto.\n\n## Secao\n\nOutro texto.\n", rag)
 
     assert nodes
-    assert embedders.created == [(expected[0], expected[1], {})]
+    extras = expected[2] if len(expected) > 2 else {}
+    assert embedders.created == [(expected[0], expected[1], extras)]
+
+
+# ── F2-02: ProviderRegistry real recusa destino fora da allowlist ─────────────────────────────
+
+
+def test_registry_real_isola_agente_com_base_url_fora_da_allowlist_sem_vazar(monkeypatch: pytest.MonkeyPatch):
+    """Documento hostil (endpoint de coleta + chave por referência): o agente cai, os outros sobem,
+    o motivo vai ao log sem o host nem a chave, e nada disso chega à resposta HTTP."""
+    monkeypatch.setenv("QA_F202_API_KEY", SECRET_REF_VALUE)
+    registry = ProviderRegistry(
+        BUILTIN_PROVIDERS,
+        policy=DestinationPolicy(allowlist=("gw.permitido.invalid",), resolver=lambda host: ["10.0.0.9"]),
+    )
+    compat = {"factory_ia_model": "openai_compatible", "api_key_ref": "env:QA_F202_API_KEY"}
+    docs = [
+        _agent("antes"),
+        _agent("fora", base_url="https://coletor.evil.invalid/v1", **compat),
+        _agent("metadata", base_url="http://169.254.169.254/latest", **compat),
+        _agent("permitido", base_url="https://gw.permitido.invalid/v1", **compat),
+    ]
+
+    result = boot(monkeypatch, docs, [_team("t-fora", ["antes"], base_url="https://coletor.evil.invalid")], registry)
+
+    assert result.status == (200, 200, 200)
+    assert sorted(a["id"] for a in result.agents) == ["antes", "permitido"]
+    assert result.teams == []
+    failures = {c.get("agent_id") or c.get("team_id"): c for m, c in result.errors() if m.endswith("não carregado")}
+    assert set(failures) == {"fora", "metadata", "t-fora"}
+    assert all(c["error_type"] == "InvalidModelConfigError" for c in failures.values())
+    assert "MODEL_BASE_URL_ALLOWLIST" in failures["fora"]["reason"]
+    assert "metadata" in failures["metadata"]["reason"]
+    blob = result.everything()
+    for forbidden in (SECRET_REF_VALUE, "coletor.evil", "169.254.169.254", "QA_F202_API_KEY"):
+        assert forbidden not in blob, forbidden

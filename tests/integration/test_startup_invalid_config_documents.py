@@ -201,7 +201,8 @@ def test_startup_com_documentos_invalidos_sobe_e_expoe_so_os_validos(monkeypatch
         {
             "agent_id": "modelo-recusado",
             "error_type": "InvalidModelConfigError",
-            "reason": "Configuração de modelo inválida: modelo 'modelo-invalido' marcado como inválido no fake",
+            # F2-02: a recusa vem do create_model (texto da fábrica); o validate_model_config saiu.
+            "reason": "modelo 'modelo-invalido' marcado como inválido no fake",
         },
     ) in errors
     assert ("Team não carregado", {"team_id": "time-sem-membro-ativo", "error_type": "ValueError"}) in errors

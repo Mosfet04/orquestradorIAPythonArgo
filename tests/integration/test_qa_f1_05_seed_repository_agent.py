@@ -25,6 +25,7 @@ from agno.models.response import ModelResponse
 from src.application.services import agent_factory_service
 from src.application.services.agent_factory_service import AgentFactoryService
 from src.domain.entities.agent_config import AgentConfig
+from src.domain.entities.model_config import ModelConfig
 from src.infrastructure.http.http_tool_factory import HttpToolFactory
 from src.infrastructure.repositories import mongo_base
 from src.infrastructure.repositories.mongo_tool_repository import MongoToolRepository
@@ -61,11 +62,8 @@ class _FakeModelFactory:
     def __init__(self, model: FakeChatModel) -> None:
         self.model = model
 
-    def create_model(self, factory_ia_model: str, model_id: str, **kwargs: Any) -> FakeChatModel:
+    def create_model(self, config: ModelConfig) -> FakeChatModel:
         return self.model
-
-    def validate_model_config(self, factory_ia_model: str, model_id: str) -> dict[str, Any]:
-        return {"valid": True, "factory_type": factory_ia_model, "model_id": model_id, "errors": []}
 
 
 @pytest.fixture(autouse=True)

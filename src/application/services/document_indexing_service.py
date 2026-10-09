@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Dict, List
+from typing import Dict, List
 
 from src.domain.entities.document_node import DocumentNode
 from src.domain.entities.rag_config import RagConfig
 from src.domain.ports.document_parser_port import IDocumentParser
 from src.domain.ports.document_tree_repository_port import IDocumentTreeRepository
-from src.domain.ports.embedder_factory_port import IEmbedderFactory
+from src.domain.ports.embedder_factory_port import IEmbedderFactory, TextEmbedder
 from src.domain.ports.logger_port import ILogger
 from src.domain.ports.summary_generator_port import (
     ISummaryGenerator,
@@ -92,9 +92,9 @@ class DocumentIndexingService:
             self._logger.warning("Parser retornou zero nós", doc_name=doc_name)
             return []
 
-        embedder_config = rag_config.embedder_model_config()
-        embedder = self._embedder_factory.create_model(
-            embedder_config.provider, embedder_config.model_id
+        # A criação pode ler segredo (file:) e resolver DNS do destino: fora do event loop.
+        embedder = await asyncio.to_thread(
+            self._embedder_factory.create_embedder, rag_config.embedder_model_config()
         )
 
         await self._generate_summaries(doc_name, nodes)
@@ -161,7 +161,7 @@ class DocumentIndexingService:
             node.summary = node.content[:200]
 
     def _compute_embeddings(
-        self, nodes: List[DocumentNode], embedder: Any
+        self, nodes: List[DocumentNode], embedder: TextEmbedder
     ) -> None:
         """Computa embedding para cada nó usando o texto adequado."""
         for node in nodes:

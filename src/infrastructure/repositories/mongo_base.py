@@ -52,6 +52,9 @@ class MongoClientFactory:
 # Erros do mapeamento documento -> entidade (campo ausente, tipo errado, valor fora do enum).
 INVALID_DOCUMENT_ERRORS = (ValueError, TypeError, AttributeError, KeyError)
 
+# Grafia camelCase dos campos novos (F2-01): o mapper só lê snake_case; estas são ignoradas.
+IGNORED_CAMEL_CASE_KEYS = ("apiKeyRef", "baseUrl", "modelParams")
+
 
 class AsyncMongoRepository:
     """Base para repositórios MongoDB async."""
@@ -83,6 +86,27 @@ class AsyncMongoRepository:
             **{id_field: raw_id if isinstance(raw_id, str) else None},
             mongo_id=str(mongo_id) if isinstance(mongo_id, ObjectId) else None,
             error_type=type(exc).__name__,
+        )
+
+    def _warn_ignored_camel_case(self, id_field: str, doc: Mapping[str, object]) -> None:
+        """Aviso quando o documento usa ``apiKeyRef``/``baseUrl``/``modelParams`` (raiz ou ``rag_config``).
+
+        As chaves seguem ignoradas (o documento carrega como antes), mas quem gravou achando que
+        configurou endpoint/chave precisa saber. Cita só o id e os nomes das chaves, nunca valores.
+        """
+        rag = doc.get("rag_config")
+        keys = [key for key in IGNORED_CAMEL_CASE_KEYS if key in doc]
+        rag_keys = [key for key in IGNORED_CAMEL_CASE_KEYS if isinstance(rag, Mapping) and key in rag]
+        if not keys and not rag_keys:
+            return
+        raw_id = doc.get("id")
+        mongo_id = doc.get("_id")
+        self._logger.warning(
+            "Documento com chaves camelCase ignoradas; use model_params, base_url e api_key_ref",
+            **{id_field: raw_id if isinstance(raw_id, str) else None},
+            mongo_id=str(mongo_id) if isinstance(mongo_id, ObjectId) else None,
+            keys=keys,
+            rag_config_keys=rag_keys,
         )
 
     async def ping(self) -> bool:

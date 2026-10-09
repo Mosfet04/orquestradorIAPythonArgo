@@ -21,7 +21,8 @@ from agno.knowledge.embedder.base import Embedder
 from agno.models.base import Model
 from agno.models.response import ModelResponse
 
-from src.domain.ports import IEmbedderFactory, IModelFactory
+from src.domain.entities.model_config import ModelConfig
+from src.domain.ports import IEmbedderFactory, IModelFactory, InvalidModelConfigError
 
 
 def running_on_event_loop() -> bool:
@@ -192,41 +193,73 @@ class FakeEmbedder(Embedder):
 
 
 FactoryCall = tuple[str, str, dict[str, Any]]
-"""``(provider, model_id, kwargs)`` recebidos por ``create_model`` de uma fábrica fake."""
+"""``(provider, model_id, campos novos)`` de cada ``ModelConfig`` recebida por uma fábrica fake.
+
+O terceiro item só traz ``model_params``/``base_url``/``api_key_ref`` quando definidos: config
+legada vira ``(provider, model_id, {})``, a mesma forma dos snapshots golden.
+"""
+
+
+def factory_call(config: ModelConfig) -> FactoryCall:
+    extras: dict[str, Any] = {}
+    if config.params:
+        extras["model_params"] = dict(config.params)
+    if config.base_url is not None:
+        extras["base_url"] = config.base_url
+    if config.api_key_ref is not None:
+        extras["api_key_ref"] = config.api_key_ref
+    return (config.provider, config.model_id, extras)
 
 
 class FakeModelFactory(IModelFactory):
-    """``IModelFactory`` que devolve ``FakeChatModel`` com o ``id``/provider pedidos."""
+    """``IModelFactory`` que devolve ``FakeChatModel`` com o ``id``/provider pedidos.
+
+    ``invalid_models``: ids recusados com ``InvalidModelConfigError``, como a fábrica real faz.
+    """
 
     def __init__(self, *, responses: list[str] | None = None, invalid_models: set[str] | None = None) -> None:
         self._responses = list(responses or [])
         self._invalid = set(invalid_models or ())
         self.created: list[FactoryCall] = []
+        self.configs: list[ModelConfig] = []
+        self.on_event_loop: list[bool] = []
+        """Por chamada: ``True`` se rodou na thread do event loop (deveria ir via ``to_thread``)."""
         self.models: list[FakeChatModel] = []
         """Instâncias devolvidas por ``create_model``, na ordem (para assertar ``calls``)."""
 
-    def create_model(self, factory_ia_model: str, model_id: str, **kwargs: Any) -> FakeChatModel:
-        self.created.append((factory_ia_model, model_id, dict(kwargs)))
-        model = FakeChatModel(id=model_id, provider=factory_ia_model, responses=list(self._responses))
+    def create_model(self, config: ModelConfig) -> FakeChatModel:
+        self.created.append(factory_call(config))
+        self.configs.append(config)
+        self.on_event_loop.append(running_on_event_loop())
+        if config.model_id in self._invalid:
+            raise InvalidModelConfigError(f"modelo {config.model_id!r} marcado como inválido no fake")
+        model = FakeChatModel(id=config.model_id, provider=config.provider, responses=list(self._responses))
         self.models.append(model)
         return model
 
-    def validate_model_config(self, factory_ia_model: str, model_id: str) -> dict[str, Any]:
-        errors = [f"modelo {model_id!r} marcado como inválido no fake"] if model_id in self._invalid else []
-        return {"valid": not errors, "factory_type": factory_ia_model, "model_id": model_id, "errors": errors}
-
 
 class FakeEmbedderFactory(IEmbedderFactory):
-    """``IEmbedderFactory`` que devolve ``FakeEmbedder`` identificado pelo ``id``/provider pedidos."""
+    """``IEmbedderFactory`` que devolve ``FakeEmbedder`` identificado pelo ``id``/provider pedidos.
 
-    def __init__(self, *, dimensions: int = 32) -> None:
+    ``invalid_models``: ids recusados com ``InvalidModelConfigError``, como a fábrica real faz.
+    """
+
+    def __init__(self, *, dimensions: int = 32, invalid_models: set[str] | None = None) -> None:
         self._dimensions = dimensions
+        self._invalid = set(invalid_models or ())
         self.created: list[FactoryCall] = []
+        self.configs: list[ModelConfig] = []
+        self.on_event_loop: list[bool] = []
+        """Por chamada de ``create_embedder``: ``True`` se rodou na thread do event loop."""
         self.embedders: list[FakeEmbedder] = []
-        """Instâncias devolvidas por ``create_model``, na ordem (para assertar ``calls``/``on_event_loop``)."""
+        """Instâncias devolvidas por ``create_embedder``, na ordem (para assertar ``calls``/``on_event_loop``)."""
 
-    def create_model(self, factory_ia_model: str, model_id: str, **kwargs: Any) -> FakeEmbedder:
-        self.created.append((factory_ia_model, model_id, dict(kwargs)))
-        embedder = FakeEmbedder(id=model_id, provider=factory_ia_model, dimensions=self._dimensions)
+    def create_embedder(self, config: ModelConfig) -> FakeEmbedder:
+        self.created.append(factory_call(config))
+        self.configs.append(config)
+        self.on_event_loop.append(running_on_event_loop())
+        if config.model_id in self._invalid:
+            raise InvalidModelConfigError(f"modelo {config.model_id!r} marcado como inválido no fake")
+        embedder = FakeEmbedder(id=config.model_id, provider=config.provider, dimensions=self._dimensions)
         self.embedders.append(embedder)
         return embedder

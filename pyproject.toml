@@ -98,9 +98,7 @@ known-first-party = ["src", "tests"]
 # B904 = raise sem from; G004 = f-string em log; E501 = linha > 120.
 "src/application/services/agent_factory_service.py" = ["ASYNC230", "BLE001", "UP006", "UP015", "UP017", "UP035", "UP045"]
 "src/application/services/document_indexing_service.py" = ["BLE001", "UP006", "UP035"]
-"src/application/services/embedder_model_factory_service.py" = ["B904", "RUF012", "UP006", "UP035"]
 "src/application/services/knowledge_search_factory.py" = ["UP045"]
-"src/application/services/model_factory_service.py" = ["B904", "RUF012", "UP006", "UP035"]
 "src/application/services/search_strategies/hierarchical_search_strategy.py" = ["B905", "BLE001", "UP006", "UP035", "UP045"]
 "src/application/services/search_strategies/semantic_search_strategy.py" = ["UP006", "UP035"]
 "src/application/services/team_factory_service.py" = ["UP006", "UP007", "UP035"]
@@ -115,7 +113,6 @@ known-first-party = ["src", "tests"]
 "src/domain/ports/document_parser_port.py" = ["UP006", "UP035"]
 "src/domain/ports/document_tree_repository_port.py" = ["UP006", "UP035", "UP045"]
 "src/domain/ports/knowledge_search_port.py" = ["UP006", "UP035"]
-"src/domain/ports/model_factory_port.py" = ["UP006", "UP035"]
 "src/domain/ports/tool_factory_port.py" = ["UP006", "UP035"]
 "src/domain/repositories/agent_config_repository.py" = ["UP006", "UP035"]
 "src/domain/repositories/team_config_repository.py" = ["UP006", "UP035", "UP045"]
@@ -165,8 +162,6 @@ ignore_missing_imports = true
 # BASELINE HERDADA (F0-01): módulos que hoje falham em `mypy --strict`.
 # Esta lista SÓ PODE ENCOLHER: ao tipar um módulo, remova-o daqui.
 module = [
-    "src.application.services.embedder_model_factory_service",
-    "src.application.services.model_factory_service",
     "src.application.use_cases.get_active_agents_use_case",
     "src.domain.entities.agent_config",
     "src.domain.entities.tool",
@@ -248,7 +243,6 @@ forbidden_modules = [
 ignore_imports = [
     "src.application.services.agent_factory_service -> agno",
     "src.application.services.agent_factory_service -> src.infrastructure.tools.hierarchical_search_tool",
-    "src.application.services.model_factory_service -> agno",
     "src.application.services.team_factory_service -> agno",
     "src.application.use_cases.get_active_agents_use_case -> agno",
     "src.application.use_cases.get_active_teams_use_case -> agno",

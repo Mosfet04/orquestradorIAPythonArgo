@@ -37,7 +37,6 @@ ficar fora dele, senão a classificação vê um path diferente do que o roteado
 from __future__ import annotations
 
 import hmac
-import ipaddress
 from collections.abc import Collection, Iterable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -46,6 +45,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from src.infrastructure.config.app_config import API_KEY_HINT, AppConfig
+from src.infrastructure.security.ssrf import is_loopback_host as _is_loopback
 
 # Sem chaves, o app só sobe nestes ambientes e com bind em loopback.
 LOCAL_DEV_ENVIRONMENTS = frozenset({"development", "test"})
@@ -106,21 +106,18 @@ class ApiKeys:
     admin: bytes = field(repr=False)
 
 
-def _is_loopback(host: str) -> bool:
-    candidate = host.strip().lower()
-    if candidate == "localhost":
-        return True
-    if candidate.startswith("[") and candidate.endswith("]"):
-        candidate = candidate[1:-1]
-    try:
-        address = ipaddress.ip_address(candidate)
-    except ValueError:
-        return False
-    # IPv4 mapeado (::ffff:127.0.0.1): negado. O is_loopback dele é False no 3.11/3.12 e
-    # True a partir do 3.13; negar é o lado seguro e não depende da versão.
-    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
-        return False
-    return address.is_loopback
+def is_local_dev_mode(config: AppConfig) -> bool:
+    """Modo dev local (F1-04): sem chaves, ``APP_HOST`` em loopback e ENVIRONMENT development/test.
+
+    Regra única: a borda sobe sem autenticação só nele e o registry de providers (F2-02) só
+    aceita ``base_url`` de modelo em loopback nele.
+    """
+    return (
+        config.api_key_run is None
+        and config.api_key_admin is None
+        and _is_loopback(config.app_host)
+        and config.environment in LOCAL_DEV_ENVIRONMENTS
+    )
 
 
 def resolve_api_keys(config: AppConfig) -> ApiKeys | None:
@@ -132,7 +129,7 @@ def resolve_api_keys(config: AppConfig) -> ApiKeys | None:
     """
     if config.api_key_run is not None and config.api_key_admin is not None:
         return ApiKeys(run=config.api_key_run.encode(), admin=config.api_key_admin.encode())
-    if _is_loopback(config.app_host) and config.environment in LOCAL_DEV_ENVIRONMENTS:
+    if is_local_dev_mode(config):
         return None
     raise ValueError(
         "Autenticação obrigatória: defina API_KEY_RUN e API_KEY_ADMIN (gere cada uma com: "

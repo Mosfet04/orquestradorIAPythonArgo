@@ -1,9 +1,9 @@
-"""Matriz de providers (F1-06, B1): cada provider conhecido instancia ou falha nomeando o pacote.
+"""Matriz de providers (F1-06, B1; F2-02): cada provider do registry instancia ou falha nomeando o pacote.
 
 Sem rede: os construtores do agno 2.5.8 não abrem conexão (o cliente do SDK nasce no
 primeiro uso). Os SDKs opcionais que não estão instalados (``anthropic``, ``groq``; ver
 ``requirements.in``) são trocados por um stub de import só durante o teste, para provar
-que o caminho/classe da tabela existe no agno instalado: foi assim que o B1 passou
+que o caminho/classe da spec existe no agno instalado: foi assim que o B1 passou
 despercebido (``agno.models.groq.chat``/``GroqChat`` não existem; o ``ImportError`` do
 caminho errado virava "instale groq").
 
@@ -22,11 +22,13 @@ from collections.abc import Iterator
 
 import pytest
 
-from src.application.services.embedder_model_factory_service import EmbedderModelFactory
-from src.application.services.model_factory_service import ModelFactory
-from tests.fakes import RecordingLogger
+from src.domain.entities.model_config import ModelConfig
+from src.domain.ports.model_factory_port import InvalidModelConfigError
+from src.infrastructure.providers import DestinationPolicy, ProviderRegistry
+from src.infrastructure.providers.builtins import BUILTIN_PROVIDERS
 
 API_KEY = "chave-de-teste-sem-valor"  # nunca chega a um servidor: nada faz request
+COMPAT_URL = "https://llm.compat.example/v1"
 
 # provider -> (classe esperada, SDK do qual ela depende, pacote que a mensagem manda instalar)
 MODEL_MATRIX: dict[str, tuple[str, str | None, str | None]] = {
@@ -36,6 +38,7 @@ MODEL_MATRIX: dict[str, tuple[str, str | None, str | None]] = {
     "gemini": ("agno.models.google.gemini.Gemini", "google.genai", "google-genai"),
     "groq": ("agno.models.groq.groq.Groq", "groq", "groq"),
     "azure": ("agno.models.azure.openai_chat.AzureOpenAI", "openai", "openai"),
+    "openai_compatible": ("agno.models.openai.like.OpenAILike", "openai", "openai"),
 }
 MODEL_ALIASES = {"google": "gemini", "azureopenai": "azure"}
 
@@ -44,8 +47,26 @@ EMBEDDER_MATRIX: dict[str, tuple[str, str, str]] = {
     "openai": ("agno.knowledge.embedder.openai.OpenAIEmbedder", "openai", "openai"),
     "gemini": ("agno.knowledge.embedder.google.GeminiEmbedder", "google.genai", "google-genai"),
     "azure": ("agno.knowledge.embedder.azure_openai.AzureOpenAIEmbedder", "openai", "openai"),
+    "openai_compatible": ("agno.knowledge.embedder.openai_like.OpenAILikeEmbedder", "openai", "openai"),
 }
 EMBEDDER_ALIASES = {"google": "gemini", "azureopenai": "azure"}
+
+# Classe que herda de outra do agno: a mãe (já em cache) também sai, senão o SDK nem é importado.
+PARENT_MODULES = {
+    "agno.models.openai.like": "agno.models.openai.chat",
+    "agno.knowledge.embedder.openai_like": "agno.knowledge.embedder.openai",
+}
+
+
+def _registry() -> ProviderRegistry:
+    """Built-ins com a allowlist do ``openai_compatible`` e DNS falso (nada resolve de verdade)."""
+    policy = DestinationPolicy(allowlist=("llm.compat.example",), resolver=lambda host: ["10.0.0.9"])
+    return ProviderRegistry(BUILTIN_PROVIDERS, policy=policy)
+
+
+def _config(provider: str, model_id: str) -> ModelConfig:
+    base_url = COMPAT_URL if provider == "openai_compatible" else None
+    return ModelConfig(provider, model_id, base_url=base_url)
 
 
 def _qualname(obj: object) -> str:
@@ -58,8 +79,9 @@ def _module_of(class_path: str) -> str:
 
 
 def _drop_cached(monkeypatch: pytest.MonkeyPatch, prefix: str) -> None:
-    """Tira ``prefix`` e submódulos do cache; o monkeypatch devolve tudo no teardown."""
-    for name in [n for n in sys.modules if n == prefix or n.startswith(prefix + ".")]:
+    """Tira ``prefix`` (e a classe mãe), com submódulos, do cache; o monkeypatch devolve tudo no teardown."""
+    prefixes = [prefix, *([PARENT_MODULES[prefix]] if prefix in PARENT_MODULES else [])]
+    for name in [n for n in sys.modules if any(n == p or n.startswith(p + ".") for p in prefixes)]:
         monkeypatch.delitem(sys.modules, name)
 
 
@@ -138,8 +160,9 @@ def optional_sdks_stubbed(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
 @pytest.fixture
 def provider_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Gemini exige ``GEMINI_API_KEY`` no env; Azure exige ``AZURE_ENDPOINT``."""
-    monkeypatch.setenv("GEMINI_API_KEY", API_KEY)
+    """Chave de cada provider no ambiente (como antes); Azure exige ``AZURE_ENDPOINT``."""
+    for name in ("OPENAI", "ANTHROPIC", "GEMINI", "GROQ", "AZURE"):
+        monkeypatch.setenv(f"{name}_API_KEY", API_KEY)
     monkeypatch.setenv("AZURE_ENDPOINT", "https://azure.example.invalid")
     monkeypatch.setenv("AZURE_VERSION", "2024-10-21")
 
@@ -148,8 +171,9 @@ def provider_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_matriz_cobre_todos_os_providers_suportados() -> None:
-    assert set(MODEL_MATRIX) | set(MODEL_ALIASES) == set(ModelFactory.get_supported_models())
-    assert set(EMBEDDER_MATRIX) | set(EMBEDDER_ALIASES) == set(EmbedderModelFactory.get_supported_models())
+    registry = _registry()
+    assert set(MODEL_MATRIX) | set(MODEL_ALIASES) == set(registry.supported("chat"))
+    assert set(EMBEDDER_MATRIX) | set(EMBEDDER_ALIASES) == set(registry.supported("embedder"))
 
 
 @pytest.mark.usefixtures("optional_sdks_stubbed", "provider_env")
@@ -157,10 +181,19 @@ def test_matriz_cobre_todos_os_providers_suportados() -> None:
 def test_cada_provider_de_modelo_instancia_a_classe_real_do_agno(provider: str) -> None:
     expected, _, _ = MODEL_MATRIX[MODEL_ALIASES.get(provider, provider)]
 
-    model = ModelFactory(logger=RecordingLogger()).create_model(provider, "modelo-x", api_key=API_KEY)
+    model = _registry().create_model(_config(provider, "modelo-x"))
 
     assert _qualname(model) == expected
     assert model.id == "modelo-x"
+
+
+@pytest.mark.usefixtures("optional_sdks_stubbed", "provider_env")
+@pytest.mark.parametrize("provider", ["openai", "anthropic", "gemini", "groq", "azure"])
+def test_chave_do_ambiente_chega_ao_modelo(provider: str) -> None:
+    """Sem campos novos, cada provider recebe a ``<PROVEDOR>_API_KEY`` do ambiente, como antes."""
+    model = _registry().create_model(_config(provider, "modelo-x"))
+
+    assert model.api_key == API_KEY  # type: ignore[attr-defined]
 
 
 @pytest.mark.usefixtures("provider_env")
@@ -175,24 +208,12 @@ def test_provider_de_modelo_sem_sdk_falha_nomeando_o_pacote(
     monkeypatch.setitem(sys.modules, sdk, None)
     _drop_cached(monkeypatch, _module_of(class_path))
 
-    with pytest.raises(ValueError) as caught:
-        ModelFactory(logger=RecordingLogger()).create_model(provider, "modelo-x", api_key=API_KEY)
+    with pytest.raises(InvalidModelConfigError) as caught:
+        _registry().create_model(_config(provider, "modelo-x"))
 
     message = str(caught.value)
     assert f"pip install {package}" in message
     assert "\n" not in message and "Traceback" not in message
-
-
-@pytest.mark.usefixtures("provider_env")
-def test_validate_model_config_do_provider_sem_sdk_diz_o_pacote(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setitem(sys.modules, "groq", None)
-    _drop_cached(monkeypatch, "agno.models.groq")
-
-    result = ModelFactory(logger=RecordingLogger()).validate_model_config("groq", "llama-3.3-70b")
-
-    assert result["valid"] is False
-    assert result["available"] is False
-    assert any("pip install groq" in error for error in result["errors"])
 
 
 # ── embedders ────────────────────────────────────────────────────────
@@ -203,10 +224,10 @@ def test_validate_model_config_do_provider_sem_sdk_diz_o_pacote(monkeypatch: pyt
 def test_cada_provider_de_embedder_instancia_a_classe_real_do_agno(provider: str) -> None:
     expected, _, _ = EMBEDDER_MATRIX[EMBEDDER_ALIASES.get(provider, provider)]
 
-    embedder = EmbedderModelFactory(logger=RecordingLogger()).create_model(provider, "emb-x", api_key=API_KEY)
+    embedder = _registry().create_embedder(_config(provider, "emb-x"))
 
     assert _qualname(embedder) == expected
-    assert embedder.id == "emb-x"
+    assert embedder.id == "emb-x"  # type: ignore[attr-defined]
 
 
 @pytest.mark.usefixtures("provider_env")
@@ -218,8 +239,8 @@ def test_provider_de_embedder_sem_sdk_falha_nomeando_o_pacote(
     monkeypatch.setitem(sys.modules, sdk, None)
     _drop_cached(monkeypatch, _module_of(class_path))
 
-    with pytest.raises(ValueError) as caught:
-        EmbedderModelFactory(logger=RecordingLogger()).create_model(provider, "emb-x", api_key=API_KEY)
+    with pytest.raises(InvalidModelConfigError) as caught:
+        _registry().create_embedder(_config(provider, "emb-x"))
 
     message = str(caught.value)
     assert f"pip install {package}" in message

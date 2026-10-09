@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import ipaddress
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Optional
 from urllib.parse import urlsplit
 
 from src.infrastructure.config.secrets import DEFAULT_SECRETS_DIR
+from src.infrastructure.security.ssrf import normalize_host
 
 ENVIRONMENTS = ("development", "test", "staging", "production")
 
@@ -23,6 +26,9 @@ DEFAULT_CORS_ALLOWED_ORIGINS = (
 # Chaves de API da borda (F1-04): tamanho mínimo e como gerar uma.
 API_KEY_MIN_LENGTH = 32
 API_KEY_HINT = 'python -c "import secrets; print(secrets.token_urlsafe(32))"'
+
+# Rótulo DNS (RFC 1123): letras, dígitos e hífen, sem hífen nas pontas, até 63 caracteres.
+_DNS_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 
 _TRUE = ("true", "1", "yes", "on")
 _FALSE = ("false", "0", "no", "off")
@@ -57,6 +63,8 @@ class AppConfig:
     api_key_admin: Optional[str] = field(default=None, repr=False)
     # Raiz dos api_key_ref "file:" (F2-01); repassada ao resolve_secret pelo composition root.
     secrets_dir: str = DEFAULT_SECRETS_DIR
+    # Hosts aceitos em base_url de modelo/embedder vinda da config (F2-02), normalizados.
+    model_base_url_allowlist: tuple[str, ...] = ()
 
     @classmethod
     def load(cls) -> AppConfig:
@@ -88,6 +96,7 @@ class AppConfig:
             api_key_run=_api_key("API_KEY_RUN", os.getenv("API_KEY_RUN")),
             api_key_admin=_api_key("API_KEY_ADMIN", os.getenv("API_KEY_ADMIN")),
             secrets_dir=_secrets_dir(),
+            model_base_url_allowlist=_model_base_url_allowlist(),
         )
         config._validate()
         return config
@@ -150,6 +159,38 @@ def _secrets_dir() -> str:
     if os.path.normpath(value) in ("/", "//"):
         raise ValueError("SECRETS_DIR não pode ser a raiz do sistema de arquivos")
     return value
+
+
+def _model_base_url_allowlist() -> tuple[str, ...]:
+    """``MODEL_BASE_URL_ALLOWLIST``: hosts separados por vírgula; vazio = nenhum.
+
+    Só o host (nome DNS ou IP literal), sem esquema, porta, caminho nem curinga: a comparação
+    é exata com o host da ``base_url``. Normaliza caixa, ponto final e a forma do IPv6.
+    """
+    raw = os.getenv("MODEL_BASE_URL_ALLOWLIST") or ""
+    hosts: dict[str, None] = {}
+    for position, entry in enumerate((item.strip() for item in raw.split(",")), start=1):
+        if entry:
+            hosts[_allowlisted_host(entry, position)] = None
+    return tuple(hosts)
+
+
+def _allowlisted_host(entry: str, position: int) -> str:
+    """Host normalizado; inválido = ``ValueError`` com a posição, nunca a entrada (pode ser uma
+    URL com credencial colada por engano)."""
+    name = normalize_host(entry)
+    try:
+        ipaddress.ip_address(name)
+        return name  # IP literal, já na forma canônica
+    except ValueError:
+        pass
+    if len(name) > 253 or not all(_DNS_LABEL.fullmatch(label) for label in name.split(".")):
+        raise ValueError(
+            f"MODEL_BASE_URL_ALLOWLIST inválida: entrada {position} (contando da esquerda, separadas por "
+            "vírgula) não é um host; use só o host (ex.: llm.interno.example), sem esquema, credencial, "
+            "porta, caminho nem '*'"
+        )
+    return name
 
 
 def _optional_bool(name: str, raw: Optional[str], *, default: bool) -> bool:

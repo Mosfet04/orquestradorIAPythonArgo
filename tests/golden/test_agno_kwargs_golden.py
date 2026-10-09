@@ -19,6 +19,7 @@ from src.application.services.document_indexing_service import DocumentIndexingS
 from src.application.services.knowledge_search_factory import KnowledgeSearchFactory
 from src.application.services.team_factory_service import TeamFactoryService
 from src.domain.entities.agent_config import AgentConfig
+from src.domain.entities.model_config import ModelConfig
 from src.domain.entities.rag_config import RagConfig, SearchStrategy
 from src.domain.entities.team_config import TeamConfig
 from src.domain.entities.tool import HttpMethod, ParameterType, Tool, ToolParameter
@@ -323,7 +324,7 @@ def test_espiao_pega_agent_construido_por_qualquer_caminho_de_import(agno_calls:
 
 def test_normalize_identifica_fakes_por_tipo_estavel_e_nao_pelo_caminho_do_modulo():
     """Mover os fakes de módulo (F2) não pode exigir ``--update-golden``."""
-    embedder = FakeEmbedderFactory(dimensions=4).create_model("ollama", "nomic")
+    embedder = FakeEmbedderFactory(dimensions=4).create_embedder(ModelConfig("ollama", "nomic"))
 
     assert normalize(FakeChatModel(id="m", provider="openai")) == {"__type__": "fake", "id": "m", "provider": "openai"}
     assert normalize(embedder) == {"__type__": "fake", "id": "nomic", "provider": "ollama", "dimensions": 4}
@@ -352,7 +353,7 @@ def test_normalize_nao_grava_credenciais_das_urls_de_conexao():
     from agno.vectordb.mongodb import MongoDb as MongoVectorDb
 
     url = "mongodb://user:s3nh4@db.invalid:27017/app"
-    embedder = FakeEmbedderFactory().create_model("x", "y")
+    embedder = FakeEmbedderFactory().create_embedder(ModelConfig("x", "y"))
 
     db = normalize(MongoAgentDb(db_url=url, db_name=DB_NAME))
     vector = normalize(MongoVectorDb(collection_name="rag", db_url=url, database=DB_NAME, embedder=embedder))

@@ -26,6 +26,7 @@ from starlette.testclient import TestClient
 from src.application.services import agent_factory_service
 from src.application.services.agent_factory_service import AgentFactoryService
 from src.domain.entities.agent_config import AgentConfig
+from src.domain.entities.model_config import ModelConfig
 from src.domain.entities.tool import HttpMethod, ParameterType, Tool, ToolParameter
 from src.domain.ports import IModelFactory
 from src.infrastructure.http.http_tool_factory import HttpToolFactory
@@ -105,11 +106,8 @@ class _ScriptedModelFactory(IModelFactory):
     def __init__(self, scripts: dict[str, list[str | ModelResponse]]) -> None:
         self.models = {key: FakeChatModel(id=key, responses=list(script)) for key, script in scripts.items()}
 
-    def create_model(self, factory_ia_model: str, model_id: str, **kwargs: Any) -> FakeChatModel:
-        return self.models[model_id]
-
-    def validate_model_config(self, factory_ia_model: str, model_id: str) -> dict[str, Any]:
-        return {"valid": True, "factory_type": factory_ia_model, "model_id": model_id, "errors": []}
+    def create_model(self, config: ModelConfig) -> FakeChatModel:
+        return self.models[config.model_id]
 
 
 @pytest.fixture(autouse=True)

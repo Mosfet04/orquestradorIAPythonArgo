@@ -62,7 +62,7 @@ graph TB
 
     subgraph "📋 Application"
         UC["Use Cases"]
-        S["Services<br/>(AgentFactory, TeamFactory, ModelFactory,<br/>KnowledgeSearchFactory, DocumentIndexing)"]
+        S["Services<br/>(AgentFactory, TeamFactory,<br/>KnowledgeSearchFactory, DocumentIndexing)"]
         SS["Search Strategies<br/>(Semantic, Hierarchical)"]
     end
 
@@ -71,6 +71,7 @@ graph TB
         WEB["AppFactory + AgentOS"]
         DI["DependencyContainer"]
         TL["Tools & Parsers"]
+        PR["ProviderRegistry<br/>(models & embedders)"]
     end
 
     subgraph "🌐 Presentation"
@@ -82,7 +83,8 @@ graph TB
     S --> P
     DB -.->|implements| P
     TL -.->|implements| P
-    DI --> CTRL & S & DB & TL
+    PR -.->|implements| P
+    DI --> CTRL & S & DB & TL & PR
     WEB --> DI
 
     style E fill:#e1f5fe
@@ -95,7 +97,7 @@ graph TB
 
 - 🤖 **Multi-Agent + Teams** — AI agents and multi-agent Teams with routing, coordination, and broadcast modes
 - 🛠️ **Zero-Code Config** — Add agents, teams, and tools via MongoDB only
-- 🧠 **6 Providers** — Ollama, OpenAI, Anthropic, Gemini, Groq, Azure
+- 🧠 **7 Providers** — Ollama, OpenAI, Anthropic, Gemini, Groq, Azure, OpenAI-compatible (vLLM, LM Studio, gateways)
 - 📚 **RAG** — Document embeddings persisted in MongoDB
 - 🌳 **Hierarchical RAG** — Document tree with semantic + hierarchical search (Strategy Pattern)
 - 💾 **Smart Memory** — User long-term memory + session summaries

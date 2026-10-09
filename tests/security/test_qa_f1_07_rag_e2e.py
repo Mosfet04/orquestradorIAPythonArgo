@@ -37,6 +37,7 @@ from src.application.services.document_indexing_service import DocumentIndexingS
 from src.application.services.knowledge_search_factory import KnowledgeSearchFactory
 from src.application.use_cases.get_active_agents_use_case import GetActiveAgentsUseCase
 from src.domain.entities.agent_config import AgentConfig
+from src.domain.entities.model_config import ModelConfig
 from src.domain.entities.rag_config import RagConfig, SearchStrategy
 from src.infrastructure.parsers.text_document_parser import TextDocumentParser
 from src.infrastructure.services.llm_summary_generator import LLMSummaryGenerator
@@ -53,6 +54,7 @@ from tests.fakes import (
     RecordingLogger,
 )
 from tests.fakes.knowledge import OfflineKnowledge
+from tests.fakes.models import factory_call
 
 pytestmark = pytest.mark.usefixtures("offline_knowledge")
 
@@ -171,8 +173,9 @@ class KeywordEmbedderFactory(FakeEmbedderFactory):
         super().__init__()
         self._wait_for_loop = wait_for_loop
 
-    def create_model(self, factory_ia_model: str, model_id: str, **kwargs: Any) -> KeywordEmbedder:
-        self.created.append((factory_ia_model, model_id, dict(kwargs)))
+    def create_embedder(self, config: ModelConfig) -> KeywordEmbedder:
+        self.created.append(factory_call(config))
+        factory_ia_model, model_id = config.provider, config.model_id
         wait = self._wait_for_loop
 
         class _Embedder(KeywordEmbedder):
@@ -669,9 +672,9 @@ class _ExplodingModel(FakeChatModel):
 
 
 class _ExplodingFactory(FakeModelFactory):
-    def create_model(self, factory_ia_model: str, model_id: str, **kwargs: Any) -> FakeChatModel:
-        self.created.append((factory_ia_model, model_id, dict(kwargs)))
-        return _ExplodingModel(id=model_id, provider=factory_ia_model)
+    def create_model(self, config: ModelConfig) -> FakeChatModel:
+        self.created.append(factory_call(config))
+        return _ExplodingModel(id=config.model_id, provider=config.provider)
 
 
 @pytest.mark.usefixtures("workspace")

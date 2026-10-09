@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
 
 import pytest
@@ -9,6 +10,8 @@ from agno.agent import Agent
 from agno.models.message import Message
 from agno.run.base import RunStatus
 
+from src.domain.entities.model_config import ModelConfig
+from src.domain.ports import InvalidModelConfigError
 from tests.fakes import (
     FakeChatModel,
     FakeEmbedder,
@@ -130,27 +133,44 @@ async def test_fake_embedder_expoe_api_async_e_usage_do_agno():
 def test_fake_model_factory_cria_modelo_com_id_e_provider_pedidos():
     factory = FakeModelFactory(responses=["oi"])
 
-    model = factory.create_model("openai", "gpt-x", temperature=0.2)
+    model = factory.create_model(ModelConfig("openai", "gpt-x", params={"temperature": 0.2}))
 
     assert isinstance(model, FakeChatModel)
     assert (model.id, model.provider) == ("gpt-x", "openai")
-    assert factory.validate_model_config("openai", "gpt-x")["valid"] is True
-    assert factory.created == [("openai", "gpt-x", {"temperature": 0.2})]
+    assert factory.created == [("openai", "gpt-x", {"model_params": {"temperature": 0.2}})]
+    assert factory.on_event_loop == [False]
+
+
+def test_fake_model_factory_config_legada_registra_sem_campos_novos():
+    factory = FakeModelFactory()
+
+    factory.create_model(ModelConfig("ollama", "llama3"))
+
+    assert factory.created == [("ollama", "llama3", {})]
 
 
 def test_fake_model_factory_pode_simular_config_invalida():
     factory = FakeModelFactory(invalid_models={"quebrado"})
 
-    result = factory.validate_model_config("openai", "quebrado")
+    with pytest.raises(InvalidModelConfigError, match="'quebrado' marcado como inválido"):
+        factory.create_model(ModelConfig("openai", "quebrado"))
+    assert factory.models == []
 
-    assert result["valid"] is False
-    assert result["errors"]
+
+async def test_fake_factories_registram_se_rodaram_no_event_loop():
+    models, embedders = FakeModelFactory(), FakeEmbedderFactory()
+
+    models.create_model(ModelConfig("openai", "gpt-x"))
+    await asyncio.to_thread(embedders.create_embedder, ModelConfig("ollama", "nomic"))
+
+    assert models.on_event_loop == [True]
+    assert embedders.on_event_loop == [False]
 
 
 def test_fake_embedder_factory_cria_embedder_identificado():
     factory = FakeEmbedderFactory(dimensions=16)
 
-    embedder = factory.create_model("ollama", "nomic", base_url="http://ollama.invalid")
+    embedder = factory.create_embedder(ModelConfig("ollama", "nomic", base_url="http://ollama.invalid"))
 
     assert isinstance(embedder, FakeEmbedder)
     assert (embedder.id, embedder.provider, embedder.dimensions) == ("nomic", "ollama", 16)

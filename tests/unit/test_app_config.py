@@ -270,3 +270,48 @@ class TestSecretsDir:
         with patch.dict(os.environ, {"SECRETS_DIR": value}, clear=True):
             with pytest.raises(ValueError, match="SECRETS_DIR"):
                 AppConfig.load()
+
+
+class TestModelBaseUrlAllowlist:
+    """``MODEL_BASE_URL_ALLOWLIST`` (F2-02): hosts aceitos em ``base_url`` de modelo vinda da config."""
+
+    @pytest.mark.parametrize("value", [None, "", " , ,"])
+    def test_ausente_ou_vazia_e_lista_vazia(self, value):
+        env = {} if value is None else {"MODEL_BASE_URL_ALLOWLIST": value}
+        with patch.dict(os.environ, env, clear=True):
+            assert AppConfig.load().model_base_url_allowlist == ()
+
+    def test_normaliza_caixa_espacos_ponto_final_e_ipv6(self):
+        raw = " GW.Example.com , llm.interno., 10.0.0.5,[::1], fd00:0:0::7 ,gw.example.com"
+        with patch.dict(os.environ, {"MODEL_BASE_URL_ALLOWLIST": raw}, clear=True):
+            allowlist = AppConfig.load().model_base_url_allowlist
+        assert allowlist == ("gw.example.com", "llm.interno", "10.0.0.5", "::1", "fd00::7")
+
+    @pytest.mark.parametrize(
+        "entry",
+        [
+            "https://gw.example.com",
+            "gw.example.com:8443",
+            "*.example.com",
+            "gw.example.com/v1",
+            "user@gw.example.com",
+            "gw_example.com",
+            "-gw.example.com",
+            "gw..example.com",
+            "gw.example.com?x",
+            "[::1]:8443",
+            "exämple.com",
+        ],
+    )
+    def test_esquema_porta_curinga_ou_host_invalido_falha_no_startup(self, entry):
+        with patch.dict(os.environ, {"MODEL_BASE_URL_ALLOWLIST": f"ok.example.com,{entry}"}, clear=True):
+            with pytest.raises(ValueError, match="MODEL_BASE_URL_ALLOWLIST") as caught:
+                AppConfig.load()
+        # BUG-F2-02-QA-1: a entrada pode ser uma URL com credencial; o erro cita só a posição
+        assert "entrada 2" in str(caught.value) and entry not in str(caught.value)
+
+    def test_ip_com_ponto_final_e_recusado(self):
+        """N5: ``10.0.0.5.`` é nome DNS, não o IP; ambíguo na allowlist."""
+        with patch.dict(os.environ, {"MODEL_BASE_URL_ALLOWLIST": "10.0.0.5."}, clear=True):
+            with pytest.raises(ValueError, match="entrada 1"):
+                AppConfig.load()

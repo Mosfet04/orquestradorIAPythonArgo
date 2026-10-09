@@ -21,6 +21,7 @@ from src.infrastructure.web.api_key_auth import (
     ApiKeys,
     RouteAccess,
     classify_route,
+    is_local_dev_mode,
     resolve_api_keys,
 )
 from src.infrastructure.web.app_factory import AppFactory
@@ -279,6 +280,22 @@ def test_sem_chaves_fora_do_modo_dev_local_recusa(host: str, environment: str):
     with pytest.raises(ValueError, match=r"API_KEY_RUN e API_KEY_ADMIN.*secrets\.token_urlsafe") as exc:
         resolve_api_keys(_config(host=host, environment=environment, keys=False))
     assert host in str(exc.value) and environment in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    ("host", "environment", "keys", "expected"),
+    [
+        ("127.0.0.1", "development", False, True),
+        ("localhost", "test", False, True),
+        ("127.0.0.1", "development", True, False),  # com chaves não é modo dev local
+        ("0.0.0.0", "development", False, False),  # noqa: S104
+        ("127.0.0.1", "production", False, False),
+        ("::ffff:127.0.0.1", "development", False, False),
+    ],
+)
+def test_is_local_dev_mode_e_a_mesma_regra_da_borda(host: str, environment: str, keys: bool, expected: bool):
+    """F2-02: o registry de providers reutiliza esta regra (base_url em loopback só no modo dev local)."""
+    assert is_local_dev_mode(_config(host=host, environment=environment, keys=keys)) is expected
 
 
 @pytest.mark.parametrize(("host", "environment"), [("0.0.0.0", "production"), ("127.0.0.1", "development")])  # noqa: S104

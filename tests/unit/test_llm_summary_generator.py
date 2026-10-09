@@ -9,9 +9,11 @@ from typing import Any
 import pytest
 from agno.models.response import ModelResponse
 
+from src.domain.entities.model_config import ModelConfig
 from src.domain.ports.summary_generator_port import SummaryTimeoutError
 from src.infrastructure.services.llm_summary_generator import LLMSummaryGenerator
 from tests.fakes import FakeChatModel, FakeModelFactory, RecordingLogger
+from tests.fakes.models import factory_call
 
 TEXTO = "O orquestrador monta agentes a partir do MongoDB. " * 10
 
@@ -68,7 +70,11 @@ async def test_erro_real_do_modelo_cai_no_fallback_com_log():
     assert summary == TEXTO[:200]
     warnings = [r for r in logger.records if r.level == "warning"]
     assert [r.message for r in warnings] == ["Fallback de sumário: falha ao chamar o modelo"]
-    assert warnings[0].context["error_type"] == "ScriptExhaustedError"
+    assert warnings[0].context == {
+        "factory_ia_model": "openai",
+        "model_id": "gpt-resumo",
+        "error_type": "ScriptExhaustedError",
+    }
 
 
 async def test_resposta_vazia_do_modelo_cai_no_fallback_com_log():
@@ -112,8 +118,8 @@ class _SingleModelFactory(FakeModelFactory):
         super().__init__()
         self._model = model
 
-    def create_model(self, factory_ia_model: str, model_id: str, **kwargs: Any) -> FakeChatModel:
-        self.created.append((factory_ia_model, model_id, dict(kwargs)))
+    def create_model(self, config: ModelConfig) -> FakeChatModel:
+        self.created.append(factory_call(config))
         self.models.append(self._model)
         return self._model
 
@@ -159,3 +165,15 @@ def test_timeout_padrao_do_construtor_e_finito():
     default = inspect.signature(LLMSummaryGenerator).parameters["timeout_seconds"].default
 
     assert 0 < default <= 120
+
+
+async def test_modelo_e_criado_fora_do_event_loop_e_uma_vez_com_sumarios_concorrentes():
+    """F2-02: a criação pode ler segredo (``file:``) e resolver DNS; os sumários rodam em gather."""
+    factory = FakeModelFactory(responses=["a", "b", "c", "d", "e"])
+    generator = _generator(factory, RecordingLogger())
+
+    summaries = await asyncio.gather(*(generator.generate_summary(f"texto {i}") for i in range(5)))
+
+    assert sorted(summaries) == ["a", "b", "c", "d", "e"]
+    assert factory.created == [("openai", "gpt-resumo", {})]
+    assert factory.on_event_loop == [False]

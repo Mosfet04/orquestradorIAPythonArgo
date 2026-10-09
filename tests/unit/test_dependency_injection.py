@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.domain.entities.model_config import ModelConfig
+from src.domain.ports import InvalidModelConfigError
 from src.infrastructure.dependency_injection import DependencyContainer, HealthService
 from src.infrastructure.repositories import mongo_base
 from tests.fakes import RecordingLogger
@@ -143,40 +145,86 @@ class TestDependencyContainer:
         created = {c.kwargs["name"] for c in repo_collection.create_index.await_args_list}
         assert created == {"idx_doc_level", "idx_parent", "idx_node_id"}
 
-    @pytest.mark.parametrize(
-        ("env", "expected_host"),
-        [({"OLLAMA_BASE_URL": "http://ollama:11434"}, "http://ollama:11434"), ({}, None)],
-    )
-    @patch("src.infrastructure.dependency_injection.AsyncIOMotorClient")
-    async def test_ollama_base_url_chega_as_factories(self, mock_motor_cls, monkeypatch, env, expected_host):
-        """OLLAMA_BASE_URL do AppConfig é injetado nas factories; sem ele, vale o default do agno."""
+    @staticmethod
+    async def _registry_for(monkeypatch, mock_motor_cls, env: dict[str, str]):
+        """Sobe o container com ``env`` e devolve o ``ProviderRegistry`` montado pelo composition root."""
         from src.infrastructure import dependency_injection as di
         from src.infrastructure.config.app_config import AppConfig
 
         mock_client = MagicMock()
         mock_client.admin.command = AsyncMock(return_value={"ok": 1})
         mock_motor_cls.return_value = mock_client
+        built: list[object] = []
+        real_registry = di.ProviderRegistry
 
-        built: dict[str, object] = {}
+        def _recording(*args, **kwargs):
+            registry = real_registry(*args, **kwargs)
+            built.append(registry)
+            return registry
 
-        def _recording(cls):
-            def _build(**kwargs):
-                instance = cls(**kwargs)
-                built[cls.__name__] = instance
-                return instance
-            return _build
-
-        monkeypatch.setattr(di, "ModelFactory", _recording(di.ModelFactory))
-        monkeypatch.setattr(di, "EmbedderModelFactory", _recording(di.EmbedderModelFactory))
-
+        monkeypatch.setattr(di, "ProviderRegistry", _recording)
         with patch.dict("os.environ", env, clear=True):
             config = AppConfig.load()
         await DependencyContainer.create_async(config)
+        [registry] = built
+        return registry
 
-        model = built["ModelFactory"].create_model("ollama", "llama3.2:latest")
-        embedder = built["EmbedderModelFactory"].create_model("ollama", "nomic-embed-text")
+    @pytest.mark.parametrize(
+        ("env", "expected_host"),
+        [({"OLLAMA_BASE_URL": "http://ollama:11434"}, "http://ollama:11434"), ({}, None)],
+    )
+    @patch("src.infrastructure.dependency_injection.AsyncIOMotorClient")
+    async def test_ollama_base_url_chega_ao_registry(self, mock_motor_cls, monkeypatch, env, expected_host):
+        """OLLAMA_BASE_URL do AppConfig chega ao Ollama de chat e embedder; sem ele, vale o default do agno."""
+        registry = await self._registry_for(monkeypatch, mock_motor_cls, env)
+
+        model = registry.create_model(ModelConfig("ollama", "llama3.2:latest"))
+        embedder = registry.create_embedder(ModelConfig("ollama", "nomic-embed-text"))
         assert model.host == expected_host
         assert embedder.host == expected_host
+
+    @patch("src.infrastructure.dependency_injection.AsyncIOMotorClient")
+    async def test_ollama_base_url_nao_vaza_para_outro_provider(self, mock_motor_cls, monkeypatch):
+        registry = await self._registry_for(monkeypatch, mock_motor_cls, {"OLLAMA_BASE_URL": "http://ollama:11434"})
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-teste")
+
+        model = registry.create_model(ModelConfig("openai", "gpt-4o-mini"))
+        assert model.base_url is None
+
+    @patch("src.infrastructure.dependency_injection.AsyncIOMotorClient")
+    async def test_secrets_dir_e_allowlist_do_app_config_chegam_ao_registry(self, mock_motor_cls, monkeypatch, tmp_path):
+        (tmp_path / "gw").write_text("chave-do-arquivo", encoding="utf-8")
+        registry = await self._registry_for(
+            monkeypatch,
+            mock_motor_cls,
+            {"SECRETS_DIR": str(tmp_path), "MODEL_BASE_URL_ALLOWLIST": "10.0.0.5", "ENVIRONMENT": "production",
+             "API_KEY_RUN": "r" * 32, "API_KEY_ADMIN": "a" * 32},
+        )
+
+        model = registry.create_model(
+            ModelConfig("openai_compatible", "m", base_url="http://10.0.0.5:8000/v1", api_key_ref=f"file:{tmp_path}/gw")
+        )
+        assert (model.base_url, model.api_key) == ("http://10.0.0.5:8000/v1", "chave-do-arquivo")
+        with pytest.raises(InvalidModelConfigError, match="MODEL_BASE_URL_ALLOWLIST"):
+            registry.create_model(ModelConfig("openai_compatible", "m", base_url="http://127.0.0.1:8000"))
+
+    @pytest.mark.parametrize(
+        ("env", "loopback_allowed"),
+        [
+            ({}, True),  # modo dev local: sem chaves, APP_HOST loopback, development
+            ({"API_KEY_RUN": "r" * 32, "API_KEY_ADMIN": "a" * 32}, False),
+        ],
+    )
+    @patch("src.infrastructure.dependency_injection.AsyncIOMotorClient")
+    async def test_loopback_em_base_url_so_no_modo_dev_local(self, mock_motor_cls, monkeypatch, env, loopback_allowed):
+        registry = await self._registry_for(monkeypatch, mock_motor_cls, env)
+        config = ModelConfig("openai_compatible", "m", base_url="http://127.0.0.1:8000/v1")
+
+        if loopback_allowed:
+            assert registry.create_model(config).base_url == "http://127.0.0.1:8000/v1"
+        else:
+            with pytest.raises(InvalidModelConfigError):
+                registry.create_model(config)
 
     @patch("src.infrastructure.dependency_injection.AsyncIOMotorClient")
     async def test_create_async_mongo_unavailable(self, mock_motor_cls):

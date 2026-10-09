@@ -37,7 +37,25 @@ def _is_environ(node: ast.expr) -> bool:
     return isinstance(node, ast.Attribute) and node.attr == "environ"
 
 
+def _env_vars_of_builtin_providers() -> set[str]:
+    """Variáveis que o ``ProviderRegistry`` (F2-02) lê pelo nome guardado nas specs built-in."""
+    from src.infrastructure.providers.builtins import BUILTIN_PROVIDERS
+
+    names: set[str] = set()
+    for spec in BUILTIN_PROVIDERS:
+        if spec.api_key_env:
+            names.add(spec.api_key_env)
+        for class_spec in (spec.chat, spec.embedder):
+            names.update(item.env for item in (class_spec.operator_env if class_spec else ()))
+    return names
+
+
 def _env_vars_read_by_code() -> set[str]:
+    """Leituras literais no código mais as variáveis das specs de provider."""
+    return _literal_env_reads() | _env_vars_of_builtin_providers()
+
+
+def _literal_env_reads() -> set[str]:
     """Nomes literais em os.getenv("X"), os.environ.get/setdefault("X") e os.environ["X"]."""
     names: set[str] = set()
     for path in CODE_FILES:
@@ -93,6 +111,8 @@ def test_scanner_enxerga_as_leituras_conhecidas():
     assert {"MONGO_CONNECTION_STRING", "APP_HOST", "APP_PORT", "OLLAMA_BASE_URL", "GEMINI_API_KEY"} <= read
     # F1-03: borda e telemetria (AGNO_TELEMETRY via os.environ.setdefault)
     assert {"ENVIRONMENT", "ENABLE_DOCS", "CORS_ALLOWED_ORIGINS", "AGNO_TELEMETRY"} <= read
+    # F2-02: chaves e variáveis do operador lidas pelo nome guardado nas specs de provider
+    assert {"GEMINI_API_KEY", "AZURE_API_KEY", "AZURE_ENDPOINT", "AZURE_VERSION"} <= _env_vars_of_builtin_providers()
 
 
 def test_env_example_lista_toda_variavel_lida_pelo_codigo():

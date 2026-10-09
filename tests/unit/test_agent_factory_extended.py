@@ -27,7 +27,6 @@ def _make_config(**overrides) -> AgentConfig:
 @pytest.fixture
 def service(mock_logger, mock_tool_repository):
     model_factory = MagicMock()
-    model_factory.validate_model_config.return_value = {"valid": True, "errors": []}
     model_factory.create_model.return_value = MagicMock()
 
     embedder_factory = MagicMock()
@@ -107,7 +106,7 @@ class TestLoadDocument:
     ):
         """Sem doc_name, deve logar info e não inserir."""
         mock_agent.return_value = MagicMock()
-        service._embedder_factory.create_model.return_value = MagicMock()
+        service._embedder_factory.create_embedder.return_value = MagicMock()
         knowledge_instance = MagicMock()
         mock_knowledge_cls.return_value = knowledge_instance
 
@@ -126,7 +125,7 @@ class TestLoadDocument:
     ):
         """FileNotFoundError deve logar warning."""
         mock_agent.return_value = MagicMock()
-        service._embedder_factory.create_model.return_value = MagicMock()
+        service._embedder_factory.create_embedder.return_value = MagicMock()
         knowledge_instance = MagicMock()
         knowledge_instance.insert.side_effect = FileNotFoundError("not found")
         mock_knowledge_cls.return_value = knowledge_instance
@@ -148,7 +147,7 @@ class TestLoadDocument:
     ):
         """Exceção genérica ao inserir documento deve logar error."""
         mock_agent.return_value = MagicMock()
-        service._embedder_factory.create_model.return_value = MagicMock()
+        service._embedder_factory.create_embedder.return_value = MagicMock()
         knowledge_instance = MagicMock()
         knowledge_instance.insert.side_effect = RuntimeError("unknown error")
         mock_knowledge_cls.return_value = knowledge_instance

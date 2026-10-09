@@ -38,6 +38,7 @@ class MongoTeamConfigRepository(AsyncMongoRepository, ITeamConfigRepository):
             cursor = self._collection.find({"active": True}).sort("_id", 1)
             configs: List[TeamConfig] = []
             async for doc in cursor:
+                self._warn_ignored_camel_case("team_id", doc)
                 # Documento inválido isola só ele: o startup segue com os válidos (F1-10).
                 try:
                     configs.append(self._map_to_entity(doc))
@@ -55,6 +56,7 @@ class MongoTeamConfigRepository(AsyncMongoRepository, ITeamConfigRepository):
             doc = await self._collection.find_one({"id": team_id})
             if not doc:
                 return None
+            self._warn_ignored_camel_case("team_id", doc)
             return self._map_to_entity(doc)
         except Exception as exc:
             self._logger.error(

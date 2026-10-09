@@ -121,3 +121,41 @@ async def test_id_de_team_repetido_fica_com_o_primeiro_e_o_repetido_vira_log_de_
     assert [(r.message, r.context) for r in logger.records if r.level == "error"] == [
         ("Team com id repetido ignorado", {"team_id": "dup"})
     ]
+
+
+async def test_team_e_criado_fora_do_event_loop():
+    """F2-02: criar o modelo do team pode ler segredo (``file:``) e resolver DNS do destino."""
+    from tests.fakes import InMemoryTeamConfigRepository, RecordingLogger, running_on_event_loop
+
+    on_loop: list[bool] = []
+    factory = MagicMock()
+    factory.create_team = MagicMock(side_effect=lambda config, agents: on_loop.append(running_on_event_loop()) or "t")
+    use_case = GetActiveTeamsUseCase(
+        team_factory_service=factory,
+        team_config_repository=InMemoryTeamConfigRepository([_make_team_config("t1")]),
+        logger=RecordingLogger(),
+    )
+
+    assert await use_case.execute([]) == ["t"]
+    assert on_loop == [False]
+
+
+async def test_config_de_modelo_recusada_vai_ao_log_com_o_motivo():
+    """Como no use case de agentes: ``InvalidModelConfigError`` é texto nosso e vira ``reason``."""
+    from src.domain.ports import InvalidModelConfigError
+    from tests.fakes import InMemoryTeamConfigRepository, RecordingLogger
+
+    logger = RecordingLogger()
+    reason = "modelo do provider 'openai': host da base_url fora da allowlist"
+    factory = MagicMock()
+    factory.create_team = MagicMock(side_effect=InvalidModelConfigError(reason))
+    use_case = GetActiveTeamsUseCase(
+        team_factory_service=factory,
+        team_config_repository=InMemoryTeamConfigRepository([_make_team_config("t1")]),
+        logger=logger,
+    )
+
+    assert await use_case.execute([]) == []
+    assert [(r.message, r.context) for r in logger.records if r.level == "error"] == [
+        ("Team não carregado", {"team_id": "t1", "error_type": "InvalidModelConfigError", "reason": reason})
+    ]

@@ -8,8 +8,9 @@ import pytest
 
 from src.application.services.agent_factory_service import AgentFactoryService
 from src.domain.entities.agent_config import AgentConfig
-from src.domain.entities.rag_config import RagConfig
+from src.domain.entities.rag_config import RagConfig, SearchStrategy
 from src.domain.ports.model_factory_port import InvalidModelConfigError
+from tests.fakes import FakeModelFactory
 
 
 def _make_config(**overrides) -> AgentConfig:
@@ -28,7 +29,6 @@ def _make_config(**overrides) -> AgentConfig:
 @pytest.fixture
 def service(mock_logger, mock_tool_repository):
     model_factory = MagicMock()
-    model_factory.validate_model_config.return_value = {"valid": True, "errors": []}
     model_factory.create_model.return_value = MagicMock()
 
     embedder_factory = MagicMock()
@@ -57,13 +57,26 @@ class TestAgentFactoryService:
         mock_agent.assert_called_once()
 
     async def test_create_agent_invalid_model_raises(self, service):
-        service._model_factory.validate_model_config.return_value = {
-            "valid": False,
-            "errors": ["Modelo inválido"],
-        }
-        config = _make_config(factory_ia_model="invalid")
-        with pytest.raises(InvalidModelConfigError, match="Configuração de modelo inválida: Modelo inválido"):
-            await service.create_agent(config)
+        """Config recusada pela fábrica sobe como ``InvalidModelConfigError`` (o use case isola)."""
+        service._model_factory = FakeModelFactory(invalid_models={"llama3.2:latest"})
+        with pytest.raises(InvalidModelConfigError, match="marcado como inválido"):
+            await service.create_agent(_make_config())
+
+    @patch("src.application.services.agent_factory_service.Agent")
+    @patch("src.application.services.agent_factory_service.MongoAgentDb")
+    async def test_modelo_recebe_a_model_config_inteira_fora_do_event_loop(self, mock_db, mock_agent, service):
+        """F2-02: campos novos chegam à fábrica; a criação (segredo file:, DNS) roda em thread."""
+        factory = FakeModelFactory()
+        service._model_factory = factory
+        config = _make_config(
+            model_params={"temperature": 0.2}, base_url="https://gw.example.invalid/v1", api_key_ref="env:GW_API_KEY"
+        )
+
+        await service.create_agent(config)
+
+        assert factory.configs == [config.model_config]
+        assert factory.on_event_loop == [False]
+        assert mock_agent.call_args.kwargs["model"] is factory.models[0]
 
     @patch("src.application.services.agent_factory_service.Agent")
     @patch("src.application.services.agent_factory_service.MongoAgentDb")
@@ -82,7 +95,7 @@ class TestAgentFactoryService:
     @patch("src.application.services.agent_factory_service.MongoVectorDb")
     async def test_create_agent_with_rag(self, mock_vdb, mock_knowledge, mock_db, mock_agent, service):
         mock_agent.return_value = MagicMock()
-        service._embedder_factory.create_model.return_value = MagicMock()
+        service._embedder_factory.create_embedder.return_value = MagicMock()
         rag = RagConfig(active=True, model="m", factory_ia_model="ollama")
         config = _make_config(rag_config=rag)
         agent = await service.create_agent(config)
@@ -99,3 +112,60 @@ class TestAgentFactoryService:
         assert call_kwargs["store_history_messages"] is True
         assert call_kwargs["store_tool_messages"] is True
         assert call_kwargs["store_events"] is True
+
+
+# ── rodada 2 (R3): embedder recusado pela fábrica vai ao log com o motivo ──
+
+
+@pytest.mark.parametrize(
+    ("strategy", "message"),
+    [(SearchStrategy.SEMANTIC, "Erro ao criar RAG"), (SearchStrategy.HIERARCHICAL, "Erro ao criar tool hierárquica")],
+)
+async def test_embedder_recusado_vai_ao_log_com_o_motivo(
+    strategy: SearchStrategy, message: str, tmp_path, monkeypatch: pytest.MonkeyPatch
+):
+    """``InvalidModelConfigError`` é texto nosso (sem segredo): o operador precisa saber o porquê."""
+    from src.application.services import agent_factory_service
+    from src.application.services.document_indexing_service import DocumentIndexingService
+    from src.application.services.knowledge_search_factory import KnowledgeSearchFactory
+    from src.infrastructure.parsers.text_document_parser import TextDocumentParser
+    from tests.fakes import FakeEmbedderFactory, InMemoryDocumentTreeRepository, InMemoryToolRepository, RecordingLogger
+
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "manual.md").write_text("# T\n\nIntro.\n\n## A\n\nTexto A.\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(agent_factory_service, "MongoAgentDb", lambda **_: None)
+    logger = RecordingLogger()
+    embedders = FakeEmbedderFactory(invalid_models={"emb-recusado"})
+    tree = InMemoryDocumentTreeRepository()
+    summary = AsyncMock()
+    summary.generate_summary.return_value = "resumo"
+    service = AgentFactoryService(
+        db_url="mongodb://test:27017",
+        logger=logger,
+        model_factory=FakeModelFactory(),
+        embedder_factory=embedders,
+        tool_factory=AsyncMock(),
+        tool_repository=InMemoryToolRepository(),
+        indexing_service=DocumentIndexingService(
+            parser=TextDocumentParser(), tree_repository=tree, summary_generator=summary,
+            embedder_factory=embedders, logger=logger,
+        ),
+        search_factory=KnowledgeSearchFactory(tree_repository=tree, logger=logger),
+    )
+    rag = RagConfig(
+        active=True, doc_name="manual.md", model="emb-recusado", factory_ia_model="ollama", search_strategy=strategy
+    )
+
+    agent = await service.create_agent(_make_config(rag_config=rag))
+
+    assert agent.id == "test-agent"
+    warnings = [(r.message, r.context) for r in logger.records if r.level == "warning"]
+    assert (
+        message,
+        {
+            "agent_id": "test-agent",
+            "error_type": "InvalidModelConfigError",
+            "reason": "modelo 'emb-recusado' marcado como inválido no fake",
+        },
+    ) in warnings

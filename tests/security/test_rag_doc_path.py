@@ -26,6 +26,7 @@ from src.application.services.document_indexing_service import DocumentIndexingS
 from src.application.services.document_path import DocumentPathError, resolve_document_path
 from src.application.services.knowledge_search_factory import KnowledgeSearchFactory
 from src.domain.entities.agent_config import AgentConfig
+from src.domain.entities.model_config import ModelConfig
 from src.domain.entities.rag_config import RagConfig, SearchStrategy
 from src.domain.ports.summary_generator_port import ISummaryGenerator
 from src.infrastructure.parsers.text_document_parser import TextDocumentParser
@@ -355,7 +356,7 @@ async def test_controle_insert_real_do_agno_em_diretorio_segue_symlink_para_fora
             collection_name="rag_controle",
             db_url="mongodb://mongo.test.invalid:27017",
             database="test_db",
-            embedder=FakeEmbedderFactory(dimensions=8).create_model("fake", "e"),
+            embedder=FakeEmbedderFactory(dimensions=8).create_embedder(ModelConfig("fake", "e")),
         )
     )
 

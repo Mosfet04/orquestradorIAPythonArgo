@@ -49,6 +49,7 @@ services:
       AZURE_ENDPOINT:
       AZURE_VERSION:
       SECRETS_DIR:
+      MODEL_BASE_URL_ALLOWLIST:
     # Endurecimento: sem escalada de privilégio, sem capabilities, raiz somente leitura.
     # Nada grava em disco no runtime (logs vão para stdout); /tmp em memória.
     security_opt:

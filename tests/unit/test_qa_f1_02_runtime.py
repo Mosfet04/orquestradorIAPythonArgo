@@ -362,16 +362,20 @@ def test_app_host_so_vem_do_app_config_nao_de_ollama():
 # ── OLLAMA_BASE_URL chega ao cliente real do agno ──────────────────
 
 
-def test_ollama_host_configurado_chega_ao_client_do_agno(mock_logger):
-    from src.application.services.model_factory_service import ModelFactory
+def test_ollama_host_configurado_chega_ao_client_do_agno():
+    from src.domain.entities.model_config import ModelConfig
+    from src.infrastructure.providers import ProviderRegistry
+    from src.infrastructure.providers.builtins import BUILTIN_PROVIDERS
 
-    factory = ModelFactory(logger=mock_logger, ollama_host="http://ollama:11434")
-    client = factory.create_model("ollama", "llama3.2:latest").get_client()
+    registry = ProviderRegistry(BUILTIN_PROVIDERS, operator_base_urls={"ollama": "http://ollama:11434"})
+    client = registry.create_model(ModelConfig("ollama", "llama3.2:latest")).get_client()  # type: ignore[attr-defined]
     assert "ollama:11434" in str(client._client.base_url)
 
 
-def test_ollama_sem_host_configurado_nao_aponta_para_servico_do_compose(mock_logger):
-    from src.application.services.model_factory_service import ModelFactory
+def test_ollama_sem_host_configurado_nao_aponta_para_servico_do_compose():
+    from src.domain.entities.model_config import ModelConfig
+    from src.infrastructure.providers import ProviderRegistry
+    from src.infrastructure.providers.builtins import BUILTIN_PROVIDERS
 
-    model = ModelFactory(logger=mock_logger).create_model("ollama", "llama3.2:latest")
-    assert "ollama:11434" not in str(model.get_client()._client.base_url)
+    model = ProviderRegistry(BUILTIN_PROVIDERS).create_model(ModelConfig("ollama", "llama3.2:latest"))
+    assert "ollama:11434" not in str(model.get_client()._client.base_url)  # type: ignore[attr-defined]

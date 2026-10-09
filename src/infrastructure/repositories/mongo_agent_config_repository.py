@@ -44,6 +44,7 @@ class MongoAgentConfigRepository(AsyncMongoRepository, IAgentConfigRepository):
             cursor = self._collection.find({"active": True}).sort("_id", 1)
             configs: List[AgentConfig] = []
             async for doc in cursor:
+                self._warn_ignored_camel_case("agent_id", doc)
                 # Documento inválido isola só ele: o startup segue com os válidos (F1-10).
                 try:
                     configs.append(self._map_to_entity(doc))
@@ -61,6 +62,7 @@ class MongoAgentConfigRepository(AsyncMongoRepository, IAgentConfigRepository):
             doc = await self._collection.find_one({"id": agent_id})
             if not doc:
                 raise ValueError(f"Agente {agent_id} não encontrado")
+            self._warn_ignored_camel_case("agent_id", doc)
             return self._map_to_entity(doc)
         except Exception as exc:
             self._logger.error(

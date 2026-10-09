@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import List
 
 from agno.agent import Agent
@@ -9,7 +10,7 @@ from agno.team import Team
 
 from src.application.services.team_factory_service import TeamFactoryService
 from src.domain.entities.team_config import TeamConfig
-from src.domain.ports import ILogger
+from src.domain.ports import ILogger, InvalidModelConfigError
 from src.domain.repositories.team_config_repository import ITeamConfigRepository
 
 
@@ -42,14 +43,18 @@ class GetActiveTeamsUseCase:
         teams: List[Team] = []
         for config in configs:
             try:
-                team = self._factory.create_team(config, agents)
+                # A criação do modelo pode ler segredo (file:) e resolver DNS: fora do loop.
+                team = await asyncio.to_thread(self._factory.create_team, config, agents)
                 teams.append(team)
             except Exception as exc:
-                # Só o tipo: texto de exceção de SDK pode trazer segredo.
+                # Só o tipo: texto de exceção de SDK pode trazer segredo. A recusa da config
+                # do modelo é texto nosso e vai como ``reason`` (como no use case de agentes).
+                reason = {"reason": str(exc)} if isinstance(exc, InvalidModelConfigError) else {}
                 self._logger.error(
                     "Team não carregado",
                     team_id=config.id,
                     error_type=type(exc).__name__,
+                    **reason,
                 )
         return teams
 

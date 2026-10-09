@@ -9,9 +9,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 
 from src.application.services.agent_factory_service import AgentFactoryService
 from src.application.services.document_indexing_service import DocumentIndexingService
-from src.application.services.embedder_model_factory_service import EmbedderModelFactory
 from src.application.services.knowledge_search_factory import KnowledgeSearchFactory
-from src.application.services.model_factory_service import ModelFactory
 from src.application.services.team_factory_service import TeamFactoryService
 from src.application.use_cases.get_active_agents_use_case import GetActiveAgentsUseCase
 from src.application.use_cases.get_active_teams_use_case import GetActiveTeamsUseCase
@@ -20,6 +18,8 @@ from src.infrastructure.config.app_config import AppConfig
 from src.infrastructure.http.http_tool_factory import HttpToolFactory
 from src.infrastructure.logging.logger_adapter import StructlogLoggerAdapter
 from src.infrastructure.parsers.text_document_parser import TextDocumentParser
+from src.infrastructure.providers import DestinationPolicy, ProviderRegistry
+from src.infrastructure.providers.builtins import BUILTIN_PROVIDERS
 from src.infrastructure.repositories.mongo_agent_config_repository import (
     MongoAgentConfigRepository,
 )
@@ -31,6 +31,7 @@ from src.infrastructure.repositories.mongo_team_config_repository import (
 )
 from src.infrastructure.repositories.mongo_tool_repository import MongoToolRepository
 from src.infrastructure.services.llm_summary_generator import LLMSummaryGenerator
+from src.infrastructure.web.api_key_auth import is_local_dev_mode
 from src.presentation.controllers.orquestrador_controller import OrquestradorController
 
 
@@ -152,11 +153,8 @@ class DependencyContainer:
         conn = self.config.mongo_connection_string
         db = self.config.mongo_database_name
 
-        ollama_host = self.config.ollama_base_url
-        model_factory = ModelFactory(logger=self._logger, ollama_host=ollama_host)
-        embedder_factory = EmbedderModelFactory(
-            logger=self._logger, ollama_host=ollama_host
-        )
+        # Um registry atende modelos e embedders (portas IModelFactory e IEmbedderFactory).
+        providers = self._build_provider_registry()
         tool_factory = HttpToolFactory(logger=self._logger)
 
         agent_config_repo = MongoAgentConfigRepository(
@@ -180,13 +178,13 @@ class DependencyContainer:
             )
 
         summary_generator = LLMSummaryGenerator(
-            model_factory=model_factory, logger=self._logger
+            model_factory=providers, logger=self._logger
         )
         indexing_service = DocumentIndexingService(
             parser=doc_parser,
             tree_repository=tree_repo,
             summary_generator=summary_generator,
-            embedder_factory=embedder_factory,
+            embedder_factory=providers,
             logger=self._logger,
         )
         search_factory = KnowledgeSearchFactory(
@@ -197,8 +195,8 @@ class DependencyContainer:
             db_url=conn,
             db_name=db,
             logger=self._logger,
-            model_factory=model_factory,
-            embedder_factory=embedder_factory,
+            model_factory=providers,
+            embedder_factory=providers,
             tool_factory=tool_factory,
             tool_repository=tool_repo,
             indexing_service=indexing_service,
@@ -209,7 +207,7 @@ class DependencyContainer:
             db_url=conn,
             db_name=db,
             logger=self._logger,
-            model_factory=model_factory,
+            model_factory=providers,
         )
 
         team_config_repo = MongoTeamConfigRepository(
@@ -227,6 +225,23 @@ class DependencyContainer:
             get_active_agents_use_case=agents_use_case,
             get_active_teams_use_case=teams_use_case,
             logger=self._logger,
+        )
+
+    def _build_provider_registry(self) -> ProviderRegistry:
+        """Built-ins + segredos em ``SECRETS_DIR`` + destino permitido para ``base_url`` da config.
+
+        ``OLLAMA_BASE_URL`` é do operador: vai só para o Ollama e não passa pela allowlist.
+        Loopback em ``base_url`` só no modo dev local (mesma regra da borda, F1-04).
+        """
+        config = self.config
+        return ProviderRegistry(
+            BUILTIN_PROVIDERS,
+            secrets_dir=config.secrets_dir,
+            policy=DestinationPolicy(
+                allowlist=config.model_base_url_allowlist,
+                allow_loopback=is_local_dev_mode(config),
+            ),
+            operator_base_urls={"ollama": config.ollama_base_url} if config.ollama_base_url else None,
         )
 
     def get_orquestrador_controller(self) -> OrquestradorController:

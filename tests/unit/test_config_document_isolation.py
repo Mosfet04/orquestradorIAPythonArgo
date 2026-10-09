@@ -256,3 +256,82 @@ async def test_teams_vem_em_ordem_de_id_do_mongo(monkeypatch: pytest.MonkeyPatch
     repo = _team_repo(monkeypatch, docs, logger)
 
     assert [c.nome for c in await repo.get_active_teams()] == ["antigo", "novo"]
+
+
+# ── F2-02: camelCase dos campos novos é ignorado, com aviso ─────────
+
+
+def _warnings(logger: RecordingLogger) -> list[tuple[str, dict[str, Any]]]:
+    return [(r.message, r.context) for r in logger.records if r.level == "warning"]
+
+
+CAMEL_WARNING = "Documento com chaves camelCase ignoradas; use model_params, base_url e api_key_ref"
+
+
+async def test_agente_com_campos_novos_em_camel_case_carrega_ignorando_e_avisa_sem_valores(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    logger = RecordingLogger()
+    camel = _agent_doc(
+        "camel",
+        apiKeyRef=f"env:{MARKER}",
+        baseUrl=f"https://{MARKER}.example",
+        modelParams={"temperature": MARKER},
+        rag_config={"active": True, "model": "e", "factory_ia_model": "ollama", "baseUrl": MARKER},
+    )
+    repo = _agent_repo(monkeypatch, [_agent_doc("antes"), camel], logger)
+
+    configs = await repo.get_active_agents()
+
+    assert [c.id for c in configs] == ["antes", "camel"]
+    loaded = configs[1]
+    assert (loaded.api_key_ref, loaded.base_url, loaded.model_params) == (None, None, None)
+    assert loaded.rag_config is not None and loaded.rag_config.base_url is None
+    assert _warnings(logger) == [
+        (
+            CAMEL_WARNING,
+            {
+                "agent_id": "camel",
+                "mongo_id": None,
+                "keys": ["apiKeyRef", "baseUrl", "modelParams"],
+                "rag_config_keys": ["baseUrl"],
+            },
+        )
+    ]
+    _assert_secret_not_logged(logger)
+
+
+async def test_agente_por_id_tambem_avisa_camel_case(monkeypatch: pytest.MonkeyPatch):
+    logger = RecordingLogger()
+    repo = _agent_repo(monkeypatch, [_agent_doc("camel", baseUrl=MARKER)], logger)
+
+    config = await repo.get_agent_by_id("camel")
+
+    assert config.base_url is None
+    assert [m for m, _ in _warnings(logger)] == [CAMEL_WARNING]
+    _assert_secret_not_logged(logger)
+
+
+async def test_team_com_campos_novos_em_camel_case_carrega_ignorando_e_avisa(monkeypatch: pytest.MonkeyPatch):
+    logger = RecordingLogger()
+    oid = ObjectId()
+    repo = _team_repo(monkeypatch, [_team_doc("camel", _id=oid, modelParams={"x": MARKER})], logger)
+
+    [config] = await repo.get_active_teams()
+
+    assert config.model_params is None
+    assert _warnings(logger) == [
+        (CAMEL_WARNING, {"team_id": "camel", "mongo_id": str(oid), "keys": ["modelParams"], "rag_config_keys": []})
+    ]
+    assert (await repo.get_team_by_id("camel")) is not None
+    assert len(_warnings(logger)) == 2
+    _assert_secret_not_logged(logger)
+
+
+async def test_documento_sem_camel_case_nao_avisa(monkeypatch: pytest.MonkeyPatch):
+    logger = RecordingLogger()
+    repo = _agent_repo(monkeypatch, [_agent_doc("ok", base_url="https://gw.example", rag_config="x")], logger)
+
+    await repo.get_active_agents()
+
+    assert _warnings(logger) == []
