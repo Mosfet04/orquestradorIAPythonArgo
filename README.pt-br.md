@@ -476,6 +476,7 @@ OLLAMA_BASE_URL=http://localhost:11434
 # AZURE_API_KEY=...
 # AZURE_ENDPOINT=https://xxx.openai.azure.com/
 # AZURE_VERSION=2024-02-01
+# SECRETS_DIR=/run/secrets   # raiz dos api_key_ref "file:/..." (arquivo fora dela é recusado); relativo ou "/" impede o app de iniciar
 
 # ═══ OpenTelemetry (opcional) ═══
 OTEL_ENABLED=true
@@ -664,6 +665,11 @@ Esta é a collection que você gerencia. Cada documento define um agente:
 | `user_memory_active` | bool | ❌ | Ativa memória de longo prazo do usuário (o run passa a exigir `user_id`; ver [Memória Inteligente](#memória-inteligente)) |
 | `summary_active` | bool | ❌ | Ativa sumários automáticos de sessão |
 | `active` | bool | ✅ | Se `false`, o agente é ignorado na inicialização |
+| `model_params` | object | ❌ | Parâmetros do modelo, chave texto → texto/número/booleano (ex.: `{"temperature": 0.2}`) |
+| `base_url` | string | ❌ | Endpoint do provider: `http(s)://host[:porta][/caminho]`, até 2048 caracteres, sem credencial, query, fragmento, espaço ou `\`; host só em ASCII (IDN em punycode) e sem `%`; porta, se houver, de 1 a 65535 |
+| `api_key_ref` | string | ❌ | Referência da chave: `env:<PROVEDOR>_API_KEY` (só variáveis em maiúsculas terminadas em `_API_KEY`, ex.: `env:OPENAI_API_KEY`; `API_KEY_RUN`, `API_KEY_ADMIN`, `MONGO_*` e qualquer outra são recusadas: quem grava a config não escolhe que segredo do processo ler) ou `file:/caminho/absoluto` (dentro de `SECRETS_DIR`, default `/run/secrets`; só em Linux, que confere o arquivo aberto em `/proc/self/fd`: em outro sistema, use `env:`). Nunca a chave em si |
+
+`model_params`, `base_url` e `api_key_ref` (também em `rag_config` e em `teams_config`, sempre em snake_case) são opcionais: documento sem eles continua igual. Hoje são lidos e validados, mas ainda não mudam a criação do modelo (o provider segue lendo `{PROVIDER}_API_KEY`); passam a ser usados no registry de providers (F2-02). Valor inválido torna o documento inválido (ver [Documento inválido](#documento-inválido)) e a mensagem nunca traz o valor.
 
 **`rag_config`:**
 
@@ -674,6 +680,7 @@ Esta é a collection que você gerencia. Cada documento define um agente:
 | `model` | Modelo de embedding (ex: `gemini-embedding-001`, `text-embedding-3-small`) |
 | `factoryIaModel` | Provider do embedder: `gemini`, `openai`, `ollama`, `azure` |
 | `search_strategy` | Estratégia de busca: `semantic` (padrão, agno nativo) ou `hierarchical` (árvore de documentos) |
+| `model_params`, `base_url`, `api_key_ref` | Opcionais do embedder, como no agente. Com algum deles, `model` e `factoryIaModel` precisam estar no documento, não vazios (os defaults `ollama`/`nomic-embed-text:latest` valem só para `rag_config` sem campos novos) |
 
 ### Collection: `tools`
 
@@ -742,6 +749,7 @@ Cada documento define um team multi-agente:
 | `user_memory_active` | bool | ❌ | Ativa memória de longo prazo (o run passa a exigir `user_id`; ver [Memória Inteligente](#memória-inteligente)) |
 | `summary_active` | bool | ❌ | Ativa sumários automáticos de sessão |
 | `active` | bool | ✅ | Se `false`, o team é ignorado na inicialização |
+| `model_params`, `base_url`, `api_key_ref` | | ❌ | Opcionais do modelo líder, como no agente |
 
 Formato canônico: o do exemplo (`factoryIaModel` e o resto em snake_case), o mesmo dos agentes e do seed (`mongo-init/init-db.js`). Documentos antigos com `memberIds`, `userMemoryActive` e `summaryActive` (camelCase) continuam sendo lidos; com as duas grafias no mesmo documento vale a snake_case. Use o canônico em documento novo.
 
@@ -758,7 +766,7 @@ Formato canônico: o do exemplo (`factoryIaModel` e o resto em snake_case), o me
 
 ### Documento inválido
 
-Um documento inválido em `agents_config` ou `teams_config` não derruba o startup: ele é ignorado com log de erro (`Documento de agente inválido ignorado` / `Documento de team inválido ignorado`, com `agent_id`/`team_id` quando o `id` é texto, `mongo_id` quando o `_id` é ObjectId e `error_type`; nunca o conteúdo do documento) e os demais carregam. Inválido = `id`, `nome`, `model` ou `factoryIaModel` ausente, vazio ou que não seja texto; `descricao` que não seja texto (pode faltar ou ser `null`); `rag_config` que não seja objeto; `search_strategy` ou `mode` fora dos valores aceitos; team sem membros. Dois documentos ativos com o mesmo `id` (dois agentes ou dois teams): vale o mais antigo (menor `_id`; a leitura é ordenada por `_id`) e o outro vira log de erro (`Agente com id repetido ignorado` / `Team com id repetido ignorado`). Agente ou team válido que falha na criação (ex.: modelo recusado pela factory, team sem nenhum membro carregado) também vira log de erro (`Agente não carregado` / `Team não carregado`, com o id e `error_type`; modelo recusado pela validação traz também `reason`, ex.: `Configuração de modelo inválida: Tipo 'xyz' não suportado...`) sem afetar os outros.
+Um documento inválido em `agents_config` ou `teams_config` não derruba o startup: ele é ignorado com log de erro (`Documento de agente inválido ignorado` / `Documento de team inválido ignorado`, com `agent_id`/`team_id` quando o `id` é texto, `mongo_id` quando o `_id` é ObjectId e `error_type`; nunca o conteúdo do documento) e os demais carregam. Inválido = `id`, `nome`, `model` ou `factoryIaModel` ausente, vazio ou que não seja texto; `descricao` que não seja texto (pode faltar ou ser `null`); `rag_config` que não seja objeto; `search_strategy` ou `mode` fora dos valores aceitos; team sem membros; `model_params`, `base_url` ou `api_key_ref` fora do formato descrito nos campos (no `rag_config`, também presentes sem `model`/`factoryIaModel`). Dois documentos ativos com o mesmo `id` (dois agentes ou dois teams): vale o mais antigo (menor `_id`; a leitura é ordenada por `_id`) e o outro vira log de erro (`Agente com id repetido ignorado` / `Team com id repetido ignorado`). Agente ou team válido que falha na criação (ex.: modelo recusado pela factory, team sem nenhum membro carregado) também vira log de erro (`Agente não carregado` / `Team não carregado`, com o id e `error_type`; modelo recusado pela validação traz também `reason`, ex.: `Configuração de modelo inválida: Tipo 'xyz' não suportado...`) sem afetar os outros.
 
 ### Adicionando um Novo Agente (sem alterar código)
 

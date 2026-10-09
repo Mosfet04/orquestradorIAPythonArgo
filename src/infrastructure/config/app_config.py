@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from typing import Optional
 from urllib.parse import urlsplit
 
+from src.infrastructure.config.secrets import DEFAULT_SECRETS_DIR
+
 ENVIRONMENTS = ("development", "test", "staging", "production")
 
 # Origens do CORS quando CORS_ALLOWED_ORIGINS não está definida (as de antes do F1-03).
@@ -53,6 +55,8 @@ class AppConfig:
     # Chaves de API (F1-04). As duas ou nenhuma; fora do repr para não irem parar em log.
     api_key_run: Optional[str] = field(default=None, repr=False)
     api_key_admin: Optional[str] = field(default=None, repr=False)
+    # Raiz dos api_key_ref "file:" (F2-01); repassada ao resolve_secret pelo composition root.
+    secrets_dir: str = DEFAULT_SECRETS_DIR
 
     @classmethod
     def load(cls) -> AppConfig:
@@ -83,6 +87,7 @@ class AppConfig:
             cors_allowed_origins=_cors_allowed_origins(),
             api_key_run=_api_key("API_KEY_RUN", os.getenv("API_KEY_RUN")),
             api_key_admin=_api_key("API_KEY_ADMIN", os.getenv("API_KEY_ADMIN")),
+            secrets_dir=_secrets_dir(),
         )
         config._validate()
         return config
@@ -132,6 +137,18 @@ def _api_key(name: str, raw: Optional[str]) -> Optional[str]:
         raise ValueError(
             f"{name} inválida: use só caracteres ASCII visíveis, sem espaços (gere com: {API_KEY_HINT})"
         )
+    return value
+
+
+def _secrets_dir() -> str:
+    """``SECRETS_DIR``: vazio = ``/run/secrets``; relativo ou a raiz ``/`` = erro no startup."""
+    value = (os.getenv("SECRETS_DIR") or "").strip()
+    if not value:
+        return DEFAULT_SECRETS_DIR
+    if not os.path.isabs(value):
+        raise ValueError("SECRETS_DIR deve ser um caminho absoluto")
+    if os.path.normpath(value) in ("/", "//"):
+        raise ValueError("SECRETS_DIR não pode ser a raiz do sistema de arquivos")
     return value
 
 

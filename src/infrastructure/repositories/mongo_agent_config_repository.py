@@ -5,7 +5,12 @@ from __future__ import annotations
 from typing import List
 
 from src.domain.entities.agent_config import AgentConfig
-from src.domain.entities.rag_config import RagConfig, SearchStrategy
+from src.domain.entities.rag_config import (
+    DEFAULT_EMBEDDER_MODEL,
+    DEFAULT_EMBEDDER_PROVIDER,
+    RagConfig,
+    SearchStrategy,
+)
 from src.domain.ports import ILogger
 from src.domain.repositories.agent_config_repository import IAgentConfigRepository
 from src.infrastructure.repositories.mongo_base import (
@@ -64,23 +69,37 @@ class MongoAgentConfigRepository(AsyncMongoRepository, IAgentConfigRepository):
             raise
 
     @staticmethod
+    def _map_rag(rag_data: dict) -> RagConfig:
+        """``rag_config`` -> ``RagConfig``.
+
+        Legado (sem ``model_params``/``base_url``/``api_key_ref``): provider/modelo ausentes
+        caem nos defaults de sempre. Com algum campo novo, nada de default: endpoint e chave
+        novos não podem parar num ollama/nomic implícito, então ``model`` e provider precisam
+        estar no documento (senão o ``RagConfig`` recusa).
+        """
+        model_params = rag_data.get("model_params")
+        base_url = rag_data.get("base_url")
+        api_key_ref = rag_data.get("api_key_ref")
+        legacy = model_params is None and base_url is None and api_key_ref is None
+        return RagConfig(
+            active=rag_data.get("active", False),
+            doc_name=rag_data.get("doc_name"),
+            model=rag_data.get("model", DEFAULT_EMBEDDER_MODEL if legacy else None),
+            factory_ia_model=rag_data.get(
+                "factory_ia_model",
+                rag_data.get("factoryIaModel", DEFAULT_EMBEDDER_PROVIDER if legacy else None),
+            ),
+            search_strategy=SearchStrategy(rag_data.get("search_strategy", "semantic")),
+            model_params=model_params,
+            base_url=base_url,
+            api_key_ref=api_key_ref,
+        )
+
+    @staticmethod
     def _map_to_entity(data: dict) -> AgentConfig:
         rag_data = data.get("rag_config")
         rag_config = (
-            RagConfig(
-                active=rag_data.get("active", False),
-                doc_name=rag_data.get("doc_name"),
-                model=rag_data.get("model", "nomic-embed-text:latest"),
-                factory_ia_model=rag_data.get(
-                    "factory_ia_model",
-                    rag_data.get("factoryIaModel", "ollama"),
-                ),
-                search_strategy=SearchStrategy(
-                    rag_data.get("search_strategy", "semantic")
-                ),
-            )
-            if rag_data
-            else None
+            MongoAgentConfigRepository._map_rag(rag_data) if rag_data else None
         )
 
         return AgentConfig(
@@ -98,4 +117,7 @@ class MongoAgentConfigRepository(AsyncMongoRepository, IAgentConfigRepository):
             rag_config=rag_config,
             user_memory_active=data.get("user_memory_active", False),
             summary_active=data.get("summary_active", False),
+            model_params=data.get("model_params"),
+            base_url=data.get("base_url"),
+            api_key_ref=data.get("api_key_ref"),
         )

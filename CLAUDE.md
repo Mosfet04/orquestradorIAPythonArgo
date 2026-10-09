@@ -19,7 +19,7 @@ src/presentation    controllers/rotas.
 - Tipagem em tudo que é público; sem `Any` em portas e entidades.
 - Sem I/O síncrono bloqueante em caminho async (use `asyncio.to_thread` ou cliente async).
 - Sem erro engolido: `except` sempre loga com contexto ou re-levanta. Nunca devolva `str(exc)` ao cliente HTTP.
-- Segredos só por referência (`env:VAR`, `file:/caminho`); nunca em código, log, teste, trace ou documento Mongo. Não leia `.env`.
+- Segredos só por referência (`env:<PROVEDOR>_API_KEY`, `file:<caminho em SECRETS_DIR>`); nunca em código, log, teste, trace ou documento Mongo. Não leia `.env`. Credencial interna do app (chaves da API, Mongo, OTLP...) **nunca** tem nome terminado em `_API_KEY`: esse sufixo é o que a config de agentes pode referenciar (F2-01).
 - Documentos Mongo existentes continuam válidos: campo novo é opcional com default.
 - APIs de terceiros: confira no pacote instalado (`.venv/lib/python3.12/site-packages/...`) ou na doc da versão fixada. Nunca de memória.
 - Linhas citadas no roadmap são indicativas: reconfirme com `git grep` antes de mexer.
@@ -38,7 +38,9 @@ src/presentation    controllers/rotas.
 .venv/bin/mypy
 .venv/bin/lint-imports
 .venv/bin/bandit -q -c pyproject.toml -r src
-.venv/bin/pip-audit -r requirements.lock --require-hashes --disable-pip
+.venv/bin/pip-audit -r requirements.lock --require-hashes --disable-pip --ignore-vuln PYSEC-2026-2333
+# F2+: cobertura do diff (arquivos novos só aparecem staged: git add -A antes)
+.venv/bin/python -m pytest -m "not live" -n auto --cov --cov-report=xml:<tmp>/coverage.xml && .venv/bin/diff-cover <tmp>/coverage.xml --compare-branch=<base> --fail-under=85
 ```
 Dependências: `requirements.in`/`requirements-dev.in` → locks com hash (`pip-compile`, ver CONTRIBUTING). Nunca edite o lock à mão.
 

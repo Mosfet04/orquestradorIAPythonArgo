@@ -180,7 +180,8 @@ class AgentFactoryService:
         """
         start = datetime.now(timezone.utc)
         self._validate_model_config(config)
-        model = self._model_factory.create_model(config.factory_ia_model, config.model)
+        model_config = config.model_config
+        model = self._model_factory.create_model(model_config.provider, model_config.model_id)
         tools = await self._build_tools(config)
         # Knowledge() consulta o Mongo (exists/create) e o insert lê, embeda e grava:
         # tudo síncrono no agno; fora do event loop.
@@ -204,8 +205,9 @@ class AgentFactoryService:
     # ── private ─────────────────────────────────────────────────────
 
     def _validate_model_config(self, config: AgentConfig) -> None:
+        model_config = config.model_config
         result = self._model_factory.validate_model_config(
-            config.factory_ia_model, config.model
+            model_config.provider, model_config.model_id
         )
         if not result["valid"]:
             errors = "; ".join(result["errors"])
@@ -285,7 +287,8 @@ class AgentFactoryService:
         if rag.search_strategy == SearchStrategy.HIERARCHICAL:
             return None
 
-        if not rag.factory_ia_model or not rag.model:
+        embedder_config = rag.model_config
+        if embedder_config is None:
             self._logger.warning(
                 "RAG ativo sem factory_ia_model ou model — ignorando"
             )
@@ -301,7 +304,7 @@ class AgentFactoryService:
 
         try:
             embedder = self._embedder_factory.create_model(
-                rag.factory_ia_model, rag.model
+                embedder_config.provider, embedder_config.model_id
             )
             knowledge = Knowledge(
                 vector_db=MongoVectorDb(
@@ -354,9 +357,9 @@ class AgentFactoryService:
             )
 
             # Criar embedder e estratégia
+            embedder_config = rag.embedder_model_config()
             embedder = self._embedder_factory.create_model(
-                rag.factory_ia_model or "ollama",
-                rag.model or "nomic-embed-text:latest",
+                embedder_config.provider, embedder_config.model_id
             )
             strategy = self._search_factory.create_strategy(
                 rag, embedder=embedder

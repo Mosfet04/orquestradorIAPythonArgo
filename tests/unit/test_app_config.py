@@ -250,3 +250,23 @@ class TestApiKeys:
     def test_repr_nao_mostra_as_chaves(self):
         config = _load(API_KEY_RUN=RUN_KEY, API_KEY_ADMIN=ADMIN_KEY)
         assert RUN_KEY not in repr(config) and ADMIN_KEY not in repr(config)
+
+
+class TestSecretsDir:
+    """``SECRETS_DIR`` (F2-01): raiz dos ``api_key_ref`` ``file:``; inválido falha no startup."""
+
+    @pytest.mark.parametrize("value", [None, "", "   "])
+    def test_ausente_ou_vazio_e_run_secrets(self, value):
+        env = {} if value is None else {"SECRETS_DIR": value}
+        with patch.dict(os.environ, env, clear=True):
+            assert AppConfig.load().secrets_dir == "/run/secrets"
+
+    def test_caminho_absoluto_do_ambiente(self):
+        with patch.dict(os.environ, {"SECRETS_DIR": " /var/run/orq-secrets "}, clear=True):
+            assert AppConfig.load().secrets_dir == "/var/run/orq-secrets"
+
+    @pytest.mark.parametrize("value", ["relativo/dir", "./x", "~/secrets", "$HOME", "/", "//", "/./", "/etc/.."])
+    def test_relativo_ou_raiz_do_sistema_falha_no_startup(self, value):
+        with patch.dict(os.environ, {"SECRETS_DIR": value}, clear=True):
+            with pytest.raises(ValueError, match="SECRETS_DIR"):
+                AppConfig.load()

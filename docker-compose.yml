@@ -48,6 +48,7 @@ services:
       AZURE_API_KEY:
       AZURE_ENDPOINT:
       AZURE_VERSION:
+      SECRETS_DIR:
     # Endurecimento: sem escalada de privilégio, sem capabilities, raiz somente leitura.
     # Nada grava em disco no runtime (logs vão para stdout); /tmp em memória.
     security_opt:

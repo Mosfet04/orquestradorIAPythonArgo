@@ -92,9 +92,9 @@ class DocumentIndexingService:
             self._logger.warning("Parser retornou zero nós", doc_name=doc_name)
             return []
 
+        embedder_config = rag_config.embedder_model_config()
         embedder = self._embedder_factory.create_model(
-            rag_config.factory_ia_model or "ollama",
-            rag_config.model or "nomic-embed-text:latest",
+            embedder_config.provider, embedder_config.model_id
         )
 
         await self._generate_summaries(doc_name, nodes)

@@ -70,6 +70,7 @@ class MongoTeamConfigRepository(AsyncMongoRepository, ITeamConfigRepository):
         (``member_ids``, ``user_memory_active``, ``summary_active``). Ainda lê o legado
         camelCase (``memberIds``, ``userMemoryActive``, ``summaryActive``) e
         ``factory_ia_model``; com as duas grafias no documento, vale a snake_case.
+        Opcionais (F2-01, só snake_case): ``model_params``, ``base_url``, ``api_key_ref``.
         """
         return TeamConfig(
             id=data.get("id", ""),
@@ -95,4 +96,7 @@ class MongoTeamConfigRepository(AsyncMongoRepository, ITeamConfigRepository):
                 data.get("summaryActive", False),
             ),
             active=data.get("active", True),
+            model_params=data.get("model_params"),
+            base_url=data.get("base_url"),
+            api_key_ref=data.get("api_key_ref"),
         )

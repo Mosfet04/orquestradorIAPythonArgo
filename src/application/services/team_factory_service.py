@@ -48,8 +48,9 @@ class TeamFactoryService:
     ) -> Team:
         """Cria um Team usando os agentes fornecidos como membros."""
         members: Sequence[Union[Agent, Team]] = self._resolve_members(config, agents)
+        model_config = config.model_config
         model = self._model_factory.create_model(
-            config.factory_ia_model, config.model
+            model_config.provider, model_config.model_id
         )
         mode = _MODE_MAP.get(config.mode, TeamMode.route)
         db = MongoAgentDb(db_url=self._db_url, db_name=self._db_name)
