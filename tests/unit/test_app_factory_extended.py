@@ -9,51 +9,8 @@ from httpx import ASGITransport, AsyncClient
 
 from src.infrastructure.web.app_factory import (
     AppFactory,
-    _AGENT_SESSION_RE,
     create_app,
 )
-
-
-# ── _PlaygroundPrefixMiddleware ──────────────────────────────────────
-
-
-class TestPlaygroundPrefixMiddleware:
-    """Testa o middleware de reescrita de paths."""
-
-    async def test_strip_playground_prefix(self):
-        """Paths /playground/… devem ser reescritos para /…"""
-        factory = AppFactory()
-        app = factory.create_app()
-        factory._add_playground_rewrite(app)
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/playground/admin/health")
-            assert resp.status_code == 200
-
-    async def test_rewrite_agent_sessions_path(self):
-        """Paths /agents/{id}/sessions/… devem ser reescritos para /sessions/…"""
-        m = _AGENT_SESSION_RE.match("/agents/my-agent/sessions/abc123")
-        assert m is not None
-        assert m.group(1) == "/sessions/abc123"
-
-    async def test_no_rewrite_for_normal_path(self):
-        """Paths normais não devem ser alterados."""
-        m = _AGENT_SESSION_RE.match("/admin/health")
-        assert m is None
-
-    async def test_middleware_passthrough_no_playground(self):
-        """Sem /playground, middleware não altera path."""
-        factory = AppFactory()
-        app = factory.create_app()
-        factory._add_playground_rewrite(app)
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/admin/health")
-            assert resp.status_code == 200
-            assert resp.json()["status"] == "healthy"
-
 
 # ── admin endpoints com container ────────────────────────────────────
 
@@ -70,7 +27,7 @@ class TestAdminEndpointsWithContainer:
         controller.refresh_agents = AsyncMock()
         container.get_orquestrador_controller.return_value = controller
         container.health_service = MagicMock()
-        container.health_service.check_async = AsyncMock(return_value={"status": "ok", "db": "connected"})
+        container.health_service.check_async = AsyncMock(return_value={"status": "healthy", "db": "connected"})
         container.cleanup = AsyncMock()
         factory._container = container
         return factory
@@ -79,15 +36,26 @@ class TestAdminEndpointsWithContainer:
         """health_check deve chamar health_service quando disponível."""
         app = factory_with_container.create_app()
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(transport=transport, base_url="http://127.0.0.1:7777") as client:
             resp = await client.get("/admin/health")
             assert resp.status_code == 200
-            assert resp.json()["status"] == "ok"
+            assert resp.json()["status"] == "healthy"
+
+    async def test_health_unhealthy_responde_503(self, factory_with_container):
+        factory_with_container._container.health_service.check_async = AsyncMock(
+            return_value={"status": "unhealthy", "checks": {"mongodb": {"status": "unhealthy"}}}
+        )
+        app = factory_with_container.create_app()
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://127.0.0.1:7777") as client:
+            resp = await client.get("/admin/health")
+        assert resp.status_code == 503
+        assert resp.json() == {"status": "unhealthy", "checks": {"mongodb": {"status": "unhealthy"}}}
 
     async def test_cache_metrics_with_container(self, factory_with_container):
         app = factory_with_container.create_app()
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(transport=transport, base_url="http://127.0.0.1:7777") as client:
             resp = await client.get("/metrics/cache")
             assert resp.status_code == 200
             assert resp.json()["agents"]["status"] == "active"
@@ -95,7 +63,7 @@ class TestAdminEndpointsWithContainer:
     async def test_refresh_cache_with_container(self, factory_with_container):
         app = factory_with_container.create_app()
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(transport=transport, base_url="http://127.0.0.1:7777") as client:
             resp = await client.post("/admin/refresh-cache")
             assert resp.status_code == 200
             assert resp.json()["status"] == "cache_refreshed"
@@ -105,7 +73,7 @@ class TestAdminEndpointsWithContainer:
         factory = AppFactory()
         app = factory.create_app()
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(transport=transport, base_url="http://127.0.0.1:7777") as client:
             resp = await client.get("/admin/health")
             assert resp.json()["status"] == "healthy"
 
@@ -114,7 +82,7 @@ class TestAdminEndpointsWithContainer:
         factory = AppFactory()
         app = factory.create_app()
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(transport=transport, base_url="http://127.0.0.1:7777") as client:
             resp = await client.get("/metrics/cache")
             assert resp.json()["status"] == "no_cache"
 
@@ -123,7 +91,7 @@ class TestAdminEndpointsWithContainer:
         factory = AppFactory()
         app = factory.create_app()
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(transport=transport, base_url="http://127.0.0.1:7777") as client:
             resp = await client.post("/admin/refresh-cache")
             assert resp.json()["status"] == "no_cache"
 
@@ -163,8 +131,7 @@ class TestEnsureContainer:
 
 class TestLoadAgentsTeams:
     @pytest.fixture
-    def factory_with_mocks(self):
-        factory = AppFactory()
+    def container(self):
         controller = MagicMock()
         agent1 = MagicMock()
         agent1.id = "a1"
@@ -178,179 +145,181 @@ class TestLoadAgentsTeams:
 
         container = MagicMock()
         container.get_orquestrador_controller.return_value = controller
-        factory._container = container
-        return factory
+        return container
 
-    async def test_load_agents(self, factory_with_mocks):
-        agents = await factory_with_mocks._load_agents()
-        assert len(agents) == 2
+    async def test_load_agents(self, container):
+        agents = await AppFactory()._load_agents(container)
+        assert [a.id for a in agents] == ["a1", "a2"]
+        container.get_orquestrador_controller.return_value.warm_up_cache.assert_awaited_once()
 
-    async def test_load_teams(self, factory_with_mocks):
-        teams = await factory_with_mocks._load_teams()
-        assert len(teams) == 1
-
-
-# ── _mount_agent_os ──────────────────────────────────────────────────
+    async def test_load_teams(self, container):
+        teams = await AppFactory()._load_teams(container)
+        assert [t.id for t in teams] == ["t1"]
 
 
-class TestMountAgentOS:
-    @patch("src.infrastructure.web.app_factory.AgentOS")
-    @patch("src.infrastructure.web.app_factory.AGUI")
-    async def test_mount_agent_os_success(self, mock_agui, mock_os_cls):
-        factory = AppFactory()
-        mock_agui.return_value = MagicMock()
-        mock_os_instance = MagicMock()
-        mock_os_instance.get_app.return_value = MagicMock()
-        mock_os_cls.return_value = mock_os_instance
+# ── _mount_runtime ───────────────────────────────────────────────────
 
+
+class TestMountRuntime:
+    def test_mount_sem_config_carregado_falha_com_mensagem_clara(self):
         from fastapi import FastAPI
-        app = FastAPI()
-        agents = [MagicMock(), MagicMock()]
-        teams = [MagicMock()]
 
-        factory._mount_agent_os(app, agents, teams)
-        mock_os_cls.assert_called_once()
-        mock_os_instance.get_app.assert_called_once()
-
-    @patch("src.infrastructure.web.app_factory.AgentOS")
-    @patch("src.infrastructure.web.app_factory.AGUI")
-    async def test_mount_agent_os_empty_teams(self, mock_agui, mock_os_cls):
-        factory = AppFactory()
-        mock_agui.return_value = MagicMock()
-        mock_os_instance = MagicMock()
-        mock_os_instance.get_app.return_value = MagicMock()
-        mock_os_cls.return_value = mock_os_instance
-
-        from fastapi import FastAPI
-        app = FastAPI()
-        factory._mount_agent_os(app, [MagicMock()], [])
-        # teams=[] → deve enviar None
-        call_kwargs = mock_os_cls.call_args[1]
-        assert call_kwargs.get("teams") is None
+        runtime = MagicMock()
+        with pytest.raises(RuntimeError, match="create_app"):
+            AppFactory()._mount_runtime(FastAPI(), runtime, [MagicMock()], [])
+        runtime.mount.assert_not_called()
 
 
 # ── _lifespan ────────────────────────────────────────────────────────
 
 
+def _container_with(agents, teams):
+    """Container falso: config, controller com as entidades e runtime espião."""
+    config = MagicMock()
+    config.mongo_database_name = "db"
+    controller = MagicMock()
+    controller.warm_up_cache = AsyncMock()
+    controller.get_agents = AsyncMock(return_value=agents)
+    controller.get_teams = AsyncMock(return_value=teams)
+    runtime = MagicMock()
+    runtime.start = AsyncMock()
+    runtime.close = AsyncMock()
+    container = MagicMock()
+    container.config = config
+    container.get_orquestrador_controller.return_value = controller
+    container.get_agent_runtime.return_value = runtime
+    container.cleanup = AsyncMock()
+    return container
+
+
+@patch("src.infrastructure.web.app_factory.shutdown_telemetry")
+@patch("src.infrastructure.web.app_factory.setup_telemetry")
+@patch("src.infrastructure.web.app_factory.DependencyContainer")
 class TestLifespan:
-    @patch("src.infrastructure.web.app_factory.shutdown_telemetry")
-    @patch("src.infrastructure.web.app_factory.setup_telemetry")
-    @patch("src.infrastructure.web.app_factory.AgentOS")
-    @patch("src.infrastructure.web.app_factory.AGUI")
-    @patch("src.infrastructure.web.app_factory.DependencyContainer")
-    @patch("src.infrastructure.web.app_factory.AppConfig")
-    async def test_lifespan_happy_path(self, mock_config_cls, mock_dc_cls, mock_agui, mock_os_cls, mock_setup_tel, mock_shutdown_tel):
-        """Lifespan completo: container + agents + teams + mount."""
-        factory = AppFactory()
-
-        mock_config = MagicMock()
-        mock_config.mongo_database_name = "db"
-        mock_config.otel_enabled = True
-        mock_config.otel_exporter_endpoint = "http://localhost:4317"
-        mock_config.otel_service_name = "test"
-        mock_config_cls.load.return_value = mock_config
-
-        controller = MagicMock()
+    async def test_lifespan_happy_path(self, mock_dc_cls, mock_setup_tel, mock_shutdown_tel):
+        """Container -> entidades -> runtime montado e iniciado; shutdown fecha runtime e container uma vez."""
         agent = MagicMock()
         agent.id = "a1"
-        controller.warm_up_cache = AsyncMock()
-        controller.get_agents = AsyncMock(return_value=[agent])
-        controller.get_teams = AsyncMock(return_value=[])
-        container = MagicMock()
-        container.config = mock_config
-        container.get_orquestrador_controller.return_value = controller
-        container.cleanup = AsyncMock()
+        container = _container_with([agent], [])
         mock_dc_cls.create_async = AsyncMock(return_value=container)
+        factory = AppFactory()
+        app = factory.create_app()
+        runtime = container.get_agent_runtime.return_value
 
-        mock_agui.return_value = MagicMock()
-        mock_os_instance = MagicMock()
-        mock_os_instance.get_app.return_value = MagicMock()
-        mock_os_cls.return_value = mock_os_instance
+        async with factory._lifespan(app):
+            runtime.mount.assert_called_once()
+            assert runtime.mount.call_args.args == (app, [agent], [])
+            runtime.start.assert_awaited_once()
+            runtime.close.assert_not_awaited()
 
-        from fastapi import FastAPI
-        app = FastAPI()
+        runtime.close.assert_awaited_once()
+        container.cleanup.assert_awaited_once()
+        mock_shutdown_tel.assert_called_once()
+
+    async def test_lifespan_no_agents_no_teams(self, mock_dc_cls, mock_setup_tel, mock_shutdown_tel):
+        """Sem agentes nem teams: não monta (start do runtime sem montagem não faz nada)."""
+        container = _container_with([], [])
+        mock_dc_cls.create_async = AsyncMock(return_value=container)
+        factory = AppFactory()
+        app = factory.create_app()
+        runtime = container.get_agent_runtime.return_value
 
         async with factory._lifespan(app):
             pass
 
+        runtime.mount.assert_not_called()
+        runtime.close.assert_awaited_once()
         container.cleanup.assert_awaited_once()
 
-    @patch("src.infrastructure.web.app_factory.shutdown_telemetry")
-    @patch("src.infrastructure.web.app_factory.setup_telemetry")
-    @patch("src.infrastructure.web.app_factory.DependencyContainer")
-    @patch("src.infrastructure.web.app_factory.AppConfig")
-    async def test_lifespan_no_agents_no_teams(self, mock_config_cls, mock_dc_cls, mock_setup_tel, mock_shutdown_tel):
-        """Lifespan sem agentes nem teams — não monta AgentOS."""
-        factory = AppFactory()
-
-        mock_config = MagicMock()
-        mock_config.mongo_database_name = "db"
-        mock_config.otel_enabled = True
-        mock_config.otel_exporter_endpoint = "http://localhost:4317"
-        mock_config.otel_service_name = "test"
-        mock_config_cls.load.return_value = mock_config
-
-        controller = MagicMock()
-        controller.warm_up_cache = AsyncMock()
-        controller.get_agents = AsyncMock(return_value=[])
-        controller.get_teams = AsyncMock(return_value=[])
-        container = MagicMock()
-        container.config = mock_config
-        container.get_orquestrador_controller.return_value = controller
-        container.cleanup = AsyncMock()
-        mock_dc_cls.create_async = AsyncMock(return_value=container)
-
-        from fastapi import FastAPI
-        app = FastAPI()
-
-        async with factory._lifespan(app):
-            pass
-
-        container.cleanup.assert_awaited_once()
-
-    @patch("src.infrastructure.web.app_factory.shutdown_telemetry")
-    @patch("src.infrastructure.web.app_factory.setup_telemetry")
-    @patch("src.infrastructure.web.app_factory.AgentOS", side_effect=RuntimeError("mount fail"))
-    @patch("src.infrastructure.web.app_factory.AGUI")
-    @patch("src.infrastructure.web.app_factory.DependencyContainer")
-    @patch("src.infrastructure.web.app_factory.AppConfig")
-    async def test_lifespan_mount_error_continues(self, mock_config_cls, mock_dc_cls, mock_agui, mock_os_cls, mock_setup_tel, mock_shutdown_tel):
-        """Se AgentOS falhar, lifespan continua sem raise."""
-        factory = AppFactory()
-
-        mock_config = MagicMock()
-        mock_config.mongo_database_name = "db"
-        mock_config.otel_enabled = True
-        mock_config.otel_exporter_endpoint = "http://localhost:4317"
-        mock_config.otel_service_name = "test"
-        mock_config_cls.load.return_value = mock_config
-
-        controller = MagicMock()
+    async def test_lifespan_mount_error_continues(self, mock_dc_cls, mock_setup_tel, mock_shutdown_tel):
+        """Se a montagem falhar, o lifespan continua sem raise e o shutdown fecha tudo uma vez."""
         agent = MagicMock()
         agent.id = "a1"
-        controller.warm_up_cache = AsyncMock()
-        controller.get_agents = AsyncMock(return_value=[agent])
-        controller.get_teams = AsyncMock(return_value=[])
-        container = MagicMock()
-        container.config = mock_config
-        container.get_orquestrador_controller.return_value = controller
-        container.cleanup = AsyncMock()
+        container = _container_with([agent], [])
+        runtime = container.get_agent_runtime.return_value
+        runtime.mount.side_effect = RuntimeError("mount fail")
         mock_dc_cls.create_async = AsyncMock(return_value=container)
+        factory = AppFactory()
+        app = factory.create_app()
 
-        mock_agui.return_value = MagicMock()
-
-        from fastapi import FastAPI
-        app = FastAPI()
-
-        # Não deve fazer raise
         async with factory._lifespan(app):
             pass
 
+        runtime.close.assert_awaited_once()
         container.cleanup.assert_awaited_once()
 
-    @patch("src.infrastructure.web.app_factory.DependencyContainer")
+    async def test_falha_ao_fechar_o_runtime_ainda_fecha_telemetria_e_container(
+        self, mock_dc_cls, mock_setup_tel, mock_shutdown_tel
+    ):
+        container = _container_with([MagicMock(id="a1")], [])
+        runtime = container.get_agent_runtime.return_value
+        runtime.close.side_effect = RuntimeError("close fail")
+        mock_dc_cls.create_async = AsyncMock(return_value=container)
+        factory = AppFactory()
+        app = factory.create_app()
+
+        with pytest.raises(RuntimeError, match="close fail"):
+            async with factory._lifespan(app):
+                pass
+
+        mock_shutdown_tel.assert_called_once()
+        container.cleanup.assert_awaited_once()
+
+    async def test_shutdown_faz_flush_da_telemetria_antes_de_fechar_o_runtime(
+        self, mock_dc_cls, mock_setup_tel, mock_shutdown_tel
+    ):
+        container = _container_with([MagicMock(id="a1")], [])
+        runtime = container.get_agent_runtime.return_value
+        order: list[str] = []
+        mock_shutdown_tel.side_effect = lambda: order.append("telemetry")
+        runtime.close.side_effect = lambda: order.append("runtime")
+        container.cleanup.side_effect = lambda: order.append("container")
+        mock_dc_cls.create_async = AsyncMock(return_value=container)
+        factory = AppFactory()
+        app = factory.create_app()
+
+        async with factory._lifespan(app):
+            pass
+
+        assert order == ["telemetry", "runtime", "container"]
+
+    async def test_segundo_lifespan_no_mesmo_factory_e_recusado_sem_tocar_no_container(
+        self, mock_dc_cls, mock_setup_tel, mock_shutdown_tel
+    ):
+        container = _container_with([MagicMock(id="a1")], [])
+        mock_dc_cls.create_async = AsyncMock(return_value=container)
+        factory = AppFactory()
+        app = factory.create_app()
+        async with factory._lifespan(app):
+            pass
+
+        with pytest.raises(RuntimeError, match="Lifespan já executado"):
+            async with factory._lifespan(app):
+                pass  # pragma: no cover - recusado antes de subir
+
+        mock_dc_cls.create_async.assert_awaited_once()
+        container.get_agent_runtime.return_value.close.assert_awaited_once()
+        container.cleanup.assert_awaited_once()
+
+    async def test_falha_no_start_do_runtime_sobe_e_fecha_runtime_e_container(
+        self, mock_dc_cls, mock_setup_tel, mock_shutdown_tel
+    ):
+        container = _container_with([MagicMock(id="a1")], [])
+        runtime = container.get_agent_runtime.return_value
+        runtime.start.side_effect = RuntimeError("start fail")
+        mock_dc_cls.create_async = AsyncMock(return_value=container)
+        factory = AppFactory()
+        app = factory.create_app()
+
+        with pytest.raises(RuntimeError, match="start fail"):
+            async with factory._lifespan(app):
+                pass  # pragma: no cover - o startup não completa
+
+        runtime.close.assert_awaited_once()
+        container.cleanup.assert_awaited_once()
+
     @patch("src.infrastructure.web.app_factory.AppConfig")
-    async def test_lifespan_critical_error_raises(self, mock_config_cls, mock_dc_cls):
+    async def test_lifespan_critical_error_raises(self, mock_config_cls, mock_dc_cls, mock_setup_tel, mock_shutdown_tel):
         """Erro crítico no lifespan deve fazer raise."""
         factory = AppFactory()
         mock_config_cls.load.side_effect = RuntimeError("config fail")
@@ -361,6 +330,7 @@ class TestLifespan:
         with pytest.raises(RuntimeError, match="config fail"):
             async with factory._lifespan(app):
                 pass
+        mock_dc_cls.create_async.assert_not_called()
 
 
 # ── create_app module-level ──────────────────────────────────────────

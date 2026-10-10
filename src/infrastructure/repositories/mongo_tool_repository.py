@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
-from typing import List
+from typing import Any
 
-from src.domain.entities.tool import HttpMethod, ParameterType, Tool, ToolParameter
+from src.domain.entities.tool import Tool
 from src.domain.ports import ILogger
 from src.domain.repositories.tool_repository import IToolRepository
+from src.infrastructure.repositories.config_documents import (
+    INVALID_DOCUMENT_ERRORS,
+    first_tool_per_id,
+    map_tool_document,
+)
 from src.infrastructure.repositories.mongo_base import AsyncMongoRepository
 
 
@@ -28,73 +33,43 @@ class MongoToolRepository(AsyncMongoRepository, IToolRepository):
             logger=logger,
         )
 
-    async def get_tools_by_ids(self, tool_ids: List[str]) -> List[Tool]:
+    async def get_tools_by_ids(self, tool_ids: list[str]) -> list[Tool]:
         if not tool_ids:
             return []
         try:
-            cursor = self._collection.find(
-                {"id": {"$in": tool_ids}, "active": True}
-            )
-            return [self._map_to_entity(doc) async for doc in cursor]
+            return await self._active_tools({"id": {"$in": tool_ids}, "active": True})
         except Exception as exc:
             self._logger.error(
-                "Erro ao buscar tools por IDs", tool_ids=tool_ids, error=str(exc)
+                "Erro ao buscar tools por IDs", tool_ids=tool_ids, error_type=type(exc).__name__
             )
             raise
 
     async def get_tool_by_id(self, tool_id: str) -> Tool:
         try:
-            doc = await self._collection.find_one({"id": tool_id})
+            doc = await self._collection.find_one({"id": tool_id}, sort=self._STABLE_ORDER)
             if not doc:
                 raise ValueError(f"Tool {tool_id} não encontrada")
-            return self._map_to_entity(doc)
+            return map_tool_document(doc)
         except Exception as exc:
             self._logger.error(
-                "Erro ao buscar tool", tool_id=tool_id, error=str(exc)
+                "Erro ao buscar tool", tool_id=tool_id, error_type=type(exc).__name__
             )
             raise
 
-    async def get_all_active_tools(self) -> List[Tool]:
+    async def get_all_active_tools(self) -> list[Tool]:
         try:
-            cursor = self._collection.find({"active": True})
-            return [self._map_to_entity(doc) async for doc in cursor]
+            return await self._active_tools({"active": True})
         except Exception as exc:
-            self._logger.error("Erro ao listar tools ativas", error=str(exc))
+            self._logger.error("Erro ao listar tools ativas", error_type=type(exc).__name__)
             raise
 
-    @staticmethod
-    def _map_to_entity(data: dict) -> Tool:
-        parameters: List[ToolParameter] = []
-        for p in data.get("parameters", []):
-            raw_type = p.get("type")
+    async def _active_tools(self, query: dict[str, Any]) -> list[Tool]:
+        """Tools da consulta na ordem estável; inválida isola só ela e o id repetido fica com a primeira."""
+        tools: list[Tool] = []
+        async for doc in self._collection.find(query).sort(self._STABLE_ORDER):
             try:
-                ptype = ParameterType(raw_type)
-            except (ValueError, KeyError):
-                ptype = ParameterType[raw_type.upper()] if isinstance(raw_type, str) else ParameterType.STRING
-            parameters.append(
-                ToolParameter(
-                    name=p.get("name"),
-                    type=ptype,
-                    description=p.get("description"),
-                    required=p.get("required", False),
-                    default_value=p.get("default_value"),
-                )
-            )
-
-        raw_method = data.get("http_method", "GET")
-        try:
-            method = HttpMethod(raw_method)
-        except (ValueError, KeyError):
-            method = HttpMethod[raw_method.upper()] if isinstance(raw_method, str) else HttpMethod.GET
-
-        return Tool(
-            id=data.get("id", ""),
-            name=data.get("name", ""),
-            description=data.get("description", ""),
-            route=data.get("route", ""),
-            http_method=method,
-            parameters=parameters,
-            instructions=data.get("instructions", ""),
-            headers=data.get("headers", {}),
-            active=data.get("active", True),
-        )
+                tools.append(map_tool_document(doc))
+            except INVALID_DOCUMENT_ERRORS as exc:
+                # quem a referencia loga a ausência com o id do agente (AgentFactoryService)
+                self._log_invalid_document("Documento de tool inválido ignorado", "tool_id", doc, exc)
+        return first_tool_per_id(tools, self._logger)

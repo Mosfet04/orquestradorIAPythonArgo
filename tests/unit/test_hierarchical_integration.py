@@ -6,7 +6,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.rag_config import RagConfig, SearchStrategy
-from src.application.services.agent_factory_service import AgentFactoryService
+from src.infrastructure.repositories.config_documents import map_agent_document
+from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService
+from tests.fakes.logger import RecordingLogger
 
 
 class TestAgentFactoryRetrocompat:
@@ -58,9 +60,6 @@ class TestMongoAgentConfigRepositoryRetrocompat:
 
     def test_map_without_search_strategy(self):
         """Documentos MongoDB antigos sem search_strategy devem funcionar."""
-        from src.infrastructure.repositories.mongo_agent_config_repository import (
-            MongoAgentConfigRepository,
-        )
 
         data = {
             "id": "agent-1",
@@ -79,16 +78,13 @@ class TestMongoAgentConfigRepositoryRetrocompat:
             },
         }
 
-        entity = MongoAgentConfigRepository._map_to_entity(data)
+        entity = map_agent_document(data, RecordingLogger())
 
         assert entity.rag_config is not None
         assert entity.rag_config.search_strategy == SearchStrategy.SEMANTIC
         assert entity.rag_config.active is True
 
     def test_map_with_search_strategy_hierarchical(self):
-        from src.infrastructure.repositories.mongo_agent_config_repository import (
-            MongoAgentConfigRepository,
-        )
 
         data = {
             "id": "agent-2",
@@ -107,14 +103,11 @@ class TestMongoAgentConfigRepositoryRetrocompat:
             },
         }
 
-        entity = MongoAgentConfigRepository._map_to_entity(data)
+        entity = map_agent_document(data, RecordingLogger())
 
         assert entity.rag_config.search_strategy == SearchStrategy.HIERARCHICAL
 
     def test_map_without_rag_config(self):
-        from src.infrastructure.repositories.mongo_agent_config_repository import (
-            MongoAgentConfigRepository,
-        )
 
         data = {
             "id": "agent-3",
@@ -126,7 +119,7 @@ class TestMongoAgentConfigRepositoryRetrocompat:
             "active": True,
         }
 
-        entity = MongoAgentConfigRepository._map_to_entity(data)
+        entity = map_agent_document(data, RecordingLogger())
         assert entity.rag_config is None
 
 

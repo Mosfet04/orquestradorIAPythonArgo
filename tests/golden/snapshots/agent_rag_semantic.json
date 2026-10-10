@@ -1,0 +1,87 @@
+{
+  "Agent": [
+    {
+      "add_datetime_to_context": true,
+      "add_history_to_context": true,
+      "db": {
+        "__type__": "agno.db.mongo.mongo.MongoDb",
+        "db_name": "golden_db",
+        "db_url": "mongodb://mongo.golden.invalid:27017",
+        "memory_table_name": "agno_memories",
+        "session_table_name": "agno_sessions"
+      },
+      "description": "Descrição de rag-semantic",
+      "enable_agentic_memory": false,
+      "enable_session_summaries": false,
+      "enable_user_memories": false,
+      "id": "rag-semantic",
+      "instructions": "Você é o rag-semantic.",
+      "knowledge": {
+        "__type__": "agno.knowledge.knowledge.Knowledge",
+        "contents_db": null,
+        "isolate_vector_search": false,
+        "max_results": 10,
+        "name": null,
+        "vector_db": {
+          "__type__": "agno.vectordb.mongodb.mongodb.MongoDb",
+          "collection_name": "rag_rag-semantic",
+          "connection_string": "mongodb://mongo.golden.invalid:27017",
+          "database": "golden_db",
+          "distance_metric": "cosine",
+          "embedder": {
+            "__type__": "fake",
+            "dimensions": 8,
+            "id": "nomic-embed-text:latest",
+            "provider": "ollama"
+          },
+          "search_index_name": "vector_index_1",
+          "search_type": "vector"
+        }
+      },
+      "markdown": true,
+      "model": {
+        "__type__": "fake",
+        "id": "llama3.2:latest",
+        "provider": "ollama"
+      },
+      "name": "Agente rag-semantic",
+      "num_history_runs": 5,
+      "pre_hooks": null,
+      "read_chat_history": true,
+      "reasoning": false,
+      "search_knowledge": true,
+      "store_events": true,
+      "store_history_messages": true,
+      "store_tool_messages": true,
+      "telemetry": false,
+      "tools": null
+    }
+  ],
+  "Team": [],
+  "factory_calls": {
+    "embedder": [
+      {
+        "kwargs": {},
+        "model_id": "nomic-embed-text:latest",
+        "provider": "ollama"
+      }
+    ],
+    "model": [
+      {
+        "kwargs": {},
+        "model_id": "llama3.2:latest",
+        "provider": "ollama"
+      }
+    ]
+  },
+  "knowledge_inserts": [
+    {
+      "args": [],
+      "kwargs": {
+        "path": "docs/manual.md",
+        "skip_if_exists": true
+      }
+    }
+  ],
+  "log_warnings_errors": []
+}

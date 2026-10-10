@@ -1,0 +1,142 @@
+# =============================================================================
+# Config de agentes, teams e tools em arquivo (alternativa ao MongoDB).
+#   CONFIG_STORE=yaml
+#   CONFIG_YAML_PATH=/caminho/para/config.yaml
+# Mesmo conteúdo do seed do Mongo (mongo-init/init-db.js); teste de equivalência:
+# tests/integration/test_config_store_equivalence.py.
+#
+# Formato: as seções agents, teams e tools (todas opcionais; outra chave no topo
+# impede o app de iniciar). Cada item é um documento no MESMO formato das coleções
+# agents_config, teams_config e tools do Mongo, lido pelo mesmo mapper e validado
+# pelas mesmas regras:
+# - só entra quem tem "active: true" (booleano; ausente ou "true" entre aspas = fora);
+# - documento inválido é ignorado com log de erro (id, posição na seção e tipo do
+#   erro) e os demais carregam;
+# - id repetido: vale o primeiro na ordem do arquivo (o repetido vira log de erro);
+# - agentes referenciam tools por id (tools_ids) e teams referenciam agentes por id
+#   (member_ids);
+# - segredos nunca no arquivo: chave de modelo só por referência (api_key_ref:
+#   env:<PROVEDOR>_API_KEY ou file:/caminho dentro de SECRETS_DIR).
+# Campos opcionais do modelo (agente, team e rag_config): model_params, base_url,
+# api_key_ref (ver README, "Providers de modelo").
+#
+# O arquivo é consultado no startup e no POST /admin/refresh-cache e relido só
+# quando muda (sem recarga automática). Âncoras/aliases (& e *) e chave repetida
+# num mapeamento são recusados. Com CONFIG_STORE=yaml o MongoDB continua
+# necessário: sessões, memória de usuário e a árvore de documentos do RAG ficam nele.
+# =============================================================================
+
+agents:
+  - id: general-assistant
+    nome: General Assistant
+    model: qwen3
+    factoryIaModel: ollama
+    descricao: A general purpose AI assistant that can help with various tasks
+    prompt:
+      - >-
+        You are a helpful AI assistant. You can help users with a wide variety of
+        tasks including answering questions, writing, analysis, and problem-solving.
+        Always be polite, accurate, and helpful.
+    tools_ids: []
+    rag_config:
+      active: false
+    user_memory_active: false
+    summary_active: false
+    active: true
+
+  - id: code-assistant
+    nome: Code Assistant
+    model: qwen3
+    factoryIaModel: ollama
+    descricao: Specialized AI assistant for programming and software development
+    prompt:
+      - >-
+        You are an expert programming assistant. You help developers with code
+        review, debugging, writing clean code, explaining complex programming
+        concepts, and providing best practices. You are knowledgeable in multiple
+        programming languages and frameworks.
+    tools_ids: []
+    rag_config:
+      active: false
+    user_memory_active: false
+    summary_active: false
+    active: true
+
+  - id: analyst-assistant
+    nome: Data Analyst Assistant
+    model: qwen3
+    factoryIaModel: ollama
+    descricao: AI assistant specialized in data analysis and business intelligence
+    prompt:
+      - >-
+        You are a data analysis expert. You help users understand data, create
+        insights, suggest analytical approaches, and explain statistical concepts.
+        You can help with data visualization recommendations and business
+        intelligence strategies.
+    tools_ids: [weather-tool]
+    rag_config:
+      active: false
+    user_memory_active: false
+    summary_active: false
+    active: true
+
+# Tools HTTP: route com {param} para parâmetro de rota; parameters com type
+# string | integer | float | boolean | object | array; instructions vão para o
+# system message. Segredo (API key, token) nunca como parâmetro nem em headers.
+tools:
+  - id: weather-tool
+    name: Weather Information
+    description: Get current weather for a location (Open-Meteo, no API key)
+    route: https://api.open-meteo.com/v1/forecast
+    http_method: GET
+    parameters:
+      - name: latitude
+        type: float
+        description: Latitude in decimal degrees (e.g. -23.55 for São Paulo)
+        required: true
+      - name: longitude
+        type: float
+        description: Longitude in decimal degrees (e.g. -46.63 for São Paulo)
+        required: true
+      - name: current
+        type: string
+        description: Comma-separated current variables, e.g. temperature_2m,relative_humidity_2m,wind_speed_10m
+        required: true
+    instructions: >-
+      Use for current weather questions. Convert the city to approximate
+      latitude/longitude yourself and pass
+      current=temperature_2m,relative_humidity_2m,wind_speed_10m.
+    headers: {}
+    active: true
+
+  - id: calculator-tool
+    name: Calculator
+    description: Evaluate a mathematical expression (mathjs.org)
+    route: https://api.mathjs.org/v4/
+    http_method: GET
+    parameters:
+      - name: expr
+        type: string
+        description: Mathematical expression to evaluate, e.g. 2*(3+4)
+        required: true
+    instructions: Use for arithmetic that must be exact; pass the whole expression in expr.
+    headers: {}
+    active: true
+
+# Teams: mode route | coordinate | broadcast | tasks; member_ids = ids de agentes.
+teams:
+  - id: support-router
+    nome: Support Router
+    mode: route
+    model: qwen3
+    factoryIaModel: ollama
+    descricao: Routes user requests to the most appropriate specialist agent
+    prompt: >-
+      You are a smart router. Analyze the user's message and delegate it to the
+      most appropriate team member. For programming questions use the
+      code-assistant, for data analysis use the analyst-assistant, and for general
+      questions use the general-assistant.
+    member_ids: [general-assistant, code-assistant, analyst-assistant]
+    user_memory_active: true
+    summary_active: false
+    active: true

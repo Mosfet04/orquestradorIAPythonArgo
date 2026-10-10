@@ -68,10 +68,9 @@ This project adheres to a code of conduct. By participating, you are expected to
    .\venv\Scripts\Activate.ps1  # Windows
    ```
 
-2. **Install Dependencies**
+2. **Install Dependencies** (pinned, hash-checked; see [Dependencies and lock files](#dependencies-and-lock-files))
    ```bash
-   pip install -r requirements.txt
-   pip install -r requirements-dev.txt  # Development dependencies
+   pip install --require-hashes -r requirements.lock -r requirements-dev.lock
    ```
 
 3. **Environment Configuration**
@@ -89,18 +88,64 @@ This project adheres to a code of conduct. By participating, you are expected to
    mongosh agno mongo-init/init-db.js
    ```
 
-### Using Docker
+### Dependencies and lock files
+
+| File | Edited by | Role |
+|---|---|---|
+| `requirements.in` | hand | Direct runtime dependencies (`agno==2.5.8` exact, others with a minimum version) |
+| `requirements.lock` | `pip-compile` | Every runtime package pinned with `==` and `--hash` |
+| `requirements-dev.in` | hand | Tests and tooling; constrained by `-c requirements.lock` |
+| `requirements-dev.lock` | `pip-compile` | Every dev package pinned with `==` and `--hash` |
+| `requirements.txt` | hand | Compatibility shim: `-r requirements.lock` |
+
+Never edit a `.lock` file by hand. Use the `pip-tools` installed by the dev lock, always runtime first (the dev lock is constrained by it):
 
 ```bash
-# Start all services
-docker-compose up -d
+# Update everything (the normal way to refresh the locks), runtime first
+.venv/bin/pip-compile --upgrade --generate-hashes --allow-unsafe --strip-extras \
+    --output-file=requirements.lock requirements.in
+.venv/bin/pip-compile --upgrade --generate-hashes --allow-unsafe --strip-extras \
+    --output-file=requirements-dev.lock requirements-dev.in
+
+# Or upgrade a single package (repeat on the dev lock if the package is shared)
+.venv/bin/pip-compile --upgrade-package fastapi --generate-hashes --allow-unsafe --strip-extras \
+    --output-file=requirements.lock requirements.in
+
+# ALWAYS audit the result and check that both locks install
+.venv/bin/pip-audit -r requirements.lock --require-hashes --disable-pip
+pip install --dry-run --require-hashes -r requirements.lock -r requirements-dev.lock
+```
+
+Without `--upgrade`/`--upgrade-package`, `pip-compile` keeps the current pins, so it never
+fixes a vulnerable version by itself. Every remaining `pip-audit` finding must be
+justified in the PR description (why it does not apply or why it cannot be fixed yet).
+
+Notes:
+- Locks are generated on **Linux / CPython 3.12** and validated for Linux CPython 3.11 and 3.12 (Docker image and CI). `pip-compile` resolves for the machine it runs on: Windows-only transitive dependencies are dropped. That is why `colorama` is listed explicitly in `requirements.in`. On native Windows, if `--require-hashes` still fails, use WSL/Docker or regenerate locally (and do not commit that lock).
+- `uvloop` is declared with `sys_platform != "win32"`. Note: `app.py` still imports `uvloop` unconditionally, so it fails on native Windows until roadmap item F1-03.
+- Optional extras are **not installed by default** and stay out of the lock: `PyJWT` (AgentOS JWT auth), `mcp` (MCP tools), `anthropic`, `groq` (model providers). To adopt one, add it to `requirements.in` with a minimum version and regenerate.
+- A new dependency needs a justification in the PR (license, maintenance, discarded alternatives).
+- Upper bounds in `requirements.in` are deliberate and explained next to each one: `fastapi<0.137` (agno 2.5.8 breaks with the `_IncludedRouter` introduced in 0.137), major caps on SDKs consumed by agno (`openai<3`, `google-genai<2`, `ag-ui-protocol<0.2`, `openinference-instrumentation-agno<0.2`) until the agno migration (F3). Do not lift them in a routine `--upgrade`.
+
+### Using Docker
+
+Credentials come only from `.env` (see `.env.example`); required variables use `${VAR:?}` and compose refuses to start without them. The base file needs only `MONGO_CONNECTION_STRING` (still required with the dev override); the dev override also needs `MONGO_ROOT_*`/`MONGO_EXPRESS_*` (URL-safe values).
+
+```bash
+# App only (MongoDB/Ollama external, from .env)
+docker compose up -d
+
+# Development: app + local MongoDB, Ollama and mongo-express (ports bound to 127.0.0.1)
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 
 # View logs
-docker-compose logs -f app
+docker compose logs -f app
 
 # Stop services
-docker-compose down
+docker compose -f docker-compose.yml -f docker-compose.dev.yml down
 ```
+
+`.env.development` is versioned and holds placeholders only (`CHANGE_ME`); never put a real secret in it.
 
 ## Contributing Guidelines
 
@@ -154,25 +199,18 @@ This project follows **Clean Architecture (Onion Architecture)**:
 
 ### Code Style
 
-We use these tools for code quality:
-
-- **Black** for code formatting
-- **isort** for import sorting
-- **flake8** for linting
-- **mypy** for type checking
-
-Run before committing:
+All tool configuration lives in `pyproject.toml`. Run before committing:
 ```bash
-# Format code
-black .
-isort .
-
-# Check linting
-flake8 .
-
-# Type checking
-mypy src/
+.venv/bin/ruff check src tests app.py  # lint (incl. import sorting); `ruff format` is not adopted yet
+.venv/bin/mypy                          # strict by default; legacy modules listed with ignore_errors
+.venv/bin/lint-imports                  # onion layer contracts
+.venv/bin/python -m pytest -n auto --cov  # tests + coverage (source = src, branch = true)
 ```
+
+The legacy findings are recorded as an explicit baseline (`per-file-ignores` in ruff,
+`ignore_errors` modules in mypy, `ignore_imports` in import-linter). **The baseline can only
+shrink**: fix and remove an entry when you touch that code; never add new entries. New modules
+are checked with every rule.
 
 ### Python Standards
 
@@ -231,10 +269,38 @@ We use **pytest** with the following test types:
 
 ```
 tests/
-├── unit/           # Fast, isolated tests
-├── integration/    # Tests with external dependencies
-└── e2e/           # End-to-end tests
+├── unit/           # Fast, isolated tests                       -> marker `unit`
+├── golden/         # Snapshots of the kwargs passed to agno Agent/Team -> marker `unit`
+├── contract/       # Same suite for every implementation of a port -> marker `contract`
+├── integration/    # Tests across layers                        -> marker `integration`
+└── fakes/          # FakeChatModel, FakeEmbedder, in-memory repositories, RecordingLogger
 ```
+
+- Layer markers (`unit`, `contract`, `integration`, `security`, `eval`) are applied **by directory**
+  in `tests/conftest.py`; do not decorate files with them. A test in an unmapped directory fails
+  collection. `live` (needs a real external service) is set on the test itself and never runs in CI.
+- No real LLM, network or MongoDB in tests: use `tests/fakes/` (`FakeChatModel` is an
+  `agno.models.base.Model`, so it can be passed straight to `Agent`/`Team`).
+- Tests that configure OpenTelemetry providers use the `reset_otel_providers` fixture.
+- **Random order** (`pytest-randomly`): every run shuffles the tests and prints
+  `Using --randomly-seed=N`. Reproduce a failure with `-p randomly --randomly-seed=N`;
+  use `-p no:randomly` for the file order.
+- **Parallel** (`pytest-xdist`): `-n auto` runs one worker per physical core (CI does this); every worker
+  uses the same random seed and `pytest-cov` combines their coverage. It is opt-in (not in
+  `addopts`), so `--pdb` and single-test runs stay serial. Tests must be safe in parallel:
+  write only under `tmp_path`, never in the repository/cwd; bind servers to port `0` and hand the
+  still-open socket to the server (see `_serve` in `tests/integration/test_qa_f1_04_auth_stack.py`)
+  instead of "find a free port, close it, bind again". Process-global state of a library is
+  reset per test in `tests/conftest.py` (e.g. agno's run cancellation manager).
+- **Shared app fixtures**: mounting the real AgentOS costs ~0.5 s. A `scope="module"` app is
+  allowed only for tests whose request never runs a stateful handler (rejected by auth, answered
+  by CORS, unmatched route, `/livez`); build it inside `pytest.MonkeyPatch.context()` so the env
+  is restored right after `create_app`, and give each test a new `TestClient`. Anything that
+  runs a model or a mutating route uses a fresh app (see `shared_prod_app` in
+  `tests/security/test_api_key_auth.py`, whose teardown asserts the model was never called).
+- **Golden tests**: if a kwarg passed to `Agent`/`Team` changes, `tests/golden` fails with a diff.
+  When the change is intentional, regenerate and review the JSON diff in the commit:
+  `pytest tests/golden --update-golden`.
 
 ### Writing Tests
 
@@ -276,7 +342,7 @@ def test_agent_config_validation():
 import pytest
 from src.infrastructure.repositories.mongo_agent_config_repository import MongoAgentConfigRepository
 
-@pytest.mark.integration
+# no @pytest.mark.integration needed: the directory sets the marker
 def test_get_active_agents(mongo_client):
     repository = MongoAgentConfigRepository(mongo_client, "test_db")
     agents = repository.get_active_agents()
@@ -290,13 +356,15 @@ def test_get_active_agents(mongo_client):
 # All tests
 pytest
 
-# Unit tests only
-pytest tests/unit/ -v
+# Default CI run (everything but `live`), in parallel (8 workers: ~30 s; serial ~95 s)
+pytest -m "not live" -n auto
 
-# Integration tests only
-pytest tests/integration/ -v
+# One layer only
+pytest -m unit
+pytest -m contract
+pytest -m integration
 
-# With coverage
+# With coverage (works with -n auto too)
 pytest --cov=src --cov-report=html
 
 # Specific test file
@@ -388,10 +456,35 @@ Add screenshots for UI changes.
 
 ### Review Process
 
-1. **Automated checks** must pass (CI/CD)
+1. **Automated checks** must pass (CI/CD, see below)
 2. **Code review** by at least one maintainer
 3. **Manual testing** for significant changes
 4. **Documentation review** if docs are updated
+
+### Continuous integration
+
+`.github/workflows/ci.yml` runs on every push to the tracked branches and on every PR:
+
+| Job | Runs | Blocking |
+|---|---|---|
+| `lint` (py3.12) | `ruff check src tests app.py`, `mypy`, `lint-imports` | yes |
+| `test` (py3.11, py3.12) | `pytest -m "not live" -n auto` with coverage | yes |
+| `security` (py3.12) | `bandit -c pyproject.toml -r src`, `pip-audit -r requirements.lock --require-hashes --disable-pip` | not yet: `continue-on-error` until phase F1 |
+| `codacy-coverage` | uploads the py3.12 `coverage.xml` to Codacy | push or same-repo PR only |
+
+Rules (checked by `tests/unit/test_ci_workflow.py`): triggers only `push` and `pull_request`
+(no `pull_request_target`/`workflow_run`); `permissions: contents: read` at the top;
+every `uses:` pinned to a 40-hex commit SHA with a `# vX.Y.Z` comment; `persist-credentials: false`
+on checkout; dependencies installed only from the hash-checked locks; no `curl | bash`.
+`CODACY_API_TOKEN` exists only in the env of the upload step, in a job that never checks out
+or installs the repository code. To bump an action, resolve the tag to its commit
+(`git ls-remote https://github.com/<owner>/<repo> refs/tags/<tag>`) and update SHA and comment.
+To bump the Codacy reporter, change `REPORTER_VERSION` and `REPORTER_SHA256` together (check the
+hash against the release's `.SHA512SUM`/asset digest). The upload uses `--prefix src/` because
+`[tool.coverage.run] source = ["src"]` makes `coverage.xml` list paths relative to `src/`, and the
+upload job has no `.git` for the reporter to match them; keep both in sync if `source` changes. Validate locally with
+[`actionlint`](https://github.com/rhysd/actionlint) and [`zizmor`](https://docs.zizmor.sh/)
+(`pipx run zizmor --offline .github/workflows/`); neither is part of the dev lock.
 
 ## Issue Reporting
 

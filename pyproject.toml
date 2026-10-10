@@ -1,0 +1,243 @@
+# Configuração única das ferramentas de qualidade do projeto.
+# Dependências NÃO ficam aqui: veja requirements.in / requirements.lock (runtime)
+# e requirements-dev.in / requirements-dev.lock (desenvolvimento).
+
+# ---------------------------------------------------------------------------
+# pytest (migrado do antigo pytest.ini)
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+# unit/contract/integration/security/eval são aplicados por diretório em
+# tests/conftest.py (não decore arquivo a arquivo); live é marcado no próprio teste.
+markers = [
+    "unit: testes unitários, sem I/O real (tests/unit, tests/golden)",
+    "contract: mesma suíte para toda implementação de uma porta (tests/contract)",
+    "integration: testes de integração entre camadas (tests/integration)",
+    "security: testes de segurança (tests/security)",
+    "eval: avaliações determinísticas com modelo roteirizado (tests/eval)",
+    "live: depende de serviço externo real; nunca roda na CI padrão",
+    "slow: marca testes que demoram para executar",
+]
+# Com pytest 9.0.2, `--strict-markers` em addopts (como estava no pytest.ini) não era
+# aplicado: um marker não declarado passava. A opção de ini abaixo faz valer.
+strict_markers = true
+addopts = [
+    "-v",
+    "--tb=short",
+    "--disable-warnings",
+    "--color=yes",
+    "--durations=10",
+]
+filterwarnings = [
+    "ignore::UserWarning",
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+log_cli = false
+log_cli_level = "ERROR"
+log_cli_format = "%(asctime)s [%(levelname)8s] %(name)s: %(message)s"
+log_cli_date_format = "%Y-%m-%d %H:%M:%S"
+asyncio_mode = "auto"
+
+# ---------------------------------------------------------------------------
+# coverage (usado por `pytest --cov`)
+# ---------------------------------------------------------------------------
+[tool.coverage.run]
+source = ["src"]
+branch = true
+omit = ["tests/*", ".venv/*", "debug_scripts/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
+
+# ---------------------------------------------------------------------------
+# ruff (somente lint; `ruff format` fica fora da F0)
+# ---------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+extend-exclude = [".claude", "logs", "mongo-init"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # isort
+    "B",        # bugbear
+    "UP",       # pyupgrade
+    "S",        # bandit (flake8-bandit)
+    "ASYNC",    # I/O bloqueante e armadilhas em código async
+    "BLE",      # except Exception cego
+    "LOG",      # uso de logging
+    "G",        # formatação em chamadas de log
+    "T20",      # print
+    "PIE",      # pequenos anti-padrões
+    "RUF",      # regras próprias do ruff
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src", "tests"]
+
+[tool.ruff.lint.per-file-ignores]
+# --- Permanente: assert é o mecanismo de asserção do pytest. ---
+"tests/**" = ["S101"]
+# --- Permanente: em app.py, load_dotenv() precisa rodar antes dos imports de src.
+# O gate é `ruff check src tests app.py`. ---
+"app.py" = ["E402"]
+# --- BASELINE HERDADA (F0-01) ---
+# Violações existentes no commit 91a8a7a. Esta lista SÓ PODE ENCOLHER: ao tocar
+# num arquivo, corrija e remova o código daqui; nunca acrescente arquivo ou código.
+# Arquivo novo não entra aqui, logo é checado com todas as regras.
+# Legenda: UP006/UP007/UP015/UP017/UP035/UP045 = sintaxe antiga (typing.List,
+# Optional, timezone.utc...); BLE001 = except Exception; S110 = try/except/pass;
+# ASYNC230 = open() bloqueante em async; RUF012 = atributo de classe mutável;
+# B904 = raise sem from; G004 = f-string em log; E501 = linha > 120.
+"src/application/services/document_indexing_service.py" = ["BLE001", "UP006", "UP035"]
+"src/application/services/knowledge_search_factory.py" = ["UP045"]
+"src/application/services/search_strategies/hierarchical_search_strategy.py" = ["B905", "BLE001", "UP006", "UP035", "UP045"]
+"src/application/services/search_strategies/semantic_search_strategy.py" = ["UP006", "UP035"]
+"src/domain/entities/agent_config.py" = ["UP006", "UP035", "UP045"]
+"src/domain/entities/document_node.py" = ["UP006", "UP035", "UP045"]
+"src/domain/entities/rag_config.py" = ["UP045"]
+"src/domain/entities/search_result.py" = ["UP006", "UP035"]
+"src/domain/entities/team_config.py" = ["UP006", "UP035", "UP045"]
+"src/domain/entities/tool.py" = ["UP006", "UP035", "UP045"]
+"src/domain/ports/document_parser_port.py" = ["UP006", "UP035"]
+"src/domain/ports/knowledge_search_port.py" = ["UP006", "UP035"]
+"src/domain/ports/tool_factory_port.py" = ["UP006", "UP035"]
+"src/domain/repositories/agent_config_repository.py" = ["UP006", "UP035"]
+"src/domain/repositories/team_config_repository.py" = ["UP006", "UP035", "UP045"]
+"src/domain/repositories/tool_repository.py" = ["UP006", "UP035"]
+"src/infrastructure/logging/decorators.py" = ["BLE001", "G004", "UP006", "UP035"]
+"src/infrastructure/logging/structlog_logger.py" = ["B023", "RUF012", "UP006", "UP017", "UP035", "UP045"]
+"src/infrastructure/parsers/text_document_parser.py" = ["UP006", "UP035", "UP045"]
+"src/infrastructure/telemetry/metrics.py" = ["UP035"]
+"src/infrastructure/telemetry/otel_setup.py" = ["BLE001"]
+"tests/unit/test_app_factory_extended.py" = ["E501"]
+"tests/unit/test_dependency_injection.py" = ["E501"]
+"tests/unit/test_document_indexing_service.py" = ["RUF015"]
+"tests/unit/test_http_tool_factory_extended.py" = ["E501", "RUF059"]
+"tests/unit/test_logging_decorators_extended.py" = ["S106"]
+"tests/unit/test_orquestrador_controller_extended.py" = ["UP017"]
+"tests/unit/test_structlog_logger.py" = ["E402"]
+
+# ---------------------------------------------------------------------------
+# mypy: estrito por padrão; módulos legados listados com ignore_errors.
+# Módulo novo NÃO aparece na lista, logo é checado em modo strict.
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.11"
+files = ["src"]
+strict = true
+warn_unreachable = true
+
+[[tool.mypy.overrides]]
+# psutil não publica tipos; evita depender de types-psutil só para um import.
+module = ["psutil", "psutil.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# PyYAML não publica tipos (os stubs são o pacote types-PyYAML); um uso só, yaml.safe_load (F2-06).
+module = ["yaml", "yaml.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# BASELINE HERDADA (F0-01): módulos que hoje falham em `mypy --strict`.
+# Esta lista SÓ PODE ENCOLHER: ao tipar um módulo, remova-o daqui.
+module = [
+    "src.domain.entities.agent_config",
+    "src.domain.entities.tool",
+    "src.infrastructure.logging.decorators",
+    "src.infrastructure.logging.logger_adapter",
+    "src.infrastructure.logging.structlog_logger",
+]
+ignore_errors = true
+
+# ---------------------------------------------------------------------------
+# import-linter: regra de dependência da arquitetura onion/hexagonal.
+# ---------------------------------------------------------------------------
+[tool.importlinter]
+root_packages = ["src"]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+id = "camadas"
+name = "Camadas onion: domain <- application <- infrastructure | presentation"
+type = "layers"
+containers = ["src"]
+layers = [
+    "infrastructure | presentation",
+    "application",
+    "domain",
+]
+# Todo subpacote direto de src precisa estar declarado numa camada.
+exhaustive = true
+# BASELINE HERDADA (F0-01): só resta o composition root, que monta o controller (F2-07).
+# Esta lista SÓ PODE ENCOLHER; não copie o padrão nem acrescente entradas.
+ignore_imports = [
+    "src.infrastructure.dependency_injection -> src.presentation.controllers.orquestrador_controller",
+]
+
+[[tool.importlinter.contracts]]
+id = "nucleo-sem-frameworks"
+name = "domain e application não importam frameworks nem drivers"
+type = "forbidden"
+source_modules = ["src.domain", "src.application"]
+forbidden_modules = [
+    "ag_ui",
+    "agno",
+    "bson",
+    "chromadb",
+    "dotenv",
+    "fastapi",
+    "google",
+    "httpx",
+    "motor",
+    "ollama",
+    "openai",
+    "openinference",
+    "opentelemetry",
+    "psutil",
+    "pymongo",
+    "pypdf",
+    "rich",
+    "starlette",
+    "structlog",
+    "uvicorn",
+    "uvloop",
+    "yaml",
+]
+# Sem baseline desde o F2-04 (montagem com agno em src/infrastructure/runtime/agno/).
+# Não acrescente ignore_imports: o núcleo não importa framework nem driver.
+
+[[tool.importlinter.contracts]]
+id = "apresentacao-sem-runtime"
+name = "presentation não importa o framework de agentes (usa os handles da porta AgentRuntime)"
+type = "forbidden"
+source_modules = ["src.presentation"]
+forbidden_modules = ["agno"]
+# Sem baseline desde a criação (F2-04). Não acrescente ignore_imports.
+
+[[tool.importlinter.contracts]]
+id = "agno-so-no-runtime"
+name = "agno só é importado em src.infrastructure.runtime.agno"
+# `protected` (import-linter 2.15) e não `forbidden`: o `forbidden` não tem "exceto", e listar os
+# subpacotes de src.infrastructure como source_modules deixaria de fora o subpacote novo. Aqui a
+# regra vale para todo `src` (import direto; o composition root chega ao agno pelo runtime, e
+# isso é indireto) e a exceção é uma só. Só vê import estático: o ProviderRegistry carrega por
+# nome (importlib) as classes agno.* das specs de providers/builtins.py, e isso fica de fora.
+# Sonda: tests/unit/test_import_contracts.py.
+type = "protected"
+protected_modules = ["agno"]
+allowed_importers = ["src.infrastructure.runtime.agno"]
+# Sem baseline desde a criação (F2-07). Não acrescente ignore_imports.
+
+# ---------------------------------------------------------------------------
+# bandit (gate a partir da F1): `bandit -q -c pyproject.toml -r src`
+# ---------------------------------------------------------------------------
+[tool.bandit]
+exclude_dirs = ["tests", ".venv"]

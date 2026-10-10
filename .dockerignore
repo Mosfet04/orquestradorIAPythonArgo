@@ -1,0 +1,23 @@
+# Contexto de build como ALLOWLIST: exclui tudo e reinclui só o que a imagem usa.
+# Dockerfile: COPY requirements.lock (instalação) e COPY . . (app.py, src/ e docs/,
+# que guarda os documentos do RAG hierárquico lidos em runtime).
+# Arquivo novo que a imagem precise: reinclua aqui com "!caminho".
+# Teste (emula o moby/patternmatcher): tests/unit/test_container_hygiene.py
+*
+!app.py
+!src/
+!docs/
+!requirements.lock
+
+# Em docs/ só vai o conteúdo de RAG (ex.: basic-prog.txt); documentação do projeto fica fora
+docs/roadmap
+docs/qa
+
+# Reexclusões dentro do que foi reincluído (a última regra que casa vence)
+**/__pycache__
+**/*.py[cod]
+**/.env
+**/.env.*
+**/*.env
+**/.envrc
+**/*.log

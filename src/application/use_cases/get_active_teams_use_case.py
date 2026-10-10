@@ -2,51 +2,69 @@
 
 from __future__ import annotations
 
-from typing import List
+import asyncio
+from collections.abc import Sequence
 
-from agno.agent import Agent
-from agno.team import Team
-
-from src.application.services.team_factory_service import TeamFactoryService
-from src.domain.ports import ILogger
+from src.domain.entities.team_config import TeamConfig
+from src.domain.ports import AgentHandle, AgentRuntime, ILogger, InvalidModelConfigError, TeamHandle
 from src.domain.repositories.team_config_repository import ITeamConfigRepository
 
 
 class GetActiveTeamsUseCase:
-    """Busca configurações de teams ativas e cria os Teams agno."""
+    """Busca configurações de teams ativas e monta os teams pelo runtime.
+
+    A política de carga fica aqui (o runtime monta um team por vez): um team por id, montagem
+    fora do event loop e falha de um isolada dos outros, com um log por falha.
+    """
 
     def __init__(
         self,
-        team_factory_service: TeamFactoryService,
+        runtime: AgentRuntime,
         team_config_repository: ITeamConfigRepository,
         logger: ILogger,
     ) -> None:
-        self._factory = team_factory_service
+        self._runtime = runtime
         self._repository = team_config_repository
         self._logger = logger
 
-    async def execute(self, agents: List[Agent]) -> List[Team]:
+    async def execute(self, agents: Sequence[AgentHandle]) -> list[TeamHandle]:
         """Busca configs de teams e cria instâncias usando os agentes fornecidos.
 
         Args:
-            agents: Lista de agentes já criados (usados como membros potenciais).
+            agents: Agentes já montados pelo mesmo runtime (membros potenciais).
 
         Returns:
-            Lista de Teams agno prontos para montar no AgentOS.
+            Teams prontos para servir.
         """
-        configs = await self._repository.get_active_teams()
+        configs = self._unique_ids(await self._repository.get_active_teams())
         if not configs:
             return []
 
-        teams: List[Team] = []
+        teams: list[TeamHandle] = []
         for config in configs:
             try:
-                team = self._factory.create_team(config, agents)
+                # A criação do modelo pode ler segredo (file:) e resolver DNS: fora do loop.
+                team = await asyncio.to_thread(self._runtime.build_team, config, agents)
                 teams.append(team)
-            except Exception as exc:
+            # Isolamento por team: qualquer falha de um (inclusive de SDK) não derruba os outros.
+            except Exception as exc:  # noqa: BLE001 - isolamento por team; logado abaixo
+                # Só o tipo: texto de exceção de SDK pode trazer segredo. A recusa da config
+                # do modelo é texto nosso e vai como ``reason`` (como no use case de agentes).
+                reason = {"reason": str(exc)} if isinstance(exc, InvalidModelConfigError) else {}
                 self._logger.error(
-                    "Erro ao criar team",
+                    "Team não carregado",
                     team_id=config.id,
-                    error=str(exc),
+                    error_type=type(exc).__name__,
+                    **reason,
                 )
         return teams
+
+    def _unique_ids(self, configs: list[TeamConfig]) -> list[TeamConfig]:
+        """Um team por id; o primeiro vence (o AgentOS recusa a montagem com id repetido)."""
+        unique: dict[str, TeamConfig] = {}
+        for config in configs:
+            if config.id in unique:
+                self._logger.error("Team com id repetido ignorado", team_id=config.id)
+                continue
+            unique[config.id] = config
+        return list(unique.values())

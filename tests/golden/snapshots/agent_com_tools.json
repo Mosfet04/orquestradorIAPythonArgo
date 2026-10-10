@@ -1,0 +1,107 @@
+{
+  "Agent": [
+    {
+      "add_datetime_to_context": true,
+      "add_history_to_context": true,
+      "db": {
+        "__type__": "agno.db.mongo.mongo.MongoDb",
+        "db_name": "golden_db",
+        "db_url": "mongodb://mongo.golden.invalid:27017",
+        "memory_table_name": "agno_memories",
+        "session_table_name": "agno_sessions"
+      },
+      "description": "Descrição de com-tools",
+      "enable_agentic_memory": true,
+      "enable_session_summaries": true,
+      "enable_user_memories": true,
+      "id": "com-tools",
+      "instructions": "Você é o com-tools.",
+      "knowledge": null,
+      "markdown": true,
+      "model": {
+        "__type__": "fake",
+        "id": "claude-x",
+        "provider": "anthropic"
+      },
+      "name": "Agente com-tools",
+      "num_history_runs": 5,
+      "pre_hooks": [
+        {
+          "__type__": "guardrail:UserIdRequiredGuardrail",
+          "entity_id": "com-tools"
+        }
+      ],
+      "read_chat_history": false,
+      "reasoning": false,
+      "search_knowledge": false,
+      "store_events": true,
+      "store_history_messages": true,
+      "store_tool_messages": true,
+      "telemetry": false,
+      "tools": [
+        {
+          "__type__": "agno.tools.function.Function",
+          "add_instructions": true,
+          "async": true,
+          "description": "Busca endereço pelo CEP",
+          "instructions": "Instruções da tool consulta-cep: Use quando o usuário informar um CEP.",
+          "name": "consulta-cep",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "cep": {
+                "description": "CEP",
+                "type": "string"
+              }
+            },
+            "required": [
+              "cep"
+            ],
+            "type": "object"
+          }
+        },
+        {
+          "__type__": "agno.tools.function.Function",
+          "add_instructions": false,
+          "async": true,
+          "description": "Cria um pedido",
+          "instructions": null,
+          "name": "cria-pedido",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "produto": {
+                "description": "SKU",
+                "type": "string"
+              },
+              "quantidade": {
+                "description": "Quantidade",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "produto"
+            ],
+            "type": "object"
+          }
+        }
+      ]
+    }
+  ],
+  "Team": [],
+  "factory_calls": {
+    "embedder": [],
+    "model": [
+      {
+        "kwargs": {},
+        "model_id": "claude-x",
+        "provider": "anthropic"
+      }
+    ]
+  },
+  "knowledge_inserts": [],
+  "log_warnings_errors": [
+    "error: Tool referenciada pelo agente não encontrada (ausente, inativa ou inválida); ignorada",
+    "error: Tool referenciada pelo agente não encontrada (ausente, inativa ou inválida); ignorada"
+  ]
+}

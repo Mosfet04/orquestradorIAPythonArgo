@@ -1,0 +1,52 @@
+{
+  "Agent": [
+    {
+      "add_datetime_to_context": true,
+      "add_history_to_context": true,
+      "db": {
+        "__type__": "agno.db.mongo.mongo.MongoDb",
+        "db_name": "golden_db",
+        "db_url": "mongodb://mongo.golden.invalid:27017",
+        "memory_table_name": "agno_memories",
+        "session_table_name": "agno_sessions"
+      },
+      "description": "Descrição de minimo",
+      "enable_agentic_memory": false,
+      "enable_session_summaries": false,
+      "enable_user_memories": false,
+      "id": "minimo",
+      "instructions": "Você é o minimo.",
+      "knowledge": null,
+      "markdown": true,
+      "model": {
+        "__type__": "fake",
+        "id": "gpt-4o-mini",
+        "provider": "openai"
+      },
+      "name": "Agente minimo",
+      "num_history_runs": 5,
+      "pre_hooks": null,
+      "read_chat_history": false,
+      "reasoning": false,
+      "search_knowledge": false,
+      "store_events": true,
+      "store_history_messages": true,
+      "store_tool_messages": true,
+      "telemetry": false,
+      "tools": null
+    }
+  ],
+  "Team": [],
+  "factory_calls": {
+    "embedder": [],
+    "model": [
+      {
+        "kwargs": {},
+        "model_id": "gpt-4o-mini",
+        "provider": "openai"
+      }
+    ]
+  },
+  "knowledge_inserts": [],
+  "log_warnings_errors": []
+}

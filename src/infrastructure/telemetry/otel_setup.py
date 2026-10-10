@@ -17,14 +17,14 @@ import socket
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
-from opentelemetry import trace, metrics
-from opentelemetry.sdk.resources import Resource, SERVICE_NAME, SERVICE_VERSION
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry import metrics, trace
+from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+from opentelemetry.sdk.resources import SERVICE_NAME, SERVICE_VERSION, Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 if TYPE_CHECKING:
     from src.infrastructure.config.app_config import AppConfig
@@ -89,7 +89,9 @@ def _setup_metrics(resource: Resource, endpoint: str) -> MeterProvider:
 def _instrument_frameworks() -> None:
     """Aplica auto-instrumentação em frameworks usados pela app.
 
-    - FastAPI: rastreia toda requisição HTTP recebida
+    O FastAPI não entra aqui: é instrumentado por app em ``AppFactory.create_app``
+    (``instrument_app``, antes da pilha de middleware ser montada), nunca globalmente.
+
     - HTTPX: rastreia chamadas HTTP saintes (tools, APIs externas)
     - Agno: captura spans de execução de agentes/teams
     """
@@ -117,12 +119,12 @@ def _setup_log_export(resource: Resource, endpoint: str) -> None:
     (structlog faz output via stdlib) e enviá-los via OTLP gRPC.
     """
     try:
-        from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
-        from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+        from opentelemetry._logs import set_logger_provider
         from opentelemetry.exporter.otlp.proto.grpc._log_exporter import (
             OTLPLogExporter,
         )
-        from opentelemetry._logs import set_logger_provider
+        from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+        from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 
         log_exporter = OTLPLogExporter(endpoint=endpoint, insecure=True)
         log_provider = LoggerProvider(resource=resource)

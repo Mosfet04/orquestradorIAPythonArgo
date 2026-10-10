@@ -1,4 +1,4 @@
-"""Testes estendidos para HttpToolFactory — cobertura de _build_description, _resolve_url, _serialize e http_function."""
+"""Testes estendidos para HttpToolFactory — cobertura de schema, instruções, _resolve_url, _serialize e http_function."""
 
 from __future__ import annotations
 
@@ -7,11 +7,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from src.domain.entities.tool import HttpMethod, ToolParameter, Tool
-from src.infrastructure.http.http_tool_factory import (
+from src.domain.entities.tool import HttpMethod, ParameterType, Tool, ToolParameter
+from src.infrastructure.runtime.agno.http_tool_factory import (
     HttpToolFactory,
+    _build_instructions,
     _resolve_url,
     _serialize,
+    build_parameters_schema,
 )
 
 
@@ -33,6 +35,10 @@ def _make_tool(**overrides) -> Tool:
     return Tool(**defaults)
 
 
+def _param(name: str) -> ToolParameter:
+    return ToolParameter(name=name, type=ParameterType.STRING, description=name)
+
+
 # ── _resolve_url ────────────────────────────────────────────────────
 
 
@@ -45,10 +51,31 @@ class TestResolveUrl:
     def test_with_placeholder(self):
         url, remaining = _resolve_url(
             "http://example.com/api/{user_id}",
-            {"param": '{"user_id": "123"}'},
+            {"user_id": "123", "q": "x"},
         )
         assert url == "http://example.com/api/123"
-        assert "param" not in remaining
+        assert remaining == {"q": "x"}
+
+    def test_placeholder_value_is_percent_encoded(self):
+        url, remaining = _resolve_url(
+            "http://example.com/api/{user_id}/orders",
+            {"user_id": "a/../b?c=1#d {e}"},
+        )
+        assert url == "http://example.com/api/a%2F..%2Fb%3Fc%3D1%23d%20%7Be%7D/orders"
+        assert remaining == {}
+
+    def test_non_string_placeholder_value(self):
+        url, _ = _resolve_url("http://example.com/api/{n}", {"n": 42})
+        assert url == "http://example.com/api/42"
+
+    def test_legacy_dict_literal_is_not_parsed(self):
+        """O hack ``'{"user_id": ...}'`` existia só pelo parâmetro ``kwargs`` antigo."""
+        url, remaining = _resolve_url(
+            "http://example.com/api/{user_id}",
+            {"param": '{"user_id": "123"}'},
+        )
+        assert url == "http://example.com/api/{user_id}"
+        assert remaining == {"param": '{"user_id": "123"}'}
 
     def test_non_dict_value(self):
         url, remaining = _resolve_url(
@@ -84,33 +111,48 @@ class TestSerialize:
         assert result == "plain text"
 
 
-# ── _build_description ──────────────────────────────────────────────
+# ── schema e instruções ─────────────────────────────────────────────
 
 
-class TestBuildDescription:
-    def test_basic_description(self, factory):
-        tool = _make_tool()
-        desc = factory._build_description(tool)
-        assert "Ferramenta de teste" in desc
-        assert "GET" in desc
-
-    def test_with_instructions(self, factory):
-        tool = _make_tool(instructions="Use com cuidado")
-        desc = factory._build_description(tool)
-        assert "Use com cuidado" in desc
-        assert "Instruções" in desc
-
-    def test_with_parameters(self, factory):
+class TestParametersSchema:
+    def test_types_required_and_descriptions(self):
         params = [
-            ToolParameter(name="query", type="string", description="Search query", required=True),
-            ToolParameter(name="limit", type="integer", description="Max results", required=False),
+            ToolParameter(name="query", type=ParameterType.STRING, description="Search query", required=True),
+            ToolParameter(name="limit", type=ParameterType.INTEGER, description="Max results"),
         ]
-        tool = _make_tool(parameters=params)
-        desc = factory._build_description(tool)
-        assert "query" in desc
-        assert "(obrigatório)" in desc
-        assert "limit" in desc
-        assert "(opcional)" in desc
+        assert build_parameters_schema(params) == {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query"},
+                "limit": {"type": "integer", "description": "Max results"},
+            },
+            "required": ["query"],
+            "additionalProperties": False,
+        }
+
+    async def test_function_uses_tool_description_and_schema(self, factory):
+        params = [ToolParameter(name="q", type=ParameterType.STRING, description="Busca", required=True)]
+        (fn,) = await factory.create_tools_from_configs([_make_tool(parameters=params)])
+        assert fn.name == "test-tool"
+        assert fn.description == "Ferramenta de teste"
+        assert fn.parameters == build_parameters_schema(params)
+
+    async def test_invalid_parameter_type_skips_tool_with_error_log(self, factory, mock_logger):
+        params = [ToolParameter(name="q", type="texto", description="Busca")]  # type: ignore[arg-type]
+        result = await factory.create_tools_from_configs([_make_tool(id="ruim", parameters=params), _make_tool()])
+        assert [f.name for f in result] == ["test-tool"]
+        assert mock_logger.error.call_args.kwargs["tool_id"] == "ruim"
+
+
+class TestBuildInstructions:
+    def test_with_instructions(self):
+        assert _build_instructions(_make_tool(instructions="  Use com cuidado ")) == (
+            "Instruções da tool test-tool: Use com cuidado"
+        )
+
+    @pytest.mark.parametrize("instructions", [None, "", "   "])
+    def test_without_instructions(self, instructions):
+        assert _build_instructions(_make_tool(instructions=instructions)) is None
 
 
 # ── http_function execution ─────────────────────────────────────────
@@ -118,14 +160,13 @@ class TestBuildDescription:
 
 class TestHttpFunction:
     async def _get_entrypoint(self, factory, tool):
-        """Helper: cria toolkit e retorna o entrypoint da função registrada."""
-        toolkits = await factory.create_tools_from_configs([tool])
-        fn_obj = toolkits[0].async_functions.get("test-tool")
-        assert fn_obj is not None
+        """Helper: cria a ``Function`` e retorna o entrypoint dela."""
+        (fn_obj,) = await factory.create_tools_from_configs([tool])
+        assert fn_obj.name == "test-tool"
         return fn_obj.entrypoint
 
     async def test_get_request_success(self, factory):
-        tool = _make_tool(http_method=HttpMethod.GET)
+        tool = _make_tool(http_method=HttpMethod.GET, parameters=[_param("q")])
         fn = await self._get_entrypoint(factory, tool)
 
         mock_response = MagicMock()
@@ -144,7 +185,7 @@ class TestHttpFunction:
             assert "ok" in result
 
     async def test_post_request_success(self, factory):
-        tool = _make_tool(http_method=HttpMethod.POST)
+        tool = _make_tool(http_method=HttpMethod.POST, parameters=[_param("data")])
         fn = await self._get_entrypoint(factory, tool)
 
         mock_response = MagicMock()
@@ -195,7 +236,7 @@ class TestHttpFunction:
             mock_client_cls.return_value = mock_client
 
             result = await fn()
-            assert "Erro na requisição" in result
+            assert result == "Erro na requisição: falha ao chamar a tool (RequestError)"
 
     async def test_unexpected_error(self, factory):
         tool = _make_tool(http_method=HttpMethod.GET)
@@ -209,10 +250,10 @@ class TestHttpFunction:
             mock_client_cls.return_value = mock_client
 
             result = await fn()
-            assert "Erro inesperado" in result
+            assert result == "Erro inesperado ao chamar a tool (RuntimeError)"
 
     async def test_delete_uses_params(self, factory):
-        tool = _make_tool(http_method=HttpMethod.DELETE)
+        tool = _make_tool(http_method=HttpMethod.DELETE, parameters=[_param("id")])
         fn = await self._get_entrypoint(factory, tool)
 
         mock_response = MagicMock()

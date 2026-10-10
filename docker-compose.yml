@@ -1,38 +1,12 @@
-version: '3.8'
+# Só a aplicação. MongoDB/Ollama externos vêm do .env (modelo em .env.example).
+#   docker compose up -d
+# Desenvolvimento com MongoDB, Ollama e mongo-express locais: docker-compose.dev.yml
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+# Credenciais nunca ficam aqui: ${VAR:?} faz o compose falhar se a variável faltar.
+# Teste: tests/unit/test_container_hygiene.py
 
 services:
-  # MongoDB Database
-  mongodb:
-    image: mongo:7-jammy
-    container_name: orquestrador-mongodb
-    restart: unless-stopped
-    ports:
-      - "27017:27017"
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: admin
-      MONGO_INITDB_ROOT_PASSWORD: password123
-      MONGO_INITDB_DATABASE: agno
-    volumes:
-      - mongodb_data:/data/db
-      - ./mongo-init:/docker-entrypoint-initdb.d
-    networks:
-      - orquestrador-network
-
-  # Ollama AI Model Server
-  ollama:
-    image: ollama/ollama:latest
-    container_name: orquestrador-ollama
-    restart: unless-stopped
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama
-    networks:
-      - orquestrador-network
-    # Optional: Pull models on startup
-    # command: /bin/bash -c "ollama serve & sleep 10 && ollama pull llama3.2 && wait"
-
-    # AI Agents Orchestrator Application
+  # AI Agents Orchestrator Application
   app:
     build:
       context: .
@@ -42,64 +16,60 @@ services:
     ports:
       - "7777:7777"
     environment:
-      # Database Configuration
-      MONGO_CONNECTION_STRING: mongodb://admin:password123@mongodb:27017/agno?authSource=admin
-      MONGO_DATABASE_NAME: agno
-
-      # Application Configuration
-      APP_TITLE: "AI Agents Orchestrator"
-      APP_HOST: 0.0.0.0
-      APP_PORT: 7777
-
-      # Logging Configuration
-      LOG_LEVEL: INFO
-      LOG_FORMAT: json
-
-      # AI Models Configuration
-      OLLAMA_BASE_URL: http://ollama:11434
-      # OPENAI_API_KEY: your-openai-key-here
-
-      # Memory Configuration
-      MEMORY_ENABLED: "true"
-      MEMORY_PROVIDER: mongodb
-
-      # OpenTelemetry → Grafana LGTM
-      OTEL_ENABLED: "true"
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://grafana-lgtm:4317
-      OTEL_SERVICE_NAME: orquestrador-ia
-
-    depends_on:
-      - mongodb
-      - ollama
+      MONGO_CONNECTION_STRING: ${MONGO_CONNECTION_STRING:?defina MONGO_CONNECTION_STRING no .env}
+      MONGO_DATABASE_NAME: ${MONGO_DATABASE_NAME:-agno}
+      # Auth da borda (F1-04): o container faz bind em 0.0.0.0, então o app não sobe
+      # sem as duas chaves; o compose falha antes, com mensagem, em vez de reiniciar em loop.
+      API_KEY_RUN: ${API_KEY_RUN:?defina API_KEY_RUN no .env (ver .env.example)}
+      API_KEY_ADMIN: ${API_KEY_ADMIN:?defina API_KEY_ADMIN no .env (ver .env.example)}
+      APP_TITLE: ${APP_TITLE:-AI Agents Orchestrator}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Vazio = defaults do cliente ollama/agno (OLLAMA_HOST, localhost ou Ollama Cloud
+      # com OLLAMA_API_KEY). O docker-compose.dev.yml aponta para o serviço "ollama".
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-}
+      OTEL_ENABLED: ${OTEL_ENABLED:-true}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://grafana-lgtm:4317}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-orquestrador-ia}
+      # Repasse puro (sem valor): vem do .env/shell se definida; se não, fica ausente no
+      # container e vale o default do código (ENVIRONMENT: o production do Dockerfile).
+      # APP_HOST/APP_PORT ficam com o Dockerfile.
+      ENVIRONMENT:
+      ENABLE_DOCS:
+      CORS_ALLOWED_ORIGINS:
+      AGNO_TELEMETRY:
+      AWS_REGION:
+      USE_TLS:
+      TLS_ALLOW_INVALID_CERTIFICATES:
+      OPENAI_API_KEY:
+      ANTHROPIC_API_KEY:
+      GEMINI_API_KEY:
+      GROQ_API_KEY:
+      OLLAMA_API_KEY:
+      AZURE_API_KEY:
+      AZURE_ENDPOINT:
+      AZURE_VERSION:
+      SECRETS_DIR:
+      MODEL_BASE_URL_ALLOWLIST:
+      # Plugin de provider precisa estar instalado na imagem (imagem derivada com pip install).
+      # Import dinâmico só vale no modo dev local: no container (bind 0.0.0.0) o app recusa.
+      PLUGIN_ALLOWLIST:
+      ALLOW_DYNAMIC_IMPORT:
+      DYNAMIC_PROVIDER_SPECS:
+      # Config em arquivo (CONFIG_STORE=yaml): monte o arquivo e aponte CONFIG_YAML_PATH para ele,
+      # ex.: volumes: ["./config.yaml:/app/config.yaml:ro"] e CONFIG_YAML_PATH=/app/config.yaml.
+      CONFIG_STORE:
+      CONFIG_YAML_PATH:
+    # Endurecimento: sem escalada de privilégio, sem capabilities, raiz somente leitura.
+    # Nada grava em disco no runtime (logs vão para stdout); /tmp em memória.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
     networks:
       - orquestrador-network
-    volumes:
-      - ./logs:/app/logs
-
-  # MongoDB Express (Optional - Web-based MongoDB admin interface)
-  mongo-express:
-    image: mongo-express:latest
-    container_name: orquestrador-mongo-express
-    restart: unless-stopped
-    ports:
-      - "8081:8081"
-    environment:
-      ME_CONFIG_MONGODB_ADMINUSERNAME: admin
-      ME_CONFIG_MONGODB_ADMINPASSWORD: password123
-      ME_CONFIG_MONGODB_URL: mongodb://admin:password123@mongodb:27017/
-      ME_CONFIG_BASICAUTH_USERNAME: admin
-      ME_CONFIG_BASICAUTH_PASSWORD: admin123
-    depends_on:
-      - mongodb
-    networks:
-      - orquestrador-network
-    profiles:
-      - tools
-volumes:
-  mongodb_data:
-    driver: local
-  ollama_data:
-    driver: local
 
 networks:
   orquestrador-network:

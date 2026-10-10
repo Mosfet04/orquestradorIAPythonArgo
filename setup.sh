@@ -81,11 +81,12 @@ setup_virtual_environment() {
 install_dependencies() {
     print_step "Installing Python dependencies..."
     
-    if [ -f "requirements.txt" ]; then
-        pip install -r requirements.txt
+    # Lock com hashes: runtime + desenvolvimento (pytest e ferramentas de qualidade)
+    if [ -f "requirements.lock" ] && [ -f "requirements-dev.lock" ]; then
+        pip install --require-hashes -r requirements.lock -r requirements-dev.lock
         print_success "Dependencies installed"
     else
-        print_error "requirements.txt not found"
+        print_error "requirements.lock / requirements-dev.lock not found"
         exit 1
     fi
 }

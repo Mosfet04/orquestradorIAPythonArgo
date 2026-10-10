@@ -1,0 +1,127 @@
+{
+  "Team": [
+    {
+      "add_history_to_context": true,
+      "db": {
+        "__type__": "agno.db.mongo.mongo.MongoDb",
+        "db_name": "golden_db",
+        "db_url": "mongodb://mongo.golden.invalid:27017",
+        "memory_table_name": "agno_memories",
+        "session_table_name": "agno_sessions"
+      },
+      "description": "Roteia para o especialista",
+      "enable_agentic_memory": true,
+      "enable_session_summaries": false,
+      "enable_user_memories": true,
+      "id": "time-roteador",
+      "instructions": "Escolha o membro certo.",
+      "markdown": true,
+      "members": [
+        {
+          "__type__": "agno.agent.agent.Agent",
+          "id": "minimo",
+          "name": "Agente minimo"
+        },
+        {
+          "__type__": "agno.agent.agent.Agent",
+          "id": "com-tools",
+          "name": "Agente com-tools"
+        }
+      ],
+      "mode": "route",
+      "model": {
+        "__type__": "fake",
+        "id": "gpt-4o",
+        "provider": "openai"
+      },
+      "name": "Time Roteador",
+      "num_team_history_runs": 5,
+      "pre_hooks": [
+        {
+          "__type__": "guardrail:UserIdRequiredGuardrail",
+          "entity_id": "time-roteador"
+        }
+      ],
+      "respond_directly": true,
+      "store_events": true,
+      "store_history_messages": true,
+      "store_member_responses": true,
+      "store_tool_messages": true,
+      "telemetry": false
+    },
+    {
+      "add_history_to_context": true,
+      "db": {
+        "__type__": "agno.db.mongo.mongo.MongoDb",
+        "db_name": "golden_db",
+        "db_url": "mongodb://mongo.golden.invalid:27017",
+        "memory_table_name": "agno_memories",
+        "session_table_name": "agno_sessions"
+      },
+      "description": "",
+      "enable_agentic_memory": false,
+      "enable_session_summaries": true,
+      "enable_user_memories": false,
+      "id": "time-coordenador",
+      "instructions": null,
+      "markdown": true,
+      "members": [
+        {
+          "__type__": "agno.agent.agent.Agent",
+          "id": "com-tools",
+          "name": "Agente com-tools"
+        }
+      ],
+      "mode": "coordinate",
+      "model": {
+        "__type__": "fake",
+        "id": "claude-x",
+        "provider": "anthropic"
+      },
+      "name": "Time Coordenador",
+      "num_team_history_runs": 5,
+      "pre_hooks": [
+        {
+          "__type__": "guardrail:UserIdRequiredGuardrail",
+          "entity_id": "time-coordenador"
+        }
+      ],
+      "respond_directly": false,
+      "store_events": true,
+      "store_history_messages": true,
+      "store_member_responses": true,
+      "store_tool_messages": true,
+      "telemetry": false
+    }
+  ],
+  "factory_calls": {
+    "embedder": [],
+    "model": [
+      {
+        "kwargs": {},
+        "model_id": "gpt-4o-mini",
+        "provider": "openai"
+      },
+      {
+        "kwargs": {},
+        "model_id": "claude-x",
+        "provider": "anthropic"
+      },
+      {
+        "kwargs": {},
+        "model_id": "gpt-4o",
+        "provider": "openai"
+      },
+      {
+        "kwargs": {},
+        "model_id": "claude-x",
+        "provider": "anthropic"
+      }
+    ]
+  },
+  "log_warnings_errors": [
+    "error: Tool referenciada pelo agente não encontrada (ausente, inativa ou inválida); ignorada",
+    "error: Tool referenciada pelo agente não encontrada (ausente, inativa ou inválida); ignorada",
+    "warning: Membro não encontrado entre agentes ativos"
+  ]
+}

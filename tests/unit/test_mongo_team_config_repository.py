@@ -1,10 +1,9 @@
-"""Testes para MongoTeamConfigRepository._map_to_entity."""
+"""Testes para map_team_document."""
 
 from __future__ import annotations
 
-from src.infrastructure.repositories.mongo_team_config_repository import (
-    MongoTeamConfigRepository,
-)
+from src.infrastructure.repositories.config_documents import map_team_document
+from tests.fakes.logger import RecordingLogger
 
 
 class TestMapToEntity:
@@ -24,7 +23,7 @@ class TestMapToEntity:
             "descricao": "Descricao",
             "prompt": "Prompt de sistema",
         }
-        entity = MongoTeamConfigRepository._map_to_entity(doc)
+        entity = map_team_document(doc, RecordingLogger())
         assert entity.id == "team-1"
         assert entity.nome == "Team Router"
         assert entity.factory_ia_model == "ollama"
@@ -46,7 +45,7 @@ class TestMapToEntity:
             "summaryActive": True,
             "active": True,
         }
-        entity = MongoTeamConfigRepository._map_to_entity(doc)
+        entity = map_team_document(doc, RecordingLogger())
         assert entity.factory_ia_model == "openai"
         assert entity.member_ids == ["x1", "x2", "x3"]
         assert entity.user_memory_active is False
@@ -60,7 +59,7 @@ class TestMapToEntity:
             "factoryIaModel": "ollama",
             "memberIds": ["m1"],
         }
-        entity = MongoTeamConfigRepository._map_to_entity(doc)
+        entity = map_team_document(doc, RecordingLogger())
         assert entity.mode == "route"
         assert entity.user_memory_active is True
         assert entity.summary_active is False
@@ -79,6 +78,6 @@ class TestMapToEntity:
             "member_ids": ["a"],
             "memberIds": ["b", "c"],
         }
-        entity = MongoTeamConfigRepository._map_to_entity(doc)
+        entity = map_team_document(doc, RecordingLogger())
         assert entity.factory_ia_model == "ollama"
         assert entity.member_ids == ["a"]

@@ -1,0 +1,179 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - develop
+      - fix/**
+      - feat/**
+  pull_request:
+
+# Token do GITHUB_TOKEN só com leitura; nenhum job amplia.
+permissions:
+  contents: read
+
+# Em PR, um push novo cancela o run anterior. Em push de branch (main inclusive) nada é
+# cancelado: os runs entram em fila, e todo commit termina o envio de cobertura.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Todas as actions fixadas por SHA de commit (comentário = tag correspondente).
+# A instalação é SEMPRE pelos locks com hash (o dev lock já fixa pip/setuptools/wheel).
+
+jobs:
+  lint:
+    name: Lint (ruff, mypy, lint-imports)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.lock
+            requirements-dev.lock
+
+      - name: Instalar dependências (locks com hash)
+        run: python -m pip install --require-hashes -r requirements.lock -r requirements-dev.lock
+
+      - name: ruff
+        run: ruff check src tests app.py
+
+      - name: mypy
+        if: ${{ !cancelled() }}
+        run: mypy
+
+      - name: lint-imports
+        if: ${{ !cancelled() }}
+        run: lint-imports
+
+  test:
+    name: Testes (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.lock
+            requirements-dev.lock
+
+      - name: Instalar dependências (locks com hash)
+        run: python -m pip install --require-hashes -r requirements.lock -r requirements-dev.lock
+
+      # -n auto (pytest-xdist): um worker por núcleo físico; o pytest-cov combina a cobertura dos
+      # workers e o pytest-randomly usa a mesma seed em todos.
+      - name: pytest com cobertura
+        run: python -m pytest -m "not live" -n auto --cov --cov-report=term-missing --cov-report=xml --cov-report=html
+
+      # Só a 3.12 publica cobertura (a mesma que vai para o Codacy).
+      - name: Publicar relatório de cobertura
+        if: ${{ !cancelled() && matrix.python-version == '3.12' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-py3.12
+          path: |
+            coverage.xml
+            htmlcov/
+          if-no-files-found: warn
+          retention-days: 14
+
+  # Bloqueante desde o F1-03 (CLAUDE.md, "Gates por fase"): bandit sem achado e
+  # pip-audit só com a exceção documentada no passo abaixo.
+  security:
+    name: Segurança (bandit, pip-audit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.lock
+            requirements-dev.lock
+
+      - name: Instalar dependências (locks com hash)
+        run: python -m pip install --require-hashes -r requirements.lock -r requirements-dev.lock
+
+      - name: bandit
+        run: bandit -c pyproject.toml -r src
+
+      # Exceção única, até a F3: PYSEC-2026-2333 (agno) está no backend ClickHouse do
+      # agno, que este projeto não usa; sem versão corrigida. Qualquer outra vulnerabilidade
+      # falha o job. Remover o --ignore-vuln quando o agno for atualizado (F3).
+      - name: pip-audit
+        if: ${{ !cancelled() }}
+        run: pip-audit -r requirements.lock --require-hashes --disable-pip --ignore-vuln PYSEC-2026-2333
+
+  # Job isolado: o segredo nunca divide o runner com checkout, `pip install` ou
+  # código do repositório. Só roda em push ou PR do próprio repositório (em PR de
+  # fork o segredo não existe).
+  codacy-coverage:
+    name: Codacy (envio de cobertura)
+    needs: test
+    if: >-
+      github.event_name == 'push' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Baixar relatório de cobertura
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: coverage-py3.12
+
+      # Binário oficial de release com SHA-256 fixado (sem `curl | bash`). Para
+      # atualizar: trocar a versão e o hash (conferir com o .SHA512SUM da release).
+      - name: Baixar Codacy Coverage Reporter (checksum verificado)
+        env:
+          REPORTER_VERSION: "14.1.3"
+          REPORTER_SHA256: 15c5f052207d27b8501ab5d5910c68c206ea70b0157ee1725132780530580875
+        run: |
+          curl -fsSL --retry 3 -o codacy-coverage-reporter \
+            "https://github.com/codacy/codacy-coverage-reporter/releases/download/${REPORTER_VERSION}/codacy-coverage-reporter-linux"
+          echo "${REPORTER_SHA256}  codacy-coverage-reporter" | sha256sum --check --strict
+          chmod +x codacy-coverage-reporter
+
+      - name: Enviar cobertura ao Codacy
+        env:
+          CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}
+          CODACY_ORGANIZATION_PROVIDER: gh
+          CODACY_USERNAME: Mosfet04
+          CODACY_PROJECT_NAME: orquestradorIAPythonArgo
+        run: |
+          if [ -z "${CODACY_API_TOKEN}" ]; then
+            echo "::warning::CODACY_API_TOKEN não configurado; envio de cobertura ignorado."
+            exit 0
+          fi
+          # `source = ["src"]` (pyproject.toml) faz o coverage.xml listar caminhos relativos
+          # a src/; sem .git aqui, o reporter não os corrige sozinho.
+          ./codacy-coverage-reporter report -r coverage.xml --prefix src/
