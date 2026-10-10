@@ -6,7 +6,7 @@ import ipaddress
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Literal
 from urllib.parse import urlsplit
 
 from src.infrastructure.config.secrets import DEFAULT_SECRETS_DIR
@@ -41,6 +41,11 @@ _IMPORT_TARGET = re.compile(rf"{_IDENTIFIER_PATH}:{_IDENTIFIER_PATH}")
 _TRUE = ("true", "1", "yes", "on")
 _FALSE = ("false", "0", "no", "off")
 
+# Backend da config de agentes/teams/tools (F2-06).
+ConfigStoreName = Literal["mongo", "yaml"]
+CONFIG_STORES: tuple[ConfigStoreName, ...] = ("mongo", "yaml")
+_YAML_PATH_REQUIRED = "CONFIG_YAML_PATH é obrigatória com CONFIG_STORE=yaml (caminho do arquivo de config)"
+
 
 @dataclass(frozen=True)
 class AppConfig:
@@ -53,8 +58,8 @@ class AppConfig:
     app_port: int
     log_level: str
     # None = defaults do cliente ollama/agno (OLLAMA_HOST, localhost ou Ollama Cloud com chave)
-    ollama_base_url: Optional[str]
-    openai_api_key: Optional[str] = None
+    ollama_base_url: str | None
+    openai_api_key: str | None = None
 
     # ── OpenTelemetry / Observabilidade ──────────────────────────────
     otel_enabled: bool = True
@@ -67,8 +72,8 @@ class AppConfig:
     enable_docs: bool = False
     cors_allowed_origins: tuple[str, ...] = DEFAULT_CORS_ALLOWED_ORIGINS
     # Chaves de API (F1-04). As duas ou nenhuma; fora do repr para não irem parar em log.
-    api_key_run: Optional[str] = field(default=None, repr=False)
-    api_key_admin: Optional[str] = field(default=None, repr=False)
+    api_key_run: str | None = field(default=None, repr=False)
+    api_key_admin: str | None = field(default=None, repr=False)
     # Raiz dos api_key_ref "file:" (F2-01); repassada ao resolve_secret pelo composition root.
     secrets_dir: str = DEFAULT_SECRETS_DIR
     # Hosts aceitos em base_url de modelo/embedder vinda da config (F2-02), normalizados.
@@ -78,11 +83,24 @@ class AppConfig:
     # "módulo:atributo" de ProviderSpec por env: só com o flag e no modo dev local (F2-03).
     allow_dynamic_import: bool = False
     dynamic_provider_specs: tuple[str, ...] = ()
+    # Backend da config de agentes/teams/tools (F2-06): "mongo" ou "yaml" (arquivo em config_yaml_path,
+    # absoluto, conferido no startup; None com "mongo").
+    config_store: ConfigStoreName = "mongo"
+    config_yaml_path: str | None = None
+
+    def __post_init__(self) -> None:
+        """``config_store`` só ``mongo`` ou ``yaml``; ``yaml`` exige caminho (vale também para ``AppConfig``
+        montado à mão ou por ``dataclasses.replace``, que não passam por ``load``)."""
+        if self.config_store not in CONFIG_STORES:
+            raise ValueError("CONFIG_STORE inválido. Use mongo ou yaml")
+        if self.config_store == "yaml" and not self.config_yaml_path:
+            raise ValueError(_YAML_PATH_REQUIRED)
 
     @classmethod
     def load(cls) -> AppConfig:
         """Carrega e valida configurações a partir de variáveis de ambiente."""
         environment = _environment()
+        config_store, config_yaml_path = _config_store()
         config = cls(
             mongo_connection_string=os.getenv(
                 "MONGO_CONNECTION_STRING",
@@ -115,6 +133,8 @@ class AppConfig:
                 "ALLOW_DYNAMIC_IMPORT", os.getenv("ALLOW_DYNAMIC_IMPORT"), default=False
             ),
             dynamic_provider_specs=_dynamic_provider_specs(),
+            config_store=config_store,
+            config_yaml_path=config_yaml_path,
         )
         config._validate()
         return config
@@ -150,7 +170,7 @@ def _environment() -> str:
     return value
 
 
-def _api_key(name: str, raw: Optional[str]) -> Optional[str]:
+def _api_key(name: str, raw: str | None) -> str | None:
     """Chave de API do ambiente; vazia = ausente. Erros citam só o nome, nunca o valor."""
     value = (raw or "").strip()
     if not value:
@@ -211,7 +231,7 @@ def _allowlisted_host(entry: str, position: int) -> str:
     return name
 
 
-def _non_empty_entries(raw: Optional[str]) -> list[tuple[int, str]]:
+def _non_empty_entries(raw: str | None) -> list[tuple[int, str]]:
     """Entradas não vazias de uma env separada por vírgula, com a posição (1 = a primeira não vazia)."""
     entries = (item.strip() for item in (raw or "").split(","))
     return list(enumerate((entry for entry in entries if entry), start=1))
@@ -250,7 +270,29 @@ def _dynamic_provider_specs() -> tuple[str, ...]:
     return tuple(targets)
 
 
-def _optional_bool(name: str, raw: Optional[str], *, default: bool) -> bool:
+def _config_store() -> tuple[ConfigStoreName, str | None]:
+    """``CONFIG_STORE`` (vazio = mongo) e, com ``yaml``, ``CONFIG_YAML_PATH`` obrigatória.
+
+    O arquivo é do operador (como o ``.env``), então não é confinado a um diretório: basta ser um
+    arquivo regular legível (symlink vale, como o ``..data`` de um ConfigMap). Relativo é resolvido
+    a partir do diretório de trabalho. Com ``mongo``, ``CONFIG_YAML_PATH`` é ignorada. Erros não
+    ecoam o valor da variável.
+    """
+    store = (os.getenv("CONFIG_STORE") or "").strip().lower() or "mongo"
+    if store == "mongo":
+        return "mongo", None
+    if store != "yaml":
+        raise ValueError("CONFIG_STORE inválido. Use mongo ou yaml")
+    raw_path = (os.getenv("CONFIG_YAML_PATH") or "").strip()
+    if not raw_path:
+        raise ValueError(_YAML_PATH_REQUIRED)
+    path = os.path.abspath(raw_path)
+    if not (os.path.isfile(path) and os.access(path, os.R_OK)):
+        raise ValueError("CONFIG_YAML_PATH não aponta para um arquivo regular legível")
+    return "yaml", path
+
+
+def _optional_bool(name: str, raw: str | None, *, default: bool) -> bool:
     """Booleano de env; vazio = ``default``, valor desconhecido = erro (não adivinha nem ecoa o valor)."""
     value = (raw or "").strip().lower()
     if not value:

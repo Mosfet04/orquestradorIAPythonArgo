@@ -4,20 +4,28 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
+from typing import Any, ClassVar
 
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection
 
 from src.domain.ports import ILogger
+from src.infrastructure.repositories.config_documents import (
+    log_invalid_document,
+    warn_ignored_camel_case,
+)
+
+# Documento cru do Mongo (sem schema).
+MongoDocument = dict[str, Any]
 
 
 class MongoClientFactory:
     """Gerencia uma única instância de AsyncIOMotorClient por connection string."""
 
-    _instances: dict[str, AsyncIOMotorClient] = {}
+    _instances: ClassVar[dict[str, AsyncIOMotorClient[MongoDocument]]] = {}
 
     @classmethod
-    def get_client(cls, connection_string: str) -> AsyncIOMotorClient:
+    def get_client(cls, connection_string: str) -> AsyncIOMotorClient[MongoDocument]:
         if connection_string not in cls._instances:
             use_tls = "mongodb.net" in connection_string or (
                 os.getenv("USE_TLS", "false").lower() == "true"
@@ -26,7 +34,7 @@ class MongoClientFactory:
                 "TLS_ALLOW_INVALID_CERTIFICATES", "false"
             ).lower() == "true"
 
-            opts: dict = {
+            opts: dict[str, Any] = {
                 "serverSelectionTimeoutMS": 30_000,
                 "connectTimeoutMS": 30_000,
                 "socketTimeoutMS": 30_000,
@@ -49,13 +57,6 @@ class MongoClientFactory:
         return cls._instances[connection_string]
 
 
-# Erros do mapeamento documento -> entidade (campo ausente, tipo errado, valor fora do enum).
-INVALID_DOCUMENT_ERRORS = (ValueError, TypeError, AttributeError, KeyError)
-
-# Grafia camelCase dos campos novos (F2-01): o mapper só lê snake_case; estas são ignoradas.
-IGNORED_CAMEL_CASE_KEYS = ("apiKeyRef", "baseUrl", "modelParams")
-
-
 class AsyncMongoRepository:
     """Base para repositórios MongoDB async."""
 
@@ -70,50 +71,31 @@ class AsyncMongoRepository:
         self._logger = logger
         self._client = MongoClientFactory.get_client(connection_string)
         self._db = self._client[database_name]
-        self._collection: AsyncIOMotorCollection = self._db[collection_name]
+        self._collection: AsyncIOMotorCollection[MongoDocument] = self._db[collection_name]
 
-    def _log_invalid_document(
-        self, message: str, id_field: str, doc: Mapping[str, object], exc: Exception
-    ) -> None:
-        """Log de documento ignorado: id (se for texto), ``_id`` (se ObjectId) e tipo do erro.
+    # Ordem estável dos documentos de config (F2-06): o mais antigo primeiro. A busca por id usa a
+    # mesma ordem, então com id repetido acha o mesmo documento que a listagem põe na frente.
+    _STABLE_ORDER: ClassVar[list[tuple[str, int]]] = [("_id", 1)]
 
-        Nunca o documento nem o texto do erro: config pode carregar segredo ou PII.
-        """
-        raw_id = doc.get("id")
-        mongo_id = doc.get("_id")
-        self._logger.error(
-            message,
-            **{id_field: raw_id if isinstance(raw_id, str) else None},
-            mongo_id=str(mongo_id) if isinstance(mongo_id, ObjectId) else None,
-            error_type=type(exc).__name__,
-        )
+    @staticmethod
+    def _location(doc: object) -> dict[str, object]:
+        """Onde o documento está no Mongo: o ``_id``, se for ObjectId."""
+        mongo_id = doc.get("_id") if isinstance(doc, Mapping) else None
+        return {"mongo_id": str(mongo_id) if isinstance(mongo_id, ObjectId) else None}
 
-    def _warn_ignored_camel_case(self, id_field: str, doc: Mapping[str, object]) -> None:
-        """Aviso quando o documento usa ``apiKeyRef``/``baseUrl``/``modelParams`` (raiz ou ``rag_config``).
+    def _log_invalid_document(self, message: str, id_field: str, doc: object, exc: Exception) -> None:
+        """Log de documento ignorado (id, ``mongo_id`` e tipo do erro; nunca o documento)."""
+        log_invalid_document(self._logger, message, id_field, doc, exc, self._location(doc))
 
-        As chaves seguem ignoradas (o documento carrega como antes), mas quem gravou achando que
-        configurou endpoint/chave precisa saber. Cita só o id e os nomes das chaves, nunca valores.
-        """
-        rag = doc.get("rag_config")
-        keys = [key for key in IGNORED_CAMEL_CASE_KEYS if key in doc]
-        rag_keys = [key for key in IGNORED_CAMEL_CASE_KEYS if isinstance(rag, Mapping) and key in rag]
-        if not keys and not rag_keys:
-            return
-        raw_id = doc.get("id")
-        mongo_id = doc.get("_id")
-        self._logger.warning(
-            "Documento com chaves camelCase ignoradas; use model_params, base_url e api_key_ref",
-            **{id_field: raw_id if isinstance(raw_id, str) else None},
-            mongo_id=str(mongo_id) if isinstance(mongo_id, ObjectId) else None,
-            keys=keys,
-            rag_config_keys=rag_keys,
-        )
+    def _warn_ignored_camel_case(self, id_field: str, doc: object) -> None:
+        """Aviso de ``apiKeyRef``/``baseUrl``/``modelParams`` ignoradas (só id e nomes das chaves)."""
+        warn_ignored_camel_case(self._logger, id_field, doc, self._location(doc))
 
     async def ping(self) -> bool:
         """Verifica conectividade."""
         try:
             await self._client.admin.command("ping")
             return True
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - ping devolve False; falha logada
             self._logger.error("MongoDB ping falhou", error=str(exc))
             return False

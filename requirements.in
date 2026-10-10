@@ -62,6 +62,10 @@ openinference-instrumentation-agno>=0.1.28,<0.2  # 1.x não validada com agno 2.
 # === Utilities ===
 packaging>=24.0
 importlib-metadata>=8.0.0
+# Importado diretamente: CONFIG_STORE=yaml (F2-06) lê a config com yaml.safe_load. Já vinha no lock
+# como dependência do agno; declarado para não depender disso. MIT, mantido pela org yaml (PyPI);
+# alternativas descartadas: ruamel.yaml (dependência nova) e JSON (sem comentário no arquivo do operador).
+pyyaml>=6.0.1
 
 # === AG-UI Protocol (interface AGUI para os.agno.com) ===
 ag-ui-protocol>=0.1.13,<0.2  # 1.0 é major nova; agno.os.interfaces.agui 2.5.8 usa a 0.1.x

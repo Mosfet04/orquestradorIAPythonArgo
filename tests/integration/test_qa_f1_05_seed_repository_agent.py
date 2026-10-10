@@ -37,6 +37,9 @@ class _Cursor:
     def __init__(self, docs: list[dict[str, Any]]) -> None:
         self._it = iter(docs)
 
+    def sort(self, *_: object) -> _Cursor:
+        return self  # documentos do seed sem _id: a ordem da lista é a de inserção
+
     def __aiter__(self) -> _Cursor:
         return self
 

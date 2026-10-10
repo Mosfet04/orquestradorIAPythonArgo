@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.domain.entities.tool import HttpMethod, ParameterType
+from src.infrastructure.repositories.config_documents import map_tool_document
 from src.infrastructure.repositories.mongo_tool_repository import MongoToolRepository
 
 
@@ -16,6 +17,9 @@ class _AsyncCursorMock:
     def __init__(self, docs):
         self._docs = docs
         self._index = 0
+
+    def sort(self, *_args):
+        return self
 
     def __aiter__(self):
         return self
@@ -150,12 +154,12 @@ class TestMapToEntity:
                 }
             ]
         )
-        tool = MongoToolRepository._map_to_entity(doc)
+        tool = map_tool_document(doc)
         assert len(tool.parameters) == 1
         assert tool.parameters[0].name == "q"
         assert tool.parameters[0].type == ParameterType.STRING
 
     def test_http_method_post(self):
         doc = _make_tool_doc(http_method="POST")
-        tool = MongoToolRepository._map_to_entity(doc)
+        tool = map_tool_document(doc)
         assert tool.http_method == HttpMethod.POST

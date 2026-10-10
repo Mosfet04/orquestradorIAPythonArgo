@@ -16,7 +16,7 @@ import pytest
 
 from src.domain.entities.tool import Tool
 from src.infrastructure.http.http_tool_factory import HttpToolFactory
-from src.infrastructure.repositories.mongo_tool_repository import MongoToolRepository
+from src.infrastructure.repositories.config_documents import map_tool_document
 from tests.fakes import RecordingLogger
 
 SEED = Path(__file__).resolve().parents[2] / "mongo-init" / "init-db.js"
@@ -51,7 +51,7 @@ def test_seed_tem_tools():
 def test_todas_as_tools_do_seed_passam_pelo_mapper_do_repositorio_sem_perder_campos():
     docs = _seed_tool_docs()
 
-    tools = [MongoToolRepository._map_to_entity(doc) for doc in docs]
+    tools = [map_tool_document(doc) for doc in docs]
 
     assert [t.id for t in tools] == [d["id"] for d in docs]
     for doc, tool in zip(docs, tools, strict=True):
@@ -86,7 +86,7 @@ def test_tools_referenciadas_pelos_agentes_do_seed_existem():
 @pytest.mark.parametrize("doc", _seed_tool_docs(), ids=lambda d: d["id"])
 async def test_tool_do_seed_vira_function_com_schema(doc: dict[str, Any]):
     logger = RecordingLogger()
-    tool: Tool = MongoToolRepository._map_to_entity(doc)
+    tool: Tool = map_tool_document(doc)
 
     (function,) = await HttpToolFactory(logger=logger).create_tools_from_configs([tool])
 

@@ -107,23 +107,16 @@ known-first-party = ["src", "tests"]
 "src/domain/entities/team_config.py" = ["UP006", "UP035", "UP045"]
 "src/domain/entities/tool.py" = ["UP006", "UP035", "UP045"]
 "src/domain/ports/document_parser_port.py" = ["UP006", "UP035"]
-"src/domain/ports/document_tree_repository_port.py" = ["UP006", "UP035", "UP045"]
 "src/domain/ports/knowledge_search_port.py" = ["UP006", "UP035"]
 "src/domain/ports/tool_factory_port.py" = ["UP006", "UP035"]
 "src/domain/repositories/agent_config_repository.py" = ["UP006", "UP035"]
 "src/domain/repositories/team_config_repository.py" = ["UP006", "UP035", "UP045"]
 "src/domain/repositories/tool_repository.py" = ["UP006", "UP035"]
 "src/infrastructure/cache/model_cache_service.py" = ["BLE001", "UP006", "UP017", "UP035", "UP045"]
-"src/infrastructure/config/app_config.py" = ["UP045"]
 "src/infrastructure/http/http_tool_factory.py" = ["BLE001", "UP006", "UP035"]
 "src/infrastructure/logging/decorators.py" = ["BLE001", "G004", "UP006", "UP035"]
 "src/infrastructure/logging/structlog_logger.py" = ["B023", "RUF012", "UP006", "UP017", "UP035", "UP045"]
 "src/infrastructure/parsers/text_document_parser.py" = ["UP006", "UP035", "UP045"]
-"src/infrastructure/repositories/mongo_agent_config_repository.py" = ["UP006", "UP035"]
-"src/infrastructure/repositories/mongo_base.py" = ["BLE001", "RUF012"]
-"src/infrastructure/repositories/mongo_document_tree_repository.py" = ["UP006", "UP035", "UP045"]
-"src/infrastructure/repositories/mongo_team_config_repository.py" = ["UP006", "UP035", "UP045"]
-"src/infrastructure/repositories/mongo_tool_repository.py" = ["UP006", "UP035"]
 "src/infrastructure/services/llm_summary_generator.py" = ["BLE001"]
 "src/infrastructure/telemetry/metrics.py" = ["UP035"]
 "src/infrastructure/telemetry/otel_setup.py" = ["BLE001"]
@@ -151,6 +144,11 @@ module = ["psutil", "psutil.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
+# PyYAML não publica tipos (os stubs são o pacote types-PyYAML); um uso só, yaml.safe_load (F2-06).
+module = ["yaml", "yaml.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
 # BASELINE HERDADA (F0-01): módulos que hoje falham em `mypy --strict`.
 # Esta lista SÓ PODE ENCOLHER: ao tipar um módulo, remova-o daqui.
 module = [
@@ -161,11 +159,6 @@ module = [
     "src.infrastructure.logging.decorators",
     "src.infrastructure.logging.logger_adapter",
     "src.infrastructure.logging.structlog_logger",
-    "src.infrastructure.repositories.mongo_agent_config_repository",
-    "src.infrastructure.repositories.mongo_base",
-    "src.infrastructure.repositories.mongo_document_tree_repository",
-    "src.infrastructure.repositories.mongo_team_config_repository",
-    "src.infrastructure.repositories.mongo_tool_repository",
 ]
 ignore_errors = true
 
@@ -222,6 +215,7 @@ forbidden_modules = [
     "structlog",
     "uvicorn",
     "uvloop",
+    "yaml",
 ]
 # Sem baseline desde o F2-04 (montagem com agno em src/infrastructure/runtime/agno/).
 # Não acrescente ignore_imports: o núcleo não importa framework nem driver.

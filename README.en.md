@@ -479,6 +479,8 @@ OLLAMA_BASE_URL=http://localhost:11434
 # AZURE_VERSION=2024-02-01
 # SECRETS_DIR=/run/secrets   # root for "file:/..." api_key_ref (files outside it are rejected); relative or "/" stops the app from starting
 # MODEL_BASE_URL_ALLOWLIST=llm.internal.example,10.0.0.5   # hosts accepted in documents' base_url (host only); list only hosts trusted to receive the process's provider keys
+# CONFIG_STORE=mongo   # mongo (default) or yaml: where agents, teams and tools come from (see "Configuration in a YAML file"); any other value: the app does not start
+# CONFIG_YAML_PATH=/app/config.yaml   # required with CONFIG_STORE=yaml; a readable regular file
 # PLUGIN_ALLOWLIST=orquestrador-provider-deepseek:deepseek   # allowed provider plugins (distribution:name); outside the list they are never imported (see "Provider plugins")
 # ALLOW_DYNAMIC_IMPORT=false   # with DYNAMIC_PROVIDER_SPECS=module:ATTRIBUTE, local dev mode only; outside it the app does not start
 
@@ -576,7 +578,7 @@ Except `/livez` (public), they require the admin key.
 | `GET` | `/livez` | Minimal public (no key) liveness (`{"status":"ok"}`), no dependencies; HEALTHCHECK target |
 | `GET` | `/admin/health` | Detailed health check (MongoDB + memory + OTLP): 200 when `healthy`, **503** when anything is `unhealthy`/`error`; the body never carries exception text (details go to the log, by type) |
 | `GET` | `/metrics/cache` | Agent cache statistics |
-| `POST` | `/admin/refresh-cache` | Reloads the internal agent/team cache (the one in `/metrics/cache`) from MongoDB; an invalid document becomes an error log. It does **not** change what AgentOS and AG-UI serve: a new, changed or removed agent/team only takes effect after restarting the application (hot reload is out of scope) |
+| `POST` | `/admin/refresh-cache` | Reloads the internal agent/team cache (the one in `/metrics/cache`) from the config (MongoDB or the YAML file, see `CONFIG_STORE`); an invalid document becomes an error log. The cache is only replaced after agents and teams load: if the reload fails (MongoDB down, broken YAML), the previous cache stays, the error is logged (type only) and the route answers 500. It does **not** change what AgentOS and AG-UI serve: a new, changed or removed agent/team only takes effect after restarting the application (hot reload is out of scope) |
 
 ### Interactive Documentation
 
@@ -779,6 +781,8 @@ Canonical format: the one in the example (`factoryIaModel`, everything else in s
 
 An invalid document in `agents_config` or `teams_config` does not bring startup down: it is skipped with an error log (`Documento de agente inválido ignorado` / `Documento de team inválido ignorado`, with `agent_id`/`team_id` when `id` is a string, `mongo_id` when `_id` is an ObjectId, and `error_type`; never the document content) and the others load. Invalid = `id`, `nome`, `model` or `factoryIaModel` missing, empty or not a string; `descricao` that is not a string (it may be missing or `null`); `rag_config` that is not an object; `search_strategy` or `mode` outside the accepted values; a team without members; `model_params`, `base_url` or `api_key_ref` not in the format described in the fields (in `rag_config`, also when present without `model`/`factoryIaModel`). Two active documents with the same `id` (two agents or two teams): the oldest one wins (lowest `_id`; reads are sorted by `_id`) and the other becomes an error log (`Agente com id repetido ignorado` / `Team com id repetido ignorado`). A valid agent or team that fails to build (e.g. model refused by the factory, team with no loaded member) is also an error log (`Agente não carregado` / `Team não carregado`, with the id and `error_type`; a model refused by the provider registry also carries `reason`, our own text without secret values, e.g. `Tipo 'xyz' não suportado para modelo. Suportados: ...` or `modelo do provider 'openai_compatible': host da base_url não é do provider nem está em MODEL_BASE_URL_ALLOWLIST`) without affecting the others.
 
+The same applies to the YAML file (`CONFIG_STORE=yaml`), with `position` (the item's position in the section, starting at 1) instead of `mongo_id` and the file order instead of the `_id` order. An invalid tool (in `tools` or in the `tools` section) is also skipped with a log (`Documento de tool inválido ignorado`), and two active tools with the same `id` keep the first one (`Tool com id repetido ignorada`). Also invalid (in both backends): a tool `route` that is not a string and `headers` that is not a string-to-string map. A dirty `tools_ids` or `member_ids`, on the other hand, does not invalidate the document (existing documents keep loading, degraded): if it is not a list, it is treated as an empty list and the agent loads without tools (`Lista de ids que não é lista ignorada`, with `agent_id`/`team_id`, `field` and `value_type`); an item that is not a string is dropped and the other ids are kept (a single log per field, `Itens que não são texto ignorados na lista de ids`, with `agent_id`/`team_id`, `field`, `dropped_count` and `item_positions`, the first 10 dropped positions, starting at 1); the value is never logged. `field` is the key read from the document (`tools_ids`, `member_ids` or the legacy `memberIds`). `tools_ids` may be missing or `null`. A team left with no members is still invalid.
+
 ### Adding a New Agent (zero code)
 
 ```javascript
@@ -798,6 +802,23 @@ db.agents_config.insertOne({
 ```
 
 Then restart the application: routes (`/agents/{id}`, `/agui/{id}`...) and the served instances are built at startup. The same applies to changing or deactivating an agent/team. `POST /admin/refresh-cache` only reloads the internal cache (`/metrics/cache`) and does not apply the change to what is being served (hot reload is out of scope).
+
+### Configuration in a YAML file (`CONFIG_STORE=yaml`)
+
+Agents, teams and tools can come from a file instead of the `agents_config`, `teams_config` and `tools` collections:
+
+```bash
+CONFIG_STORE=yaml
+CONFIG_YAML_PATH=config.example.yaml   # relative = from the working directory
+```
+
+- **Format**: a mapping with the `agents`, `teams` and `tools` sections (all optional; any other top-level key stops the app from starting), each a list of documents **in the same format as the collections** (same mapper, same validation). [`config.example.yaml`](config.example.yaml) has the same content as the `mongo-init/init-db.js` seed (equivalence test in `tests/integration/test_config_store_equivalence.py`).
+- **Same semantics as MongoDB**: only `active: true` (boolean) is loaded; an invalid document is skipped with a log (see [Invalid documents](#invalid-documents)); repeated id: the first one in file order wins; agents reference tools by `tools_ids` and teams reference agents by `member_ids`. Never put secrets in the file: model keys only through `api_key_ref`.
+- **Reading**: PyYAML's safe loader (`CSafeLoader` with libyaml; no Python object tags), off the event loop. The config is queried at startup and on `POST /admin/refresh-cache` (no automatic reload), and the file is only re-read when it changes (inode, size and modification time; swapping a ConfigMap's symlink also counts); concurrent queries wait for a single read.
+- **Refused** (the app does not start; on refresh, the previous cache stays), with a message that only gives line/column, never the content: invalid YAML; anchors and aliases (`&`/`*`, including the `<<: *x` merge key: not supported, which also closes the "billion laughs" exponential expansion); a repeated key in a mapping (two `agents` sections, a field twice: PyYAML would silently keep the last one); nesting deeper than 64 levels; a value YAML cannot build (e.g. an impossible unquoted date, `2024-13-45`). A section item that is not an object is an invalid document (logged once per file read).
+- **Startup validation**: `CONFIG_STORE` only `mongo` or `yaml`; with `yaml`, `CONFIG_YAML_PATH` is required and must point to a readable regular file (a symlink is fine, like a Kubernetes ConfigMap's). The file belongs to the operator, like `.env`: it is not confined to a directory.
+- **MongoDB is still required**: sessions, user memory, RAG chunks and the document tree live there; only the config collections are no longer read.
+- **Docker**: the container root is read-only; mount the file, e.g. `volumes: ["./config.yaml:/app/config.yaml:ro"]` with `CONFIG_YAML_PATH=/app/config.yaml` (`docker-compose.yml` passes `CONFIG_STORE` and `CONFIG_YAML_PATH` through).
 
 ---
 

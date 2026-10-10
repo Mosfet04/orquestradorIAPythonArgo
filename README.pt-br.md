@@ -493,6 +493,8 @@ OLLAMA_BASE_URL=http://localhost:11434
 # AZURE_VERSION=2024-02-01
 # SECRETS_DIR=/run/secrets   # raiz dos api_key_ref "file:/..." (arquivo fora dela é recusado); relativo ou "/" impede o app de iniciar
 # MODEL_BASE_URL_ALLOWLIST=llm.interno.example,10.0.0.5   # hosts aceitos em base_url dos documentos (só host); liste só hosts confiáveis para receber as chaves de provider do processo
+# CONFIG_STORE=mongo   # mongo (padrão) ou yaml: de onde vêm agentes, teams e tools (ver "Config em arquivo YAML"); outro valor: o app não inicia
+# CONFIG_YAML_PATH=/app/config.yaml   # obrigatória com CONFIG_STORE=yaml; arquivo regular legível
 # PLUGIN_ALLOWLIST=orquestrador-provider-deepseek:deepseek   # plugins de provider liberados (distribuição:nome); fora da lista, nunca importados (ver "Plugins de provider")
 # ALLOW_DYNAMIC_IMPORT=false   # com DYNAMIC_PROVIDER_SPECS=modulo:ATRIBUTO, só no modo dev local; fora dele o app não inicia
 
@@ -590,7 +592,7 @@ Exceto `/livez` (público), exigem a chave admin.
 | `GET` | `/livez` | Liveness público (sem chave) e mínimo (`{"status":"ok"}`), sem dependências; alvo do HEALTHCHECK |
 | `GET` | `/admin/health` | Health check detalhado (MongoDB + memória + OTLP): 200 se `healthy`, **503** se algo está `unhealthy`/`error`; o corpo nunca traz texto de exceção (o detalhe fica no log, pelo tipo) |
 | `GET` | `/metrics/cache` | Estatísticas do cache de agentes |
-| `POST` | `/admin/refresh-cache` | Recarrega do MongoDB o cache interno de agentes e teams (o de `/metrics/cache`); documento inválido vira log de erro. **Não** muda o que o AgentOS e o AG-UI servem: agente/team novo, alterado ou removido só vale depois de reiniciar a aplicação (hot reload fora do escopo) |
+| `POST` | `/admin/refresh-cache` | Recarrega da config (MongoDB ou arquivo YAML, ver `CONFIG_STORE`) o cache interno de agentes e teams (o de `/metrics/cache`); documento inválido vira log de erro. O cache só é trocado depois de agentes e teams carregarem: se a recarga falhar (Mongo fora, YAML quebrado), fica o cache anterior, o erro vai ao log (só o tipo) e a rota responde 500. **Não** muda o que o AgentOS e o AG-UI servem: agente/team novo, alterado ou removido só vale depois de reiniciar a aplicação (hot reload fora do escopo) |
 
 ### Documentação Interativa
 
@@ -793,6 +795,8 @@ Formato canônico: o do exemplo (`factoryIaModel` e o resto em snake_case), o me
 
 Um documento inválido em `agents_config` ou `teams_config` não derruba o startup: ele é ignorado com log de erro (`Documento de agente inválido ignorado` / `Documento de team inválido ignorado`, com `agent_id`/`team_id` quando o `id` é texto, `mongo_id` quando o `_id` é ObjectId e `error_type`; nunca o conteúdo do documento) e os demais carregam. Inválido = `id`, `nome`, `model` ou `factoryIaModel` ausente, vazio ou que não seja texto; `descricao` que não seja texto (pode faltar ou ser `null`); `rag_config` que não seja objeto; `search_strategy` ou `mode` fora dos valores aceitos; team sem membros; `model_params`, `base_url` ou `api_key_ref` fora do formato descrito nos campos (no `rag_config`, também presentes sem `model`/`factoryIaModel`). Dois documentos ativos com o mesmo `id` (dois agentes ou dois teams): vale o mais antigo (menor `_id`; a leitura é ordenada por `_id`) e o outro vira log de erro (`Agente com id repetido ignorado` / `Team com id repetido ignorado`). Agente ou team válido que falha na criação (ex.: modelo recusado pela factory, team sem nenhum membro carregado) também vira log de erro (`Agente não carregado` / `Team não carregado`, com o id e `error_type`; modelo recusado pelo registry de providers traz também `reason`, texto nosso sem valor de segredo, ex.: `Tipo 'xyz' não suportado para modelo. Suportados: ...` ou `modelo do provider 'openai_compatible': host da base_url não é do provider nem está em MODEL_BASE_URL_ALLOWLIST`) sem afetar os outros.
 
+Vale também para o arquivo YAML (`CONFIG_STORE=yaml`), com `position` (posição do item na seção, a partir de 1) no lugar de `mongo_id` e a ordem do arquivo no lugar da ordem por `_id`. Tool inválida (em `tools` ou na seção `tools`) também é ignorada com log (`Documento de tool inválido ignorado`), e duas tools ativas com o mesmo `id` ficam com a primeira (`Tool com id repetido ignorada`). Também é inválido (nos dois backends): `route` da tool que não seja texto e `headers` que não seja mapa de texto para texto. Já `tools_ids` ou `member_ids` sujo não invalida o documento (os que já existiam continuam carregando, degradados): se não for lista, é tratado como lista vazia e o agente sobe sem tools (`Lista de ids que não é lista ignorada`, com `agent_id`/`team_id`, `field` e `value_type`); item que não é texto é descartado e os demais ids valem (um log só por campo, `Itens que não são texto ignorados na lista de ids`, com `agent_id`/`team_id`, `field`, `dropped_count` e `item_positions`, as 10 primeiras posições descartadas, a partir de 1); nunca o valor. `field` é a chave lida no documento (`tools_ids`, `member_ids` ou o legado `memberIds`). `tools_ids` pode faltar ou ser `null`. O team que ficar sem nenhum membro continua inválido.
+
 ### Adicionando um Novo Agente (sem alterar código)
 
 ```javascript
@@ -812,6 +816,23 @@ db.agents_config.insertOne({
 ```
 
 Depois, reinicie a aplicação: as rotas (`/agents/{id}`, `/agui/{id}`...) e as instâncias servidas são montadas no startup. O mesmo vale para alterar ou desativar um agente/team. `POST /admin/refresh-cache` só recarrega o cache interno (`/metrics/cache`) e não aplica a mudança ao que está sendo servido (hot reload fora do escopo).
+
+### Config em arquivo YAML (`CONFIG_STORE=yaml`)
+
+Agentes, teams e tools podem vir de um arquivo em vez das coleções `agents_config`, `teams_config` e `tools`:
+
+```bash
+CONFIG_STORE=yaml
+CONFIG_YAML_PATH=config.example.yaml   # relativo = a partir do diretório de trabalho
+```
+
+- **Formato**: o mapeamento com as seções `agents`, `teams` e `tools` (todas opcionais; outra chave no topo impede o app de iniciar), cada uma uma lista de documentos **no mesmo formato das coleções** (mesmo mapper e mesma validação). [`config.example.yaml`](config.example.yaml) tem o mesmo conteúdo do seed `mongo-init/init-db.js` (teste de equivalência em `tests/integration/test_config_store_equivalence.py`).
+- **Mesma semântica do Mongo**: só `active: true` (booleano) entra; documento inválido é ignorado com log (ver [Documento inválido](#documento-inválido)); id repetido: vale o primeiro na ordem do arquivo; agentes referenciam tools por `tools_ids` e teams referenciam agentes por `member_ids`. Segredo nunca no arquivo: chave de modelo só por `api_key_ref`.
+- **Leitura**: loader seguro do PyYAML (`CSafeLoader` com a libyaml; sem tags de objeto Python), fora do event loop. A config é consultada no startup e no `POST /admin/refresh-cache` (sem recarga automática), e o arquivo só é relido quando muda (inode, tamanho e data de modificação; trocar o symlink de um ConfigMap também conta); consultas simultâneas esperam uma leitura só.
+- **Recusados** (o app não sobe; no refresh, fica o cache anterior), com mensagem que cita só linha/coluna, nunca o conteúdo: YAML inválido; âncoras e aliases (`&`/`*`, inclusive merge key `<<: *x`: não são suportados, o que também fecha a expansão exponencial do "billion laughs"); chave repetida num mapeamento (duas seções `agents`, um campo duas vezes: o PyYAML ficaria com a última em silêncio); aninhamento acima de 64 níveis; valor que o YAML não consegue construir (ex.: data impossível sem aspas, `2024-13-45`). Item da seção que não é objeto vira documento inválido (log uma vez por leitura do arquivo).
+- **Validação no startup**: `CONFIG_STORE` só `mongo` ou `yaml`; com `yaml`, `CONFIG_YAML_PATH` obrigatória e apontando para um arquivo regular legível (symlink vale, como o de um ConfigMap do Kubernetes). O arquivo é do operador, como o `.env`: não é confinado a um diretório.
+- **MongoDB continua obrigatório**: sessões, memória de usuário, chunks do RAG e a árvore de documentos ficam nele; só as coleções de config deixam de ser lidas.
+- **Docker**: a raiz do container é somente leitura; monte o arquivo, ex.: `volumes: ["./config.yaml:/app/config.yaml:ro"]` com `CONFIG_YAML_PATH=/app/config.yaml` (o `docker-compose.yml` repassa `CONFIG_STORE` e `CONFIG_YAML_PATH`).
 
 ---
 

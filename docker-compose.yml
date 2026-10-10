@@ -55,6 +55,10 @@ services:
       PLUGIN_ALLOWLIST:
       ALLOW_DYNAMIC_IMPORT:
       DYNAMIC_PROVIDER_SPECS:
+      # Config em arquivo (CONFIG_STORE=yaml): monte o arquivo e aponte CONFIG_YAML_PATH para ele,
+      # ex.: volumes: ["./config.yaml:/app/config.yaml:ro"] e CONFIG_YAML_PATH=/app/config.yaml.
+      CONFIG_STORE:
+      CONFIG_YAML_PATH:
     # Endurecimento: sem escalada de privilégio, sem capabilities, raiz somente leitura.
     # Nada grava em disco no runtime (logs vão para stdout); /tmp em memória.
     security_opt:

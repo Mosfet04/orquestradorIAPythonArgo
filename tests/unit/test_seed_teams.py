@@ -12,7 +12,8 @@ import json
 import re
 from typing import Any
 
-from src.infrastructure.repositories.mongo_team_config_repository import MongoTeamConfigRepository
+from src.infrastructure.repositories.config_documents import map_team_document
+from tests.fakes.logger import RecordingLogger
 from tests.unit.test_seed_tools import _insert_many_block
 
 NON_CANONICAL_KEYS = {"memberIds", "userMemoryActive", "summaryActive", "factory_ia_model"}
@@ -36,7 +37,7 @@ def test_seed_de_teams_usa_so_o_formato_canonico():
 
 def test_seed_de_teams_passa_pelo_mapper_sem_perder_campos():
     for doc in _seed_team_docs():
-        team = MongoTeamConfigRepository._map_to_entity(doc)
+        team = map_team_document(doc, RecordingLogger())
 
         assert team.id == doc["id"]
         assert team.member_ids == doc["member_ids"]

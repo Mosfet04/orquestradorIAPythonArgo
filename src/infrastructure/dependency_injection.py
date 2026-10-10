@@ -12,6 +12,9 @@ from src.application.services.knowledge_search_factory import KnowledgeSearchFac
 from src.application.use_cases.get_active_agents_use_case import GetActiveAgentsUseCase
 from src.application.use_cases.get_active_teams_use_case import GetActiveTeamsUseCase
 from src.domain.ports import ILogger
+from src.domain.repositories.agent_config_repository import IAgentConfigRepository
+from src.domain.repositories.team_config_repository import ITeamConfigRepository
+from src.domain.repositories.tool_repository import IToolRepository
 from src.infrastructure.config.app_config import AppConfig
 from src.infrastructure.http.http_tool_factory import HttpToolFactory
 from src.infrastructure.logging.logger_adapter import StructlogLoggerAdapter
@@ -29,6 +32,12 @@ from src.infrastructure.repositories.mongo_team_config_repository import (
     MongoTeamConfigRepository,
 )
 from src.infrastructure.repositories.mongo_tool_repository import MongoToolRepository
+from src.infrastructure.repositories.yaml_config_repository import (
+    YamlAgentConfigRepository,
+    YamlConfigFile,
+    YamlTeamConfigRepository,
+    YamlToolRepository,
+)
 from src.infrastructure.runtime.agno import AgnoRuntime
 from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService
 from src.infrastructure.runtime.agno.team_factory_service import TeamFactoryService
@@ -173,12 +182,7 @@ class DependencyContainer:
 
         tool_factory = HttpToolFactory(logger=self._logger)
 
-        agent_config_repo = MongoAgentConfigRepository(
-            connection_string=conn, database_name=db, logger=self._logger
-        )
-        tool_repo = MongoToolRepository(
-            connection_string=conn, database_name=db, logger=self._logger
-        )
+        agent_config_repo, team_config_repo, tool_repo = self._build_config_repositories()
 
         # ── Hierárquica: parser, tree repo, summary gen, factories ──
         doc_parser = TextDocumentParser()
@@ -228,10 +232,6 @@ class DependencyContainer:
         runtime = AgnoRuntime(agent_factory=agent_factory, team_factory=team_factory)
         self._runtime = runtime
 
-        team_config_repo = MongoTeamConfigRepository(
-            connection_string=conn, database_name=db, logger=self._logger
-        )
-
         agents_use_case = GetActiveAgentsUseCase(
             runtime, agent_config_repo, self._logger
         )
@@ -243,6 +243,31 @@ class DependencyContainer:
             get_active_agents_use_case=agents_use_case,
             get_active_teams_use_case=teams_use_case,
             logger=self._logger,
+        )
+
+    def _build_config_repositories(
+        self,
+    ) -> tuple[IAgentConfigRepository, ITeamConfigRepository, IToolRepository]:
+        """Config de agentes, teams e tools pelo ``CONFIG_STORE`` (F2-06): Mongo ou o arquivo YAML.
+
+        Com ``yaml``, nenhuma coleção de config do Mongo é usada; o Mongo continua sendo o das
+        sessões, da memória e da árvore de documentos do RAG.
+        """
+        config = self.config
+        # O AppConfig garante caminho com "yaml" (__post_init__); o "is not None" só estreita o tipo.
+        if config.config_store == "yaml" and config.config_yaml_path is not None:
+            source = YamlConfigFile(config.config_yaml_path, logger=self._logger)
+            self._logger.info("Config de agentes, teams e tools: arquivo YAML", path=source.path)
+            return (
+                YamlAgentConfigRepository(source, logger=self._logger),
+                YamlTeamConfigRepository(source, logger=self._logger),
+                YamlToolRepository(source, logger=self._logger),
+            )
+        conn, db = config.mongo_connection_string, config.mongo_database_name
+        return (
+            MongoAgentConfigRepository(connection_string=conn, database_name=db, logger=self._logger),
+            MongoTeamConfigRepository(connection_string=conn, database_name=db, logger=self._logger),
+            MongoToolRepository(connection_string=conn, database_name=db, logger=self._logger),
         )
 
     def _build_provider_registry(self) -> ProviderRegistry:
