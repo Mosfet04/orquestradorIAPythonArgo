@@ -11,7 +11,6 @@ from src.infrastructure.web.app_factory import (
     AppFactory,
     create_app,
 )
-from tests.fakes.web import mount_agent_os
 
 # ── admin endpoints com container ────────────────────────────────────
 
@@ -162,34 +161,6 @@ class TestLoadAgentsTeams:
 
 
 class TestMountRuntime:
-    @patch("src.infrastructure.runtime.agno.runtime.AgentOS")
-    async def test_mount_agent_os_success(self, mock_os_cls):
-        factory = AppFactory()
-        mock_os_instance = MagicMock()
-        mock_os_instance.get_app.return_value = MagicMock()
-        mock_os_cls.return_value = mock_os_instance
-
-        app = factory.create_app()  # carrega o AppConfig (origens do CORS)
-        agents = [MagicMock(), MagicMock()]
-        teams = [MagicMock()]
-
-        mount_agent_os(factory, app, agents, teams)
-        mock_os_cls.assert_called_once()
-        mock_os_instance.get_app.assert_called_once()
-
-    @patch("src.infrastructure.runtime.agno.runtime.AgentOS")
-    async def test_mount_agent_os_empty_teams(self, mock_os_cls):
-        factory = AppFactory()
-        mock_os_instance = MagicMock()
-        mock_os_instance.get_app.return_value = MagicMock()
-        mock_os_cls.return_value = mock_os_instance
-
-        app = factory.create_app()
-        mount_agent_os(factory, app, [MagicMock()], [])
-        # teams=[] → deve enviar None
-        call_kwargs = mock_os_cls.call_args[1]
-        assert call_kwargs.get("teams") is None
-
     def test_mount_sem_config_carregado_falha_com_mensagem_clara(self):
         from fastapi import FastAPI
 

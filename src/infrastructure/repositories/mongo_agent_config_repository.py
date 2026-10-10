@@ -47,7 +47,7 @@ class MongoAgentConfigRepository(AsyncMongoRepository, IAgentConfigRepository):
                     )
             return configs
         except Exception as exc:
-            self._logger.error("Erro ao buscar agentes ativos", error=str(exc))
+            self._logger.error("Erro ao buscar agentes ativos", error_type=type(exc).__name__)
             raise
 
     async def get_agent_by_id(self, agent_id: str) -> AgentConfig:
@@ -59,6 +59,6 @@ class MongoAgentConfigRepository(AsyncMongoRepository, IAgentConfigRepository):
             return map_agent_document(doc, self._logger)
         except Exception as exc:
             self._logger.error(
-                "Erro ao buscar agente", agent_id=agent_id, error=str(exc)
+                "Erro ao buscar agente", agent_id=agent_id, error_type=type(exc).__name__
             )
             raise

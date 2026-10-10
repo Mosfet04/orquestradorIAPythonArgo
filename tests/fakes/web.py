@@ -16,9 +16,9 @@ from fastapi import FastAPI
 from starlette.testclient import TestClient
 from starlette.types import ASGIApp
 
-from src.infrastructure.http.http_tool_factory import HttpToolFactory
 from src.infrastructure.runtime.agno import AgnoRuntime
 from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService
+from src.infrastructure.runtime.agno.http_tool_factory import HttpToolFactory
 from src.infrastructure.runtime.agno.team_factory_service import TeamFactoryService
 from src.infrastructure.web.app_factory import AppFactory
 from tests.fakes.logger import RecordingLogger

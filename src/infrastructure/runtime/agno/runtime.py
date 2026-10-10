@@ -18,12 +18,12 @@ from src.domain.entities.team_config import TeamConfig
 from src.domain.ports import AgentHandle, AgentRuntime, TeamHandle
 from src.infrastructure.logging.logger_adapter import StructlogLoggerAdapter
 from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService
-from src.infrastructure.runtime.agno.team_factory_service import TeamFactoryService
-from src.infrastructure.web.agui_router import build_agui_router
-from src.infrastructure.web.run_cancellation import (
+from src.infrastructure.runtime.agno.agui_router import build_agui_router
+from src.infrastructure.runtime.agno.run_cancellation import (
     build_run_cancel_router,
     install_run_cancellation_manager,
 )
+from src.infrastructure.runtime.agno.team_factory_service import TeamFactoryService
 
 
 @asynccontextmanager

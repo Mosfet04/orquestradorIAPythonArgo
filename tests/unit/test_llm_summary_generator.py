@@ -11,7 +11,7 @@ from agno.models.response import ModelResponse
 
 from src.domain.entities.model_config import ModelConfig
 from src.domain.ports.summary_generator_port import SummaryTimeoutError
-from src.infrastructure.services.llm_summary_generator import LLMSummaryGenerator
+from src.infrastructure.runtime.agno.llm_summary_generator import LLMSummaryGenerator
 from tests.fakes import FakeChatModel, FakeModelFactory, RecordingLogger
 from tests.fakes.models import factory_call
 

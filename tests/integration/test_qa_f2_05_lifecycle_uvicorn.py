@@ -302,7 +302,9 @@ def test_falha_ao_montar_o_runtime_segue_logada_como_antes_e_fecha_uma_vez(spawn
     child.process.send_signal(signal.SIGTERM)
     child.assert_graceful_exit()
     events = child.events()
-    assert "falha injetada: mount" in child.non_event_log()
+    log = child.non_event_log()
+    assert "Erro ao montar AgentOS" in log and "RuntimeError" in log
+    assert "falha injetada: mount" not in log  # F2-07 (R3): o log leva o tipo do erro, nunca o texto
     assert [events.count(n) for n in ("runtime:close", "telemetry:shutdown", "motor:close")] == [1, 1, 1]
     # Montagem não concluída: start não abre lifespan nenhum e close não tem o que fechar.
     assert not [e for e in events if e in ("db:start", "http:start", "http:stop", "db:stop", "db:close")]

@@ -18,7 +18,7 @@ from agno.agent import Agent
 from agno.models.response import ModelResponse
 
 from src.domain.entities.tool import HttpMethod, ParameterType, Tool, ToolParameter
-from src.infrastructure.http.http_tool_factory import HttpToolFactory
+from src.infrastructure.runtime.agno.http_tool_factory import HttpToolFactory
 from tests.fakes import FakeChatModel, LoggedRecord, RecordingLogger
 
 TOOL = Tool(
@@ -251,19 +251,20 @@ async def test_timeout_diz_ao_modelo_que_foi_timeout(upstream: Upstream, exc_typ
 
     assert result == f"Erro na requisição: timeout ao chamar a tool ({exc_type.__name__})"
     assert [(r.message, r.context) for r in logger.records if r.level == "error"] == [
-        ("Request error", {"tool_id": "busca", "error_type": exc_type.__name__, "error": exc_type.__name__})
+        ("Request error", {"tool_id": "busca", "error_type": exc_type.__name__})
     ]
 
 
-async def test_erro_de_rede_sem_mensagem_usa_o_tipo_da_excecao(upstream: Upstream):
+@pytest.mark.parametrize("text", ["", "conexão recusada por 10.0.0.9"])
+async def test_erro_de_rede_devolve_so_o_tipo_da_excecao(upstream: Upstream, text: str):
     def boom(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("", request=request)
+        raise httpx.ConnectError(text, request=request)
 
     upstream.handler = boom
 
     result = await _call(RecordingLogger(), cliente_id="42")
 
-    assert result == "Erro na requisição: ConnectError"
+    assert result == "Erro na requisição: falha ao chamar a tool (ConnectError)"
 
 
 # ── coerção do agno: "true"/"false" viram bool antes do entrypoint ──

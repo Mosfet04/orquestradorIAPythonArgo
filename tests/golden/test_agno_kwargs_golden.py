@@ -22,9 +22,9 @@ from src.domain.entities.rag_config import RagConfig, SearchStrategy
 from src.domain.entities.team_config import TeamConfig
 from src.domain.entities.tool import HttpMethod, ParameterType, Tool, ToolParameter
 from src.domain.ports.summary_generator_port import ISummaryGenerator
-from src.infrastructure.http.http_tool_factory import HttpToolFactory
 from src.infrastructure.parsers.text_document_parser import TextDocumentParser
 from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService
+from src.infrastructure.runtime.agno.http_tool_factory import HttpToolFactory
 from src.infrastructure.runtime.agno.team_factory_service import TeamFactoryService
 from tests.fakes import (
     FakeChatModel,

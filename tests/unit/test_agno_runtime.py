@@ -12,12 +12,13 @@ from agno.agent import Agent
 from agno.os import AgentOS
 from agno.team import Team
 from fastapi import FastAPI
+from starlette.testclient import TestClient
 
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.team_config import TeamConfig
-from src.infrastructure.http.http_tool_factory import HttpToolFactory
 from src.infrastructure.runtime.agno import AgnoRuntime, agent_factory_service, team_factory_service
 from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService
+from src.infrastructure.runtime.agno.http_tool_factory import HttpToolFactory
 from src.infrastructure.runtime.agno.team_factory_service import TeamFactoryService
 from tests.fakes import (
     FakeChatModel,
@@ -85,6 +86,20 @@ def test_mount_monta_rotas_do_agentos_cancel_e_agui_sem_trocar_o_lifespan_do_app
     paths = {getattr(route, "path", None) for route in app.routes}
     assert {"/agents", "/agents/{agent_id}/runs/{run_id}/cancel", "/agui/{entity_id}", "/agui"} <= paths
     assert app.router.lifespan_context is own
+
+
+@pytest.mark.parametrize("with_team", [True, False], ids=["com-team", "sem-teams"])
+def test_mount_serve_os_agentes_e_os_teams_recebidos(runtime: AgnoRuntime, with_team: bool):
+    """Com AgentOS real: o que foi montado é o que ``/agents`` e ``/teams`` listam (lista de teams vazia inclusive)."""
+    app = FastAPI()
+    agent = Agent(id="a1", name="a1", model=FakeChatModel(responses=[]), telemetry=False)
+    team = Team(id="t1", name="t1", members=[agent], model=FakeChatModel(responses=[]), telemetry=False)
+
+    runtime.mount(app, [agent], [team] if with_team else [], cors_allowed_origins=[])
+
+    client = TestClient(app)
+    assert [item["id"] for item in client.get("/agents").json()] == ["a1"]
+    assert [item["id"] for item in client.get("/teams").json()] == (["t1"] if with_team else [])
 
 
 def test_mount_de_novo_no_mesmo_runtime_e_recusado(runtime: AgnoRuntime):

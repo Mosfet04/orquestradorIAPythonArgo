@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Tuple
+from typing import Any
 from urllib.parse import quote
 
 import httpx
@@ -13,7 +13,7 @@ from src.domain.entities.tool import HttpMethod, ParameterType, Tool, ToolParame
 from src.domain.ports import ILogger, IToolFactory
 
 # ParameterType -> tipo JSON Schema. ``float`` é o nome legado do Mongo para ``number``.
-_JSON_SCHEMA_TYPES: Dict[ParameterType, str] = {
+_JSON_SCHEMA_TYPES: dict[ParameterType, str] = {
     ParameterType.STRING: "string",
     ParameterType.INTEGER: "integer",
     ParameterType.FLOAT: "number",
@@ -23,7 +23,7 @@ _JSON_SCHEMA_TYPES: Dict[ParameterType, str] = {
 }
 # tipo JSON Schema -> tipos Python aceitos no argumento já decodificado pelo agno
 # (bool é tratado à parte: em Python ele é int, no JSON não é integer nem number)
-_PYTHON_TYPES: Dict[str, Tuple[type, ...]] = {
+_PYTHON_TYPES: dict[str, tuple[type, ...]] = {
     "string": (str,),
     "integer": (int,),
     "number": (int, float),
@@ -51,6 +51,11 @@ class HttpToolFactory(IToolFactory):
     confere chaves declaradas, obrigatórios, tipo básico e segmento ``.``/``..`` em
     parâmetro de rota e, em violação, devolve erro curto ao modelo sem chamar o upstream.
     Tool cuja rota tem ``{x}`` sem parâmetro ``x`` obrigatório é recusada na criação.
+
+    Falha de rede ou erro inesperado: o resultado devolvido leva só o tipo da exceção, nunca o
+    texto (o do httpx/h11 pode citar um header inteiro, e o resultado vai ao contexto do LLM, ao
+    cliente AG-UI, a ``agno_sessions`` e ao span). Resposta com status de erro devolve o corpo do
+    upstream, que é dado da própria tool.
     """
 
     def __init__(self, logger: ILogger, *, timeout: float = 30.0) -> None:
@@ -59,8 +64,8 @@ class HttpToolFactory(IToolFactory):
 
     # ── IToolFactory ────────────────────────────────────────────────
 
-    async def create_tools_from_configs(self, tools: List[Tool]) -> List[Any]:
-        functions: List[Function] = []
+    async def create_tools_from_configs(self, tools: list[Tool]) -> list[Any]:
+        functions: list[Function] = []
         for tool in tools:
             invalid = _invalid_route_placeholders(tool)
             if invalid:
@@ -72,12 +77,12 @@ class HttpToolFactory(IToolFactory):
                 continue
             try:
                 functions.append(self._create_function(tool))
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - logado; uma tool inválida não derruba as outras
                 self._logger.error(
                     "Erro ao criar ferramenta",
                     tool_id=tool.id,
                     tool_name=tool.name,
-                    error=str(exc),
+                    error_type=type(exc).__name__,
                 )
         return functions
 
@@ -98,12 +103,13 @@ class HttpToolFactory(IToolFactory):
                     arguments=exc.names,
                 )
                 return f"Erro nos argumentos da tool {tool.id}: {exc}"
-            headers = (tool.headers or {}).copy()
-            headers.setdefault("Content-Type", "application/json")
-            url, remaining = _resolve_url(tool.route, arguments)
-            req_kwargs = _build_request_kwargs(tool, url, headers, remaining, timeout)
-
             try:
+                # Montar a requisição também pode falhar (ex.: argumento de rota que o quote não
+                # codifica): dentro do try, para a falha ter log nosso e resultado sem o texto dela.
+                headers = (tool.headers or {}).copy()
+                headers.setdefault("Content-Type", "application/json")
+                url, remaining = _resolve_url(tool.route, arguments)
+                req_kwargs = _build_request_kwargs(tool, url, headers, remaining, timeout)
                 async with httpx.AsyncClient(verify=True) as client:
                     response = await client.request(**req_kwargs)
                     response.raise_for_status()
@@ -121,24 +127,20 @@ class HttpToolFactory(IToolFactory):
                 )
                 return _format_http_error(exc)
             except httpx.RequestError as exc:
-                # timeout do httpx costuma vir com str(exc) vazio
-                detail = str(exc) or type(exc).__name__
                 logger.error(
                     "Request error",
                     tool_id=tool.id,
                     error_type=type(exc).__name__,
-                    error=detail,
                 )
-                if isinstance(exc, httpx.TimeoutException):
-                    return f"Erro na requisição: timeout ao chamar a tool ({type(exc).__name__})"
-                return f"Erro na requisição: {detail}"
-            except Exception as exc:
+                kind = "timeout" if isinstance(exc, httpx.TimeoutException) else "falha"
+                return f"Erro na requisição: {kind} ao chamar a tool ({type(exc).__name__})"
+            except Exception as exc:  # noqa: BLE001 - logado; o modelo recebe o erro como resultado da tool
                 logger.error(
                     "Erro inesperado",
                     tool_id=tool.id,
-                    error=str(exc),
+                    error_type=type(exc).__name__,
                 )
-                return f"Erro inesperado: {exc}"
+                return f"Erro inesperado ao chamar a tool ({type(exc).__name__})"
 
         instructions = _build_instructions(tool)
         return Function(
@@ -157,16 +159,16 @@ class HttpToolFactory(IToolFactory):
 # ── helpers puros ───────────────────────────────────────────────────
 
 
-def build_parameters_schema(parameters: List[ToolParameter]) -> Dict[str, Any]:
+def build_parameters_schema(parameters: list[ToolParameter]) -> dict[str, Any]:
     """JSON Schema (objeto) dos argumentos da tool, como o modelo deve chamá-la.
 
     Só o que a entidade expressa: nome, tipo, descrição e ``required``. ``array`` leva
     ``items: {}`` (qualquer item): OpenAI e Gemini exigem ``items`` em array.
     ``additionalProperties: false`` para o modelo não inventar argumento.
     """
-    properties: Dict[str, Any] = {}
+    properties: dict[str, Any] = {}
     for param in parameters:
-        prop: Dict[str, Any] = {"type": _JSON_SCHEMA_TYPES[param.type]}
+        prop: dict[str, Any] = {"type": _JSON_SCHEMA_TYPES[param.type]}
         if param.type is ParameterType.ARRAY:
             prop["items"] = {}
         prop["description"] = param.description
@@ -187,7 +189,7 @@ def _build_instructions(tool: Tool) -> str | None:
     return f"Instruções da tool {tool.id}: {text}"
 
 
-def _invalid_route_placeholders(tool: Tool) -> List[str]:
+def _invalid_route_placeholders(tool: Tool) -> list[str]:
     """Placeholders ``{x}`` da rota sem parâmetro ``x`` obrigatório declarado (ordem da rota)."""
     required = {p.name for p in tool.parameters if p.required}
     names = dict.fromkeys(_PLACEHOLDER.findall(tool.route))
@@ -197,7 +199,7 @@ def _invalid_route_placeholders(tool: Tool) -> List[str]:
 class _ArgumentError(ValueError):
     """Argumentos do tool call fora do contrato da tool; ``names`` vai para o log (sem valores)."""
 
-    def __init__(self, message: str, names: List[str]) -> None:
+    def __init__(self, message: str, names: list[str]) -> None:
         super().__init__(message)
         self.names = names
 
@@ -208,7 +210,7 @@ def _has_json_type(value: Any, expected: str) -> bool:
     return isinstance(value, _PYTHON_TYPES[expected])
 
 
-def _validated_arguments(tool: Tool, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+def _validated_arguments(tool: Tool, kwargs: dict[str, Any]) -> dict[str, Any]:
     """Confere os argumentos do modelo contra ``Tool.parameters`` (sem engine de JSON Schema).
 
     Só chaves declaradas; ``null`` em opcional conta como ausente (o agno também troca as
@@ -223,7 +225,7 @@ def _validated_arguments(tool: Tool, kwargs: Dict[str, Any]) -> Dict[str, Any]:
         if len(unknown) > _MAX_UNKNOWN_NAMES:
             shown.append("...")
         raise _ArgumentError(f"argumento não declarado: {', '.join(shown)}", shown)
-    arguments: Dict[str, Any] = {}
+    arguments: dict[str, Any] = {}
     for name, value in kwargs.items():
         if value is None:
             continue
@@ -250,12 +252,12 @@ def _validated_arguments(tool: Tool, kwargs: Dict[str, Any]) -> Dict[str, Any]:
 def _build_request_kwargs(
     tool: Tool,
     url: str,
-    headers: Dict[str, str],
-    remaining: Dict[str, Any],
+    headers: dict[str, str],
+    remaining: dict[str, Any],
     timeout: float,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Constrói o dicionário de kwargs para ``httpx.AsyncClient.request``."""
-    req_kwargs: Dict[str, Any] = {
+    req_kwargs: dict[str, Any] = {
         "method": tool.http_method.value,
         "url": url,
         "headers": headers,
@@ -277,8 +279,8 @@ def _format_http_error(exc: httpx.HTTPStatusError) -> str:
 
 
 def _resolve_url(
-    route: str, kwargs: Dict[str, Any]
-) -> Tuple[str, Dict[str, Any]]:
+    route: str, kwargs: dict[str, Any]
+) -> tuple[str, dict[str, Any]]:
     """Troca ``{nome}`` da rota pelo argumento ``nome`` e devolve os argumentos restantes.
 
     O valor vai percent-encoded por inteiro (``/``, ``?``, ``#`` não mudam a rota).

@@ -16,9 +16,9 @@ import pytest
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.team_config import TeamConfig
 from src.domain.ports import AgentRuntime, InvalidModelConfigError
-from src.infrastructure.http.http_tool_factory import HttpToolFactory
 from src.infrastructure.runtime.agno import AgnoRuntime, agent_factory_service, team_factory_service
 from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService
+from src.infrastructure.runtime.agno.http_tool_factory import HttpToolFactory
 from src.infrastructure.runtime.agno.team_factory_service import TeamFactoryService
 from tests.fakes import FakeEmbedderFactory, FakeModelFactory, InMemoryToolRepository, RecordingLogger
 from tests.fakes.runtime import FakeAgentRuntime

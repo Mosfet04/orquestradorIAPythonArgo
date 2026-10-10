@@ -10,9 +10,9 @@ from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.tool import HttpMethod, Tool
 from src.domain.ports import IToolFactory
 from src.domain.repositories.tool_repository import IToolRepository
-from src.infrastructure.http.http_tool_factory import HttpToolFactory
 from src.infrastructure.runtime.agno import agent_factory_service
 from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService
+from src.infrastructure.runtime.agno.http_tool_factory import HttpToolFactory
 from tests.fakes import FakeEmbedderFactory, FakeModelFactory, InMemoryToolRepository, RecordingLogger
 
 

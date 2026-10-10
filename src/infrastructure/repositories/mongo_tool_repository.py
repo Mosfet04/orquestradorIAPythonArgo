@@ -40,7 +40,7 @@ class MongoToolRepository(AsyncMongoRepository, IToolRepository):
             return await self._active_tools({"id": {"$in": tool_ids}, "active": True})
         except Exception as exc:
             self._logger.error(
-                "Erro ao buscar tools por IDs", tool_ids=tool_ids, error=str(exc)
+                "Erro ao buscar tools por IDs", tool_ids=tool_ids, error_type=type(exc).__name__
             )
             raise
 
@@ -52,7 +52,7 @@ class MongoToolRepository(AsyncMongoRepository, IToolRepository):
             return map_tool_document(doc)
         except Exception as exc:
             self._logger.error(
-                "Erro ao buscar tool", tool_id=tool_id, error=str(exc)
+                "Erro ao buscar tool", tool_id=tool_id, error_type=type(exc).__name__
             )
             raise
 
@@ -60,7 +60,7 @@ class MongoToolRepository(AsyncMongoRepository, IToolRepository):
         try:
             return await self._active_tools({"active": True})
         except Exception as exc:
-            self._logger.error("Erro ao listar tools ativas", error=str(exc))
+            self._logger.error("Erro ao listar tools ativas", error_type=type(exc).__name__)
             raise
 
     async def _active_tools(self, query: dict[str, Any]) -> list[Tool]:

@@ -1,11 +1,11 @@
-"""Testes para HttpToolFactory (infrastructure/http)."""
+"""Testes para HttpToolFactory (infrastructure/runtime/agno)."""
 
 from __future__ import annotations
 
 import pytest
 
 from src.domain.entities.tool import HttpMethod, Tool
-from src.infrastructure.http.http_tool_factory import HttpToolFactory
+from src.infrastructure.runtime.agno.http_tool_factory import HttpToolFactory
 
 
 @pytest.fixture

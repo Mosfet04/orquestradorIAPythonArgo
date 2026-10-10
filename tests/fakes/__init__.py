@@ -10,7 +10,13 @@ from tests.fakes.models import (
     ScriptExhaustedError,
     running_on_event_loop,
 )
-from tests.fakes.mongo import FakeAsyncCursor, FakeMongoClient, FakeMongoCollection
+from tests.fakes.mongo import (
+    FailingMongoClient,
+    FailingMongoCollection,
+    FakeAsyncCursor,
+    FakeMongoClient,
+    FakeMongoCollection,
+)
 from tests.fakes.repositories import (
     InMemoryAgentConfigRepository,
     InMemoryDocumentTreeRepository,
@@ -21,6 +27,8 @@ from tests.fakes.telemetry import RecordingTelemetryMetrics
 from tests.fakes.web import loopback_client
 
 __all__ = [
+    "FailingMongoClient",
+    "FailingMongoCollection",
     "FakeAsyncCursor",
     "FakeChatModel",
     "FakeEmbedder",

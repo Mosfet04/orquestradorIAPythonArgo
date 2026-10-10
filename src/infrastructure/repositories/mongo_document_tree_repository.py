@@ -88,7 +88,7 @@ class MongoDocumentTreeRepository(AsyncMongoRepository, IDocumentTreeRepository)
                 saved=len(docs) - len(errors),
             )
         except Exception as exc:
-            self._logger.error("Erro ao salvar nós", error=str(exc))
+            self._logger.error("Erro ao salvar nós", error_type=type(exc).__name__)
             raise
 
     async def get_root_nodes(self, doc_name: str) -> list[DocumentNode]:

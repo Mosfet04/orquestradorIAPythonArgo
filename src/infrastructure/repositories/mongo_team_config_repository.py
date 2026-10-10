@@ -47,7 +47,7 @@ class MongoTeamConfigRepository(AsyncMongoRepository, ITeamConfigRepository):
                     )
             return configs
         except Exception as exc:
-            self._logger.error("Erro ao buscar teams ativos", error=str(exc))
+            self._logger.error("Erro ao buscar teams ativos", error_type=type(exc).__name__)
             raise
 
     async def get_team_by_id(self, team_id: str) -> TeamConfig | None:
@@ -59,6 +59,6 @@ class MongoTeamConfigRepository(AsyncMongoRepository, ITeamConfigRepository):
             return map_team_document(doc, self._logger)
         except Exception as exc:
             self._logger.error(
-                "Erro ao buscar team", team_id=team_id, error=str(exc)
+                "Erro ao buscar team", team_id=team_id, error_type=type(exc).__name__
             )
             raise

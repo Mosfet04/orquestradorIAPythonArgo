@@ -10,7 +10,7 @@ src/infrastructure  adapters: Mongo, HTTP, Agno, OTel, config, web. Implementa a
 src/presentation    controllers/rotas.
 ```
 - **Regra de dependência:** `domain` ← `application` ← `infrastructure`/`presentation`. Imposta por `lint-imports` (contratos no `pyproject.toml`). Violações herdadas estão listadas como baseline em `ignore_imports`: **não copie o padrão e não aumente a lista**; ela só encolhe.
-- `agno` só em `src/infrastructure/runtime/agno/` ao fim da F2 (até lá, só onde já existe).
+- `agno` só em `src/infrastructure/runtime/agno/` (import estático, contrato `agno-so-no-runtime` do `lint-imports`, sem baseline). Exceção conhecida: as specs de provider em `providers/builtins.py`, carregadas por nome.
 - **Anti over-engineering:** porta, registry ou plugin só com 2+ implementações reais e teste de contrato. Uma implementação só ⇒ módulo simples. Entry points apenas onde plugin de terceiros é plausível.
 - Composition root: `src/infrastructure/dependency_injection.py`. Nada de service locator.
 

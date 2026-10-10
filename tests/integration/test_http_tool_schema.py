@@ -19,7 +19,7 @@ from agno.models.response import ModelResponse
 from agno.run.base import RunStatus
 
 from src.domain.entities.tool import HttpMethod, ParameterType, Tool, ToolParameter
-from src.infrastructure.http.http_tool_factory import HttpToolFactory
+from src.infrastructure.runtime.agno.http_tool_factory import HttpToolFactory
 from tests.fakes import FakeChatModel, RecordingLogger
 
 TODOS_OS_TIPOS = Tool(

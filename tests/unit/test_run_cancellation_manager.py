@@ -7,7 +7,7 @@ from agno.exceptions import RunCancelledException
 from agno.run import cancel
 from agno.run.cancellation_management.base import BaseRunCancellationManager
 
-from src.infrastructure.web.run_cancellation import (
+from src.infrastructure.runtime.agno.run_cancellation import (
     RegisteredRunCancellationManager,
     install_run_cancellation_manager,
 )

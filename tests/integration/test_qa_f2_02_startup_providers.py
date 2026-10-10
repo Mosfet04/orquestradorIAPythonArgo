@@ -1,5 +1,5 @@
 """QA F2-02: startup real (AppFactory + repositórios Mongo sobre coleção fake) com o
-``ProviderRegistry`` montado pelo composition root (``DependencyContainer``) e as classes reais do agno.
+``ProviderRegistry`` montado pelo composition root (``build_provider_registry``) e as classes reais do agno.
 
 Só a rede é falsa: o DNS (``socket.getaddrinfo``) e a coleção Mongo. Critérios cobertos:
 (a) documento legado sobe igual, com a classe real do agno e a chave do ambiente de sempre;
@@ -28,12 +28,12 @@ from src.domain.ports.embedder_factory_port import TextEmbedder
 from src.domain.ports.model_factory_port import ChatModel
 from src.domain.ports.summary_generator_port import ISummaryGenerator
 from src.infrastructure.config.app_config import AppConfig
-from src.infrastructure.dependency_injection import DependencyContainer
+from src.infrastructure.dependency_injection import build_provider_registry
 from src.infrastructure.parsers.text_document_parser import TextDocumentParser
 from src.infrastructure.providers import ClassSpec, DestinationPolicy, ProviderRegistry, ProviderSpec
 from tests.fakes import InMemoryDocumentTreeRepository, RecordingLogger, running_on_event_loop
+from tests.fakes.app_boot import agent_doc, boot, team_doc
 from tests.fakes.providers import EMBEDDER_PATH
-from tests.integration.test_qa_f2_01_startup_model_config import _agent, _team, boot
 
 pytestmark = pytest.mark.usefixtures("offline_knowledge")
 
@@ -82,7 +82,7 @@ def registry_from_env(monkeypatch: pytest.MonkeyPatch, **env: str) -> ProviderRe
     """O registry exatamente como o composition root o monta para este ambiente."""
     for name, value in env.items():
         monkeypatch.setenv(name, value)
-    return DependencyContainer(AppConfig.load())._build_provider_registry()
+    return build_provider_registry(AppConfig.load(), RecordingLogger())
 
 
 class Spy(IModelFactory, IEmbedderFactory):
@@ -144,11 +144,11 @@ def test_legado_sobe_com_classes_reais_chave_do_ambiente_e_isola_so_o_que_falta(
     monkeypatch.setenv("AZURE_ENDPOINT", "https://tenant.openai.azure.com")
     spy = Spy(registry_from_env(monkeypatch))
     docs = [
-        _agent("com-chave", factory_ia_model="openai", model="gpt-4o-mini"),
-        _agent("ollama"),  # sem provider: ollama, como sempre
-        _agent("azure-sem-chave", factory_ia_model="azure", model="gpt-4"),
-        _agent("desconhecido", factory_ia_model="foo", model="x"),
-        _agent("camel", factoryIaModel="google", model="gemini-2.0"),
+        agent_doc("com-chave", factory_ia_model="openai", model="gpt-4o-mini"),
+        agent_doc("ollama"),  # sem provider: ollama, como sempre
+        agent_doc("azure-sem-chave", factory_ia_model="azure", model="gpt-4"),
+        agent_doc("desconhecido", factory_ia_model="foo", model="x"),
+        agent_doc("camel", factoryIaModel="google", model="gemini-2.0"),
     ]
 
     result = startup(monkeypatch, spy, docs)
@@ -160,7 +160,9 @@ def test_legado_sobe_com_classes_reais_chave_do_ambiente_e_isola_so_o_que_falta(
     assert type(spy.models["llama3.2:latest"]).__qualname__ == "Ollama"
     reasons = {agent_id: ctx["reason"] for agent_id, ctx in failures(result).items()}
     assert reasons["azure-sem-chave"] == "AZURE_API_KEY não configurado"
-    assert "não suportado" in reasons["desconhecido"] and "openai_compatible" in reasons["desconhecido"]
+    supported = ", ".join(spy.inner.supported("chat"))
+    assert "openai_compatible" in supported
+    assert reasons["desconhecido"] == f"Tipo 'foo' não suportado para modelo. Suportados: {supported}"
     assert reasons["camel"] == "GEMINI_API_KEY não configurado"
     assert dns.queries == []  # sem base_url da config, ninguém consulta DNS
     assert_nothing_leaked(result, ENV_KEY_VALUE)
@@ -175,11 +177,11 @@ def test_campos_novos_chegam_ao_modelo_real_e_a_chave_so_vai_ao_host_da_allowlis
     monkeypatch.setenv("QA_F202_GW_API_KEY", KEY_VALUE)
     monkeypatch.setenv("OPENAI_API_KEY", ENV_KEY_VALUE)
     spy = Spy(registry_from_env(monkeypatch, MODEL_BASE_URL_ALLOWLIST=f" {GATEWAY.upper()} , outro.invalid"))
-    doc = _agent(
+    doc = agent_doc(
         "gw", model="modelo-gw", base_url=GATEWAY_URL, api_key_ref="env:QA_F202_GW_API_KEY",
         model_params={"temperature": 0.25, "max_tokens": 77}, **COMPAT,
     )
-    sem_ref = _agent("gw-sem-ref", model="modelo-sem-ref", base_url=GATEWAY_URL, **COMPAT)
+    sem_ref = agent_doc("gw-sem-ref", model="modelo-sem-ref", base_url=GATEWAY_URL, **COMPAT)
 
     result = startup(monkeypatch, spy, [doc, sem_ref])
 
@@ -217,12 +219,12 @@ def test_documento_recusado_pelo_registry_real_e_isolado_com_motivo_e_sem_vazame
     monkeypatch.setenv("OPENAI_API_KEY", ENV_KEY_VALUE)
     spy = Spy(registry_from_env(monkeypatch, MODEL_BASE_URL_ALLOWLIST=GATEWAY))
     docs = [
-        _agent("antes"),
-        _agent("ruim", model="modelo-ruim", **COMPAT, **fields),
-        _agent("depois", model="modelo-depois", base_url=GATEWAY_URL, **COMPAT),
+        agent_doc("antes"),
+        agent_doc("ruim", model="modelo-ruim", **COMPAT, **fields),
+        agent_doc("depois", model="modelo-depois", base_url=GATEWAY_URL, **COMPAT),
     ]
 
-    result = startup(monkeypatch, spy, docs, [_team("t-ruim", ["antes"], base_url=fields["base_url"])])
+    result = startup(monkeypatch, spy, docs, [team_doc("t-ruim", ["antes"], base_url=fields["base_url"])])
 
     assert result.status == (200, 200, 200)
     assert agent_ids(result) == ["antes", "depois"]
@@ -248,19 +250,21 @@ def test_provider_sem_base_url_configuravel_isola_o_documento(
     monkeypatch.setenv("AZURE_ENDPOINT", "https://tenant.openai.azure.com")
     spy = Spy(registry_from_env(monkeypatch, MODEL_BASE_URL_ALLOWLIST=GATEWAY))
 
-    result = startup(monkeypatch, spy, [_agent("x", factory_ia_model=provider, model="m", **fields)])
+    result = startup(monkeypatch, spy, [agent_doc("x", factory_ia_model=provider, model="m", **fields)])
 
     assert agent_ids(result) == []
-    reason = failures(result)["x"]["reason"]
-    assert "não aceita base_url" in reason or "pip install" in reason  # anthropic: SDK ausente vem antes
+    # o destino é conferido antes do import da classe: vale também para o anthropic, de SDK não instalado
+    assert failures(result)["x"]["reason"] == f"modelo do provider '{provider}' não aceita base_url"
     assert_nothing_leaked(result, ENV_KEY_VALUE, GATEWAY)
 
 
 def test_params_hostis_na_chave_nao_sao_ecoados_no_log_nem_na_resposta(monkeypatch: pytest.MonkeyPatch, dns: FakeDns):
     spy = Spy(registry_from_env(monkeypatch, MODEL_BASE_URL_ALLOWLIST=GATEWAY))
     docs = [
-        _agent("chave-hostil", model="m1", base_url=GATEWAY_URL, model_params={"headers_" + PARAM_VALUE: 1}, **COMPAT),
-        _agent(
+        agent_doc(
+            "chave-hostil", model="m1", base_url=GATEWAY_URL, model_params={"headers_" + PARAM_VALUE: 1}, **COMPAT
+        ),
+        agent_doc(
             "valor-aninhado", model="m2", base_url=GATEWAY_URL, model_params={"default_headers": {"x": PARAM_VALUE}}
         ),
     ]
@@ -279,7 +283,7 @@ def test_campos_novos_em_camel_case_sao_ignorados_com_aviso_e_o_agente_sobe_como
 ):
     monkeypatch.setenv("OPENAI_API_KEY", ENV_KEY_VALUE)
     spy = Spy(registry_from_env(monkeypatch, MODEL_BASE_URL_ALLOWLIST=GATEWAY))
-    doc = _agent(
+    doc = agent_doc(
         "camel", factory_ia_model="openai", model="gpt-camel", baseUrl=f"https://{EVIL_HOST}/v1",
         apiKeyRef="env:QA_F202_GW_API_KEY", modelParams={"temperature": PARAM_VALUE},
     )
@@ -307,7 +311,7 @@ def test_criacao_concorrente_de_agentes_nao_mistura_params_nem_chaves_e_roda_for
         monkeypatch.setenv(f"QA_F202_N{i}_API_KEY", f"chave-{i}")
     spy = Spy(registry_from_env(monkeypatch, MODEL_BASE_URL_ALLOWLIST=GATEWAY))
     docs = [
-        _agent(
+        agent_doc(
             f"a{i}", model=f"m{i}", base_url=f"https://{GATEWAY}/v{i}", api_key_ref=f"env:QA_F202_N{i}_API_KEY",
             model_params={"temperature": i / 100, "max_tokens": 100 + i}, **COMPAT,
         )
@@ -329,7 +333,7 @@ def test_criacao_concorrente_de_agentes_nao_mistura_params_nem_chaves_e_roda_for
 def test_um_agente_recusado_no_gather_nao_afeta_os_vizinhos(monkeypatch: pytest.MonkeyPatch, dns: FakeDns):
     spy = Spy(registry_from_env(monkeypatch, MODEL_BASE_URL_ALLOWLIST=GATEWAY))
     docs = [
-        _agent(f"a{i}", model=f"m{i}", base_url=GATEWAY_URL if i % 3 else f"https://{EVIL_HOST}/", **COMPAT)
+        agent_doc(f"a{i}", model=f"m{i}", base_url=GATEWAY_URL if i % 3 else f"https://{EVIL_HOST}/", **COMPAT)
         for i in range(30)
     ]
 
@@ -347,14 +351,14 @@ def test_team_cria_o_modelo_real_com_campos_novos_fora_do_loop_e_recusa_destino_
 ):
     monkeypatch.setenv("QA_F202_GW_API_KEY", KEY_VALUE)
     spy = Spy(registry_from_env(monkeypatch, MODEL_BASE_URL_ALLOWLIST=GATEWAY))
-    agents = [_agent("membro", model="m-membro", base_url=GATEWAY_URL, **COMPAT)]
+    agents = [agent_doc("membro", model="m-membro", base_url=GATEWAY_URL, **COMPAT)]
     teams = [
-        _team(
+        team_doc(
             "t-ok", ["membro"], model="m-team", base_url=GATEWAY_URL, api_key_ref="env:QA_F202_GW_API_KEY",
             model_params={"temperature": 0.5}, **COMPAT,
         ),
-        _team("t-fora", ["membro"], model="m-fora", base_url=f"https://{EVIL_HOST}/v1", **COMPAT),
-        _team("t-metadata", ["membro"], model="m-meta", base_url="http://169.254.169.254", **COMPAT),
+        team_doc("t-fora", ["membro"], model="m-fora", base_url=f"https://{EVIL_HOST}/v1", **COMPAT),
+        team_doc("t-metadata", ["membro"], model="m-meta", base_url="http://169.254.169.254", **COMPAT),
     ]
 
     result = startup(monkeypatch, spy, agents, teams)
@@ -385,7 +389,7 @@ def test_mesmo_documento_com_loopback_sobe_no_dev_local_e_e_recusado_fora_dele(
     monkeypatch: pytest.MonkeyPatch, dns: FakeDns, name: str, url: str
 ):
     dns.answers["localhost"] = "127.0.0.1"
-    doc = _agent("local", model="m-local", base_url=url, **COMPAT)
+    doc = agent_doc("local", model="m-local", base_url=url, **COMPAT)
 
     dev = startup(monkeypatch, Spy(registry_from_env(monkeypatch)), [doc])
     prod_spy = Spy(
@@ -405,7 +409,7 @@ def test_dev_com_bind_publico_nao_e_modo_dev_local_e_recusa_loopback(monkeypatch
     registry = registry_from_env(monkeypatch, APP_HOST="0.0.0.0")  # noqa: S104 - bind público é o caso testado
 
     result = startup(
-        monkeypatch, Spy(registry), [_agent("local", model="m", base_url="http://127.0.0.1:8000/v1", **COMPAT)]
+        monkeypatch, Spy(registry), [agent_doc("local", model="m", base_url="http://127.0.0.1:8000/v1", **COMPAT)]
     )
 
     assert agent_ids(result) == []
@@ -419,7 +423,7 @@ def test_ollama_base_url_do_operador_chega_ao_cliente_real_do_ollama_e_nao_passa
 ):
     spy = Spy(registry_from_env(monkeypatch, OLLAMA_BASE_URL="http://ollama-interno:11434"))
 
-    result = startup(monkeypatch, spy, [_agent("o", model="llama-x")])
+    result = startup(monkeypatch, spy, [agent_doc("o", model="llama-x")])
 
     assert agent_ids(result) == ["o"]
     client = spy.models["llama-x"].get_client()  # type: ignore[attr-defined]
@@ -436,7 +440,7 @@ def test_base_url_do_documento_para_o_ollama_desliga_redirect_no_cliente_real(
     )
 
     result = startup(
-        monkeypatch, spy, [_agent("o", model="llama-y", factory_ia_model="ollama", base_url=f"http://{GATEWAY}:11434")]
+        monkeypatch, spy, [agent_doc("o", model="llama-y", factory_ia_model="ollama", base_url=f"http://{GATEWAY}:11434")]
     )
 
     assert agent_ids(result) == ["o"]
@@ -453,14 +457,14 @@ def test_rag_semantico_cria_o_embedder_real_com_campos_novos_fora_do_loop(
     monkeypatch.setenv("QA_F202_EMB_API_KEY", KEY_VALUE)
     spy = Spy(registry_from_env(monkeypatch, MODEL_BASE_URL_ALLOWLIST=GATEWAY, OLLAMA_BASE_URL="http://ollama-interno:11434"))
     docs = [
-        _agent(
+        agent_doc(
             "rag-gw", model="m-chat",
             rag_config={
                 "active": True, "factory_ia_model": "openai_compatible", "model": "bge-m3", "base_url": GATEWAY_URL,
                 "api_key_ref": "env:QA_F202_EMB_API_KEY", "model_params": {"dimensions": 64},
             },
         ),
-        _agent("rag-padrao", model="m-chat2", rag_config={"active": True}),  # ollama / nomic do operador
+        agent_doc("rag-padrao", model="m-chat2", rag_config={"active": True}),  # ollama / nomic do operador
     ]
 
     result = startup(monkeypatch, spy, docs)
@@ -490,7 +494,7 @@ def test_rag_com_embedder_recusado_sobe_o_agente_sem_rag_e_loga_o_motivo_sem_vaz
 ):
     monkeypatch.setenv("QA_F202_EMB_API_KEY", KEY_VALUE)
     spy = Spy(registry_from_env(monkeypatch, MODEL_BASE_URL_ALLOWLIST=GATEWAY))
-    doc = _agent(
+    doc = agent_doc(
         "rag-ruim", model="m-chat",
         rag_config={"active": True, "factory_ia_model": "openai_compatible", "model": "bge-m3", **rag},
     )

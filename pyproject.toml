@@ -112,12 +112,9 @@ known-first-party = ["src", "tests"]
 "src/domain/repositories/agent_config_repository.py" = ["UP006", "UP035"]
 "src/domain/repositories/team_config_repository.py" = ["UP006", "UP035", "UP045"]
 "src/domain/repositories/tool_repository.py" = ["UP006", "UP035"]
-"src/infrastructure/cache/model_cache_service.py" = ["BLE001", "UP006", "UP017", "UP035", "UP045"]
-"src/infrastructure/http/http_tool_factory.py" = ["BLE001", "UP006", "UP035"]
 "src/infrastructure/logging/decorators.py" = ["BLE001", "G004", "UP006", "UP035"]
 "src/infrastructure/logging/structlog_logger.py" = ["B023", "RUF012", "UP006", "UP017", "UP035", "UP045"]
 "src/infrastructure/parsers/text_document_parser.py" = ["UP006", "UP035", "UP045"]
-"src/infrastructure/services/llm_summary_generator.py" = ["BLE001"]
 "src/infrastructure/telemetry/metrics.py" = ["UP035"]
 "src/infrastructure/telemetry/otel_setup.py" = ["BLE001"]
 "tests/unit/test_app_factory_extended.py" = ["E501"]
@@ -154,8 +151,6 @@ ignore_missing_imports = true
 module = [
     "src.domain.entities.agent_config",
     "src.domain.entities.tool",
-    "src.infrastructure.cache.model_cache_service",
-    "src.infrastructure.dependency_injection",
     "src.infrastructure.logging.decorators",
     "src.infrastructure.logging.logger_adapter",
     "src.infrastructure.logging.structlog_logger",
@@ -181,11 +176,10 @@ layers = [
 ]
 # Todo subpacote direto de src precisa estar declarado numa camada.
 exhaustive = true
-# BASELINE HERDADA (F0-01): violações existentes no commit 91a8a7a.
+# BASELINE HERDADA (F0-01): só resta o composition root, que monta o controller (F2-07).
 # Esta lista SÓ PODE ENCOLHER; não copie o padrão nem acrescente entradas.
 ignore_imports = [
     "src.infrastructure.dependency_injection -> src.presentation.controllers.orquestrador_controller",
-    "src.presentation.controllers.orquestrador_controller -> src.infrastructure.telemetry.metrics",
 ]
 
 [[tool.importlinter.contracts]]
@@ -227,6 +221,20 @@ type = "forbidden"
 source_modules = ["src.presentation"]
 forbidden_modules = ["agno"]
 # Sem baseline desde a criação (F2-04). Não acrescente ignore_imports.
+
+[[tool.importlinter.contracts]]
+id = "agno-so-no-runtime"
+name = "agno só é importado em src.infrastructure.runtime.agno"
+# `protected` (import-linter 2.15) e não `forbidden`: o `forbidden` não tem "exceto", e listar os
+# subpacotes de src.infrastructure como source_modules deixaria de fora o subpacote novo. Aqui a
+# regra vale para todo `src` (import direto; o composition root chega ao agno pelo runtime, e
+# isso é indireto) e a exceção é uma só. Só vê import estático: o ProviderRegistry carrega por
+# nome (importlib) as classes agno.* das specs de providers/builtins.py, e isso fica de fora.
+# Sonda: tests/unit/test_import_contracts.py.
+type = "protected"
+protected_modules = ["agno"]
+allowed_importers = ["src.infrastructure.runtime.agno"]
+# Sem baseline desde a criação (F2-07). Não acrescente ignore_imports.
 
 # ---------------------------------------------------------------------------
 # bandit (gate a partir da F1): `bandit -q -c pyproject.toml -r src`

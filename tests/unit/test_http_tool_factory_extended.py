@@ -8,7 +8,7 @@ import httpx
 import pytest
 
 from src.domain.entities.tool import HttpMethod, ParameterType, Tool, ToolParameter
-from src.infrastructure.http.http_tool_factory import (
+from src.infrastructure.runtime.agno.http_tool_factory import (
     HttpToolFactory,
     _build_instructions,
     _resolve_url,
@@ -236,7 +236,7 @@ class TestHttpFunction:
             mock_client_cls.return_value = mock_client
 
             result = await fn()
-            assert "Erro na requisição" in result
+            assert result == "Erro na requisição: falha ao chamar a tool (RequestError)"
 
     async def test_unexpected_error(self, factory):
         tool = _make_tool(http_method=HttpMethod.GET)
@@ -250,7 +250,7 @@ class TestHttpFunction:
             mock_client_cls.return_value = mock_client
 
             result = await fn()
-            assert "Erro inesperado" in result
+            assert result == "Erro inesperado ao chamar a tool (RuntimeError)"
 
     async def test_delete_uses_params(self, factory):
         tool = _make_tool(http_method=HttpMethod.DELETE, parameters=[_param("id")])

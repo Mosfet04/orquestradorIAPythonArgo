@@ -24,11 +24,11 @@ from agno.models.response import ModelResponse
 
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.model_config import ModelConfig
-from src.infrastructure.http.http_tool_factory import HttpToolFactory
 from src.infrastructure.repositories import mongo_base
 from src.infrastructure.repositories.mongo_tool_repository import MongoToolRepository
 from src.infrastructure.runtime.agno import agent_factory_service
 from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService
+from src.infrastructure.runtime.agno.http_tool_factory import HttpToolFactory
 from tests.fakes import FakeChatModel, FakeEmbedderFactory, RecordingLogger
 from tests.unit.test_seed_tools import SEED, _seed_tool_docs
 

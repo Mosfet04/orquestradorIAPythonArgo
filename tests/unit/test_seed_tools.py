@@ -15,8 +15,8 @@ from typing import Any
 import pytest
 
 from src.domain.entities.tool import Tool
-from src.infrastructure.http.http_tool_factory import HttpToolFactory
 from src.infrastructure.repositories.config_documents import map_tool_document
+from src.infrastructure.runtime.agno.http_tool_factory import HttpToolFactory
 from tests.fakes import RecordingLogger
 
 SEED = Path(__file__).resolve().parents[2] / "mongo-init" / "init-db.js"

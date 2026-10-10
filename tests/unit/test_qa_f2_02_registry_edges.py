@@ -25,10 +25,9 @@ from src.domain.entities.model_config import ModelConfig
 from src.domain.ports import InvalidModelConfigError
 from src.infrastructure.providers import ClassSpec, DestinationPolicy, ProviderRegistry, ProviderSpec
 from src.infrastructure.providers.builtins import BUILTIN_PROVIDERS
-from src.infrastructure.services.llm_summary_generator import LLMSummaryGenerator
+from src.infrastructure.runtime.agno.llm_summary_generator import LLMSummaryGenerator
 from tests.fakes import FakeChatModel, FakeModelFactory, RecordingLogger
 from tests.fakes.providers import CHAT_PATH, EMBEDDER_PATH
-from tests.unit.test_provider_matrix import optional_sdks_stubbed  # noqa: F401  (fixture compartilhada)
 
 SECRET = "valor-secreto-QA-F202-nao-pode-vazar"  # noqa: S105 - marcador de vazamento, não é segredo
 GATEWAY = "gw.qa.invalid"
@@ -98,7 +97,7 @@ def test_kwargs_sensiveis_do_construtor_nunca_entram_por_model_params(provider: 
 # ── concorrência ────────────────────────────────────────────────────────────────────────────────
 
 
-def test_criacao_concorrente_em_threads_nao_cruza_kwargs_nem_muta_a_spec():
+def test_criacao_concorrente_em_threads_nao_cruza_kwargs_nem_muta_a_spec(monkeypatch: pytest.MonkeyPatch):
     chat = ClassSpec(
         class_path=CHAT_PATH,
         params={"temperature": "temperature", "top_k": "options.top_k"},
@@ -109,23 +108,20 @@ def test_criacao_concorrente_em_threads_nao_cruza_kwargs_nem_muta_a_spec():
         id="acme", sdk_package="acme-sdk", chat=chat, embedder=ClassSpec(class_path=EMBEDDER_PATH),
         default_hosts=frozenset({"api.acme.example"}), api_key_env="ACME_API_KEY",
     )
-    os.environ["ACME_API_KEY"] = "chave-do-ambiente"
-    try:
-        registry = ProviderRegistry([spec], policy=DestinationPolicy(resolver=_dns))
-        barrier = threading.Barrier(16)
+    monkeypatch.setenv("ACME_API_KEY", "chave-do-ambiente")
+    registry = ProviderRegistry([spec], policy=DestinationPolicy(resolver=_dns))
+    barrier = threading.Barrier(16)
 
-        def create(i: int) -> Any:
-            if i < 16:
-                barrier.wait(timeout=10)  # as primeiras 16 largam juntas
-            config = ModelConfig(
-                "acme", f"m{i}", params={"temperature": i / 1000, "top_k": i}, base_url=f"https://api.acme.example/v{i}"
-            )
-            return registry.create_model(config)
+    def create(i: int) -> Any:
+        if i < 16:
+            barrier.wait(timeout=10)  # as primeiras 16 largam juntas
+        config = ModelConfig(
+            "acme", f"m{i}", params={"temperature": i / 1000, "top_k": i}, base_url=f"https://api.acme.example/v{i}"
+        )
+        return registry.create_model(config)
 
-        with ThreadPoolExecutor(max_workers=16) as pool:
-            models = list(pool.map(create, range(400)))
-    finally:
-        del os.environ["ACME_API_KEY"]
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        models = list(pool.map(create, range(400)))
 
     for i, model in enumerate(models):
         assert model.kwargs["id"] == f"m{i}"

@@ -11,6 +11,7 @@ vindo do banco. Igualdade como no BSON: booleano só casa com booleano (``1`` n�
 from __future__ import annotations
 
 import copy
+from collections import defaultdict
 from typing import Any
 
 from bson import ObjectId
@@ -134,3 +135,42 @@ class FakeMongoClient:
 
     def __getitem__(self, database_name: str) -> dict[str, FakeMongoCollection]:
         return self.collections
+
+
+class FailingMongoCollection:
+    """Coleção de um servidor fora do ar: toda operação levanta ``error`` (o erro do driver)."""
+
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+
+    def find(self, *_: object, **__: object) -> FakeAsyncCursor:
+        raise self._error
+
+    async def find_one(self, *_: object, **__: object) -> dict[str, Any] | None:
+        raise self._error
+
+    async def count_documents(self, *_: object, **__: object) -> int:
+        raise self._error
+
+    async def create_index(self, *_: object, **__: object) -> str:
+        raise self._error
+
+    async def insert_many(self, *_: object, **__: object) -> None:
+        raise self._error
+
+
+class FailingMongoClient:
+    """Cliente de um servidor fora do ar: ``admin.command`` e toda coleção levantam ``error``."""
+
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+        self.admin = self
+
+    def __getitem__(self, database_name: str) -> defaultdict[str, FailingMongoCollection]:
+        return defaultdict(lambda: FailingMongoCollection(self._error))
+
+    async def command(self, *_: object) -> dict[str, Any]:
+        raise self._error
+
+    def close(self) -> None:
+        """Nada a fechar."""

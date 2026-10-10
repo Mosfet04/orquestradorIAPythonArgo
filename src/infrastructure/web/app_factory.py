@@ -309,7 +309,6 @@ class AppFactory:
             self._logger.error(
                 "Erro crítico no lifespan",
                 error_type=exc.__class__.__name__,
-                error=str(exc),
             )
             raise
         finally:
@@ -353,7 +352,6 @@ class AppFactory:
             self._logger.error(
                 "Erro ao montar AgentOS — continuando com montagem parcial ou sem rotas de agente",
                 error_type=exc.__class__.__name__,
-                error=str(exc),
             )
 
     def _record_startup_metrics(

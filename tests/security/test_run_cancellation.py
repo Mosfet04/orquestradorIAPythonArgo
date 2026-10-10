@@ -24,8 +24,8 @@ from agno.team import Team
 from fastapi import FastAPI
 from fastapi.routing import APIRoute
 
+from src.infrastructure.runtime.agno.run_cancellation import RegisteredRunCancellationManager
 from src.infrastructure.web.app_factory import AppFactory
-from src.infrastructure.web.run_cancellation import RegisteredRunCancellationManager
 from tests.fakes import FakeChatModel
 from tests.fakes.agui import assert_valid_run, parse_agui_sse, text_of
 from tests.fakes.web import mount_agent_os

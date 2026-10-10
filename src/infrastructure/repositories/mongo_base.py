@@ -97,5 +97,5 @@ class AsyncMongoRepository:
             await self._client.admin.command("ping")
             return True
         except Exception as exc:  # noqa: BLE001 - ping devolve False; falha logada
-            self._logger.error("MongoDB ping falhou", error=str(exc))
+            self._logger.error("MongoDB ping falhou", error_type=type(exc).__name__)
             return False

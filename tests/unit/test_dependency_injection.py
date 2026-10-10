@@ -5,11 +5,14 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 
 from src.domain.entities.model_config import ModelConfig
 from src.domain.ports import InvalidModelConfigError
 from src.infrastructure.dependency_injection import DependencyContainer, HealthService
 from src.infrastructure.repositories import mongo_base
+from src.infrastructure.telemetry import metrics as metrics_module
 from tests.fakes import RecordingLogger
 
 # ── HealthService ───────────────────────────────────────────────────
@@ -283,6 +286,48 @@ class TestDependencyContainer:
 
         container = await DependencyContainer.create_async(config)
         await container.cleanup()
+
+    @patch("src.infrastructure.dependency_injection.AsyncIOMotorClient")
+    async def test_controller_do_container_registra_hit_e_miss_do_cache_nas_metricas(
+        self, mock_motor_cls, monkeypatch, tmp_path
+    ):
+        """O controller não importa a telemetria (F2-07): quem liga hit/miss ao OTel é o composition root."""
+        mock_client = MagicMock()
+        mock_client.admin.command = AsyncMock(return_value={"ok": 1})
+        mock_motor_cls.return_value = mock_client
+        reader = InMemoryMetricReader()
+        meter_provider = MeterProvider(metric_readers=[reader])
+        meter = meter_provider.get_meter("teste")
+        monkeypatch.setattr(metrics_module, "cache_hits_total", meter.create_counter("cache_hits_total"))
+        monkeypatch.setattr(metrics_module, "cache_misses_total", meter.create_counter("cache_misses_total"))
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("agents: []\nteams: []\ntools: []\n", encoding="utf-8")
+
+        from src.infrastructure.config.app_config import AppConfig
+        with patch.dict("os.environ", {
+            "MONGO_CONNECTION_STRING": "mongodb://localhost:27017",
+            "MONGO_DATABASE_NAME": "testdb",
+            "CONFIG_STORE": "yaml",
+            "CONFIG_YAML_PATH": str(config_file),
+        }, clear=True):
+            config = AppConfig.load()
+        controller = (await DependencyContainer.create_async(config)).get_orquestrador_controller()
+
+        assert await controller.get_agents() == []  # miss: carrega do arquivo
+        assert await controller.get_agents() == []  # hit: cache
+        assert await controller.get_teams() == []  # miss de teams + hit de agents
+
+        points = {
+            metric.name: sorted((dict(p.attributes or {})["cache"], p.value) for p in metric.data.data_points)
+            for resource in reader.get_metrics_data().resource_metrics
+            for scope in resource.scope_metrics
+            for metric in scope.metrics
+        }
+        meter_provider.shutdown()
+        assert points == {
+            "cache_misses_total": [("agents", 1), ("teams", 1)],
+            "cache_hits_total": [("agents", 2)],
+        }
 
     def test_get_controller_not_initialized(self):
         from src.infrastructure.config.app_config import AppConfig

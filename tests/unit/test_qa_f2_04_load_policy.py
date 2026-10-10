@@ -20,7 +20,6 @@ from src.application.use_cases.get_active_teams_use_case import GetActiveTeamsUs
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.team_config import TeamConfig
 from src.domain.ports import AgentHandle
-from src.infrastructure.telemetry.metrics import TelemetryMetrics
 from src.presentation.controllers.orquestrador_controller import OrquestradorController
 from tests.fakes import InMemoryAgentConfigRepository, InMemoryTeamConfigRepository, RecordingLogger
 from tests.fakes.runtime import FakeAgentHandle, FakeAgentRuntime, FakeTeamHandle
@@ -185,18 +184,16 @@ async def test_event_loop_segue_livre_enquanto_o_team_monta() -> None:
 
 
 class _Cache:
-    """Conta hit/miss que o controller registra no ``TelemetryMetrics``."""
+    """Guarda os hits e misses que o controller entrega aos callbacks de métrica."""
 
-    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def __init__(self) -> None:
         self.hits: list[str] = []
         self.misses: list[str] = []
-        monkeypatch.setattr(TelemetryMetrics, "record_cache_hit", staticmethod(self.hits.append))
-        monkeypatch.setattr(TelemetryMetrics, "record_cache_miss", staticmethod(self.misses.append))
 
 
 class _Env:
-    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        self.cache = _Cache(monkeypatch)
+    def __init__(self) -> None:
+        self.cache = _Cache()
         self.logger = RecordingLogger()
         self.runtime = FakeAgentRuntime()
         self.agents_repo = _ListAgents([_agent("a1"), _agent("a2")])
@@ -207,6 +204,8 @@ class _Env:
             ),
             get_active_teams_use_case=GetActiveTeamsUseCase(self.runtime, self.teams_repo, self.logger),
             logger=self.logger,
+            on_cache_hit=self.cache.hits.append,
+            on_cache_miss=self.cache.misses.append,
         )
 
     def expire(self, which: str) -> None:
@@ -215,8 +214,8 @@ class _Env:
 
 
 @pytest.fixture
-def env(monkeypatch: pytest.MonkeyPatch) -> _Env:
-    return _Env(monkeypatch)
+def env() -> _Env:
+    return _Env()
 
 
 async def test_cache_de_agentes_devolve_os_mesmos_handles_no_hit_e_conta_hit_e_miss(env: _Env) -> None:

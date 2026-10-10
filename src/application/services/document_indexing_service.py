@@ -176,5 +176,5 @@ class DocumentIndexingService:
                 self._logger.warning(
                     "Erro ao computar embedding",
                     node_id=node.id,
-                    error=str(exc),
+                    error_type=type(exc).__name__,
                 )

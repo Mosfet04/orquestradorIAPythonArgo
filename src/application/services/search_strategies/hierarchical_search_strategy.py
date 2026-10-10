@@ -157,7 +157,7 @@ class HierarchicalSearchStrategy(IKnowledgeSearchStrategy):
             result = await asyncio.to_thread(self._embedder.get_embedding, text)
             return result if isinstance(result, list) else None
         except Exception as exc:
-            self._logger.warning("Erro ao computar embedding", error=str(exc))
+            self._logger.warning("Erro ao computar embedding", error_type=type(exc).__name__)
             return None
 
     @staticmethod

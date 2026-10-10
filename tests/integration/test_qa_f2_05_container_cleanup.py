@@ -70,10 +70,10 @@ async def test_falha_antes_de_abrir_o_cliente_nao_quebra_o_cleanup(monkeypatch: 
     events = Events()
     with startup_world(events) as motors:
 
-        def broken_registry(self: di.DependencyContainer, *_: object, **__: object) -> None:
+        def broken_registry(*_: object, **__: object) -> None:
             raise RuntimeError("registry quebrado")
 
-        monkeypatch.setattr(di.DependencyContainer, "_build_provider_registry", broken_registry)
+        monkeypatch.setattr(di, "build_provider_registry", broken_registry)
         with pytest.raises(RuntimeError, match="registry quebrado"):
             await di.DependencyContainer.create_async(AppConfig.load())
 

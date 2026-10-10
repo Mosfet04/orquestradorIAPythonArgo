@@ -20,7 +20,7 @@ from agno.team import Team
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
-from src.infrastructure.web.agui_router import build_agui_router, resolve_run_id
+from src.infrastructure.runtime.agno.agui_router import build_agui_router, resolve_run_id
 from tests.fakes import FakeChatModel, RecordingLogger
 
 SECRET_LIKE = "sk-" + "x" * 20  # valor de teste: simula texto sensível numa exceção

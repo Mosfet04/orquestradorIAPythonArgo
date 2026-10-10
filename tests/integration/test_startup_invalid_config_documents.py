@@ -17,12 +17,12 @@ from starlette.testclient import TestClient
 
 from src.application.use_cases.get_active_agents_use_case import GetActiveAgentsUseCase
 from src.application.use_cases.get_active_teams_use_case import GetActiveTeamsUseCase
-from src.infrastructure.http.http_tool_factory import HttpToolFactory
 from src.infrastructure.repositories import mongo_base
 from src.infrastructure.repositories.mongo_agent_config_repository import MongoAgentConfigRepository
 from src.infrastructure.repositories.mongo_team_config_repository import MongoTeamConfigRepository
 from src.infrastructure.runtime.agno import AgnoRuntime, agent_factory_service, team_factory_service
 from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService
+from src.infrastructure.runtime.agno.http_tool_factory import HttpToolFactory
 from src.infrastructure.runtime.agno.team_factory_service import TeamFactoryService
 from src.infrastructure.web import app_factory
 from src.infrastructure.web.app_factory import AppFactory

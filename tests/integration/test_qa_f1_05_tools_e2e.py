@@ -27,9 +27,9 @@ from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.model_config import ModelConfig
 from src.domain.entities.tool import HttpMethod, ParameterType, Tool, ToolParameter
 from src.domain.ports import IModelFactory
-from src.infrastructure.http.http_tool_factory import HttpToolFactory
 from src.infrastructure.runtime.agno import agent_factory_service
 from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService
+from src.infrastructure.runtime.agno.http_tool_factory import HttpToolFactory
 from src.infrastructure.web.app_factory import AppFactory
 from tests.fakes import (
     FakeChatModel,
@@ -397,7 +397,8 @@ async def test_falha_de_rede_do_upstream_volta_ao_modelo_sem_stack_e_e_logada(
     body = _run(client, "a1")
 
     assert body["content"] == "fora do ar"
-    assert _tool_results(models.models["a1"], 1) == ["Erro na requisição: conexão recusada"]
+    # só o tipo: o texto do httpx pode citar um header inteiro (BUG-F2-07-QA-1)
+    assert _tool_results(models.models["a1"], 1) == ["Erro na requisição: falha ao chamar a tool (ConnectError)"]
     assert [r.message for r in logger.records if r.level == "error"] == ["Request error"]
 
 
@@ -419,7 +420,7 @@ async def test_run_http_nao_vaza_traceback_nem_caminho_de_arquivo_quando_a_tool_
     assert "Traceback" not in response.text
     assert "/home/" not in response.text and "site-packages" not in response.text
     (result,) = _tool_results(models.models["a1"], 1)
-    assert result.startswith("Erro na requisição")
+    assert result == "Erro na requisição: timeout ao chamar a tool (ReadTimeout)"
 
 
 async def test_corpo_cru_do_upstream_chega_ao_modelo_registro_s2_f4_01(

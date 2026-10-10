@@ -12,49 +12,27 @@ mantém o fallback de embedder (ollama / nomic-embed-text).
 
 from __future__ import annotations
 
-import json
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from starlette.testclient import TestClient
 
 from src.application.services.document_indexing_service import DocumentIndexingService
-from src.application.use_cases.get_active_agents_use_case import GetActiveAgentsUseCase
-from src.application.use_cases.get_active_teams_use_case import GetActiveTeamsUseCase
 from src.domain.entities.rag_config import RagConfig, SearchStrategy
-from src.domain.ports import IEmbedderFactory, IModelFactory
 from src.domain.ports.summary_generator_port import ISummaryGenerator
-from src.infrastructure.http.http_tool_factory import HttpToolFactory
 from src.infrastructure.parsers.text_document_parser import TextDocumentParser
 from src.infrastructure.providers import DestinationPolicy, ProviderRegistry
 from src.infrastructure.providers.builtins import BUILTIN_PROVIDERS
-from src.infrastructure.repositories import mongo_base
-from src.infrastructure.repositories.mongo_agent_config_repository import MongoAgentConfigRepository
-from src.infrastructure.repositories.mongo_team_config_repository import MongoTeamConfigRepository
-from src.infrastructure.runtime.agno import AgnoRuntime, agent_factory_service, team_factory_service
-from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService
-from src.infrastructure.runtime.agno.team_factory_service import TeamFactoryService
-from src.infrastructure.web import app_factory
-from src.infrastructure.web.app_factory import AppFactory
-from src.presentation.controllers.orquestrador_controller import OrquestradorController
 from tests.fakes import (
     FakeEmbedderFactory,
-    FakeModelFactory,
-    FakeMongoClient,
-    FakeMongoCollection,
     InMemoryDocumentTreeRepository,
-    InMemoryToolRepository,
     RecordingLogger,
 )
+from tests.fakes.app_boot import Boot, agent_doc, boot, team_doc
 
 pytestmark = pytest.mark.usefixtures("offline_knowledge")
 
-CONN = "mongodb://mongo.invalid:27017"
 SECRET_REF_VALUE = "sk-QA-F201-COLADO-NO-LUGAR-DA-REF"  # noqa: S105 - marcador de vazamento, não é segredo
 URL_PASSWORD = "senha-QA-F201-NA-URL"  # noqa: S105 - marcador de vazamento, não é segredo
-_ENV_NAMES = ("ENVIRONMENT", "ENABLE_DOCS", "CORS_ALLOWED_ORIGINS", "APP_HOST", "API_KEY_RUN", "API_KEY_ADMIN")
-LOCAL = {"base_url": "http://127.0.0.1:7777", "client": ("127.0.0.1", 50000)}
 
 NEW_FIELDS = {
     "model_params": {"temperature": 0.2, "max_tokens": 256, "stream": False},
@@ -63,53 +41,27 @@ NEW_FIELDS = {
 }
 
 
-def _agent(agent_id: str, **extra: Any) -> dict[str, Any]:
-    doc: dict[str, Any] = {
-        "id": agent_id,
-        "nome": f"Agente {agent_id}",
-        "model": "llama3.2:latest",
-        "descricao": "d",
-        "prompt": "p",
-        "tools_ids": [],
-        "active": True,
-    }
-    doc.update(extra)
-    return doc
-
-
-def _team(team_id: str, members: list[str], **extra: Any) -> dict[str, Any]:
-    doc: dict[str, Any] = {
-        "id": team_id,
-        "nome": f"Time {team_id}",
-        "model": "qwen3",
-        "prompt": "p",
-        "member_ids": members,
-        "mode": "route",
-        "active": True,
-    }
-    doc.update(extra)
-    return doc
-
-
 def legacy_agent_docs() -> list[dict[str, Any]]:
     """Formas reais encontradas em produção: snake, camel, sem provider, rag com/sem modelo."""
     return [
-        _agent("snake", factory_ia_model="openai", model="gpt-4o-mini"),
-        _agent("camel", factoryIaModel="anthropic", model="claude-x", rag_config={"active": False}),
-        _agent("sem-provider"),
-        _agent("rag-padrao", rag_config={"active": True}),  # embedder default ollama/nomic
-        _agent("rag-camel", rag_config={"active": True, "factoryIaModel": "gemini", "model": "gemini-embedding-001"}),
-        _agent("rag-vazio", rag_config={"active": True, "model": ""}),  # semântico ignorado com aviso
-        _agent("rag-hier", rag_config={"active": True, "search_strategy": "hierarchical", "doc_name": "x.md"}),
-        _agent("ambos", factory_ia_model="groq", factoryIaModel="gemini"),
+        agent_doc("snake", factory_ia_model="openai", model="gpt-4o-mini"),
+        agent_doc("camel", factoryIaModel="anthropic", model="claude-x", rag_config={"active": False}),
+        agent_doc("sem-provider"),
+        agent_doc("rag-padrao", rag_config={"active": True}),  # embedder default ollama/nomic
+        agent_doc(
+            "rag-camel", rag_config={"active": True, "factoryIaModel": "gemini", "model": "gemini-embedding-001"}
+        ),
+        agent_doc("rag-vazio", rag_config={"active": True, "model": ""}),  # semântico ignorado com aviso
+        agent_doc("rag-hier", rag_config={"active": True, "search_strategy": "hierarchical", "doc_name": "x.md"}),
+        agent_doc("ambos", factory_ia_model="groq", factoryIaModel="gemini"),
     ]
 
 
 def legacy_team_docs() -> list[dict[str, Any]]:
     return [
-        _team("t-canonico", ["snake", "camel"], factoryIaModel="ollama"),
-        _team("t-snake", ["sem-provider"], factory_ia_model="openai", model="gpt-4o"),
-        {k: v for k, v in _team("t-camel", []).items() if k != "member_ids"}
+        team_doc("t-canonico", ["snake", "camel"], factoryIaModel="ollama"),
+        team_doc("t-snake", ["sem-provider"], factory_ia_model="openai", model="gpt-4o"),
+        {k: v for k, v in team_doc("t-camel", []).items() if k != "member_ids"}
         | {"memberIds": ["rag-padrao"], "userMemoryActive": False, "factoryIaModel": "gemini"},
     ]
 
@@ -125,97 +77,6 @@ def with_new_fields(doc: dict[str, Any]) -> dict[str, Any]:
             "api_key_ref": "env:EMB_API_KEY",
         }
     return out
-
-
-class Boot:
-    """Resultado de um startup real."""
-
-    def __init__(self) -> None:
-        self.agents: Any = None
-        self.teams: Any = None
-        self.config: Any = None
-        self.status: tuple[int, int, int] = (0, 0, 0)
-        self.logger = RecordingLogger()
-        self.models = FakeModelFactory(responses=["oi"])
-        self.embedders = FakeEmbedderFactory()
-        self.registry: ProviderRegistry | None = None
-        """Se definido, substitui as duas fábricas fake (modelo e embedder)."""
-
-    def errors(self) -> list[tuple[str, dict[str, Any]]]:
-        return [(r.message, r.context) for r in self.logger.records if r.level == "error"]
-
-    def everything(self) -> str:
-        return repr(self.logger.records) + json.dumps([self.agents, self.teams, self.config], default=str)
-
-
-def boot(
-    monkeypatch: pytest.MonkeyPatch,
-    agent_docs: list[dict[str, Any]],
-    team_docs: list[dict[str, Any]],
-    registry: ProviderRegistry | None = None,
-) -> Boot:
-    result = Boot()
-    result.registry = registry
-    models: IModelFactory = registry or result.models
-    embedders: IEmbedderFactory = registry or result.embedders
-    client = FakeMongoClient(
-        {"agents_config": FakeMongoCollection(agent_docs), "teams_config": FakeMongoCollection(team_docs)}
-    )
-    monkeypatch.setattr(mongo_base.MongoClientFactory, "get_client", classmethod(lambda cls, _conn: client))
-    monkeypatch.setattr(agent_factory_service, "MongoAgentDb", lambda **_: None)
-    monkeypatch.setattr(team_factory_service, "MongoAgentDb", lambda **_: None)
-    for name in _ENV_NAMES:
-        monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("AGNO_TELEMETRY", "false")
-    logger = result.logger
-    runtime = AgnoRuntime(
-        agent_factory=AgentFactoryService(
-            db_url=CONN,
-            logger=logger,
-            model_factory=models,
-            embedder_factory=embedders,
-            tool_factory=HttpToolFactory(logger=logger),
-            tool_repository=InMemoryToolRepository(),
-        ),
-        team_factory=TeamFactoryService(db_url=CONN, logger=logger, model_factory=models),
-    )
-    agents_uc = GetActiveAgentsUseCase(
-        runtime,
-        MongoAgentConfigRepository(connection_string=CONN, logger=logger),
-        logger,
-    )
-    teams_uc = GetActiveTeamsUseCase(
-        runtime,
-        MongoTeamConfigRepository(connection_string=CONN, logger=logger),
-        logger,
-    )
-    controller = OrquestradorController(
-        get_active_agents_use_case=agents_uc, get_active_teams_use_case=teams_uc, logger=logger
-    )
-    factory = AppFactory()
-    app = factory.create_app()
-
-    async def ensure_container() -> Any:
-        async def cleanup() -> None:
-            return None
-
-        factory._container = SimpleNamespace(  # type: ignore[assignment]
-            config=factory._config,
-            cleanup=cleanup,
-            health_service=None,
-            get_orquestrador_controller=lambda: controller,
-            get_agent_runtime=lambda: runtime,
-        )
-        return factory._container
-
-    monkeypatch.setattr(factory, "_ensure_container", ensure_container)
-    monkeypatch.setattr(app_factory, "setup_telemetry", lambda config: None)
-    monkeypatch.setattr(app_factory, "shutdown_telemetry", lambda: None)
-    with TestClient(app, **LOCAL) as http:  # type: ignore[arg-type]
-        agents, teams, config = http.get("/agents"), http.get("/teams"), http.get("/config")
-        result.status = (agents.status_code, teams.status_code, config.status_code)
-        result.agents, result.teams, result.config = agents.json(), teams.json(), config.json()
-    return result
 
 
 def _comparable(boot_result: Boot) -> dict[str, Any]:
@@ -337,10 +198,10 @@ HOSTILE_AGENT_FIELDS = [
 def test_agente_com_campo_novo_hostil_e_isolado_e_o_app_sobe_com_os_demais(
     monkeypatch: pytest.MonkeyPatch, hostile: dict[str, Any]
 ):
-    docs = [_agent("antes"), _agent("ruim", **hostile), _agent("depois")]
+    docs = [agent_doc("antes"), agent_doc("ruim", **hostile), agent_doc("depois")]
     teams = [
-        _team("t-ok", ["antes", "depois"]),
-        _team("t-ruim", ["antes"], **{k: v for k, v in hostile.items() if k != "rag_config"}),
+        team_doc("t-ok", ["antes", "depois"]),
+        team_doc("t-ruim", ["antes"], **{k: v for k, v in hostile.items() if k != "rag_config"}),
     ]
 
     result = boot(monkeypatch, docs, teams)
@@ -358,10 +219,10 @@ def test_agente_com_campo_novo_hostil_e_isolado_e_o_app_sobe_com_os_demais(
 def test_rag_com_tipo_hostil_no_modelo_nao_derruba_o_startup(monkeypatch: pytest.MonkeyPatch):
     """``model`` numérico/lista no rag_config (documento sem schema): nenhum agente cai por causa dele."""
     docs = [
-        _agent("ok"),
-        _agent("rag-int", rag_config={"active": True, "model": 5}),
-        _agent("rag-lista", rag_config={"active": True, "model": ["x"], "factory_ia_model": ["y"]}),
-        _agent("rag-obj", rag_config={"active": True, "model": {"$ne": 1}}),
+        agent_doc("ok"),
+        agent_doc("rag-int", rag_config={"active": True, "model": 5}),
+        agent_doc("rag-lista", rag_config={"active": True, "model": ["x"], "factory_ia_model": ["y"]}),
+        agent_doc("rag-obj", rag_config={"active": True, "model": {"$ne": 1}}),
     ]
 
     result = boot(monkeypatch, docs, [])
@@ -375,13 +236,13 @@ def test_rag_com_tipo_hostil_no_modelo_nao_derruba_o_startup(monkeypatch: pytest
 
 
 def test_documento_invalido_nao_muda_a_ordem_nem_o_conjunto_dos_validos(monkeypatch: pytest.MonkeyPatch):
-    valid = [_agent(f"v{i}", factoryIaModel="openai") for i in range(5)]
+    valid = [agent_doc(f"v{i}", factoryIaModel="openai") for i in range(5)]
     mixed = [
         valid[0],
-        _agent("x1", base_url="ftp://x"),
+        agent_doc("x1", base_url="ftp://x"),
         valid[1],
         valid[2],
-        _agent("x2", api_key_ref=SECRET_REF_VALUE),
+        agent_doc("x2", api_key_ref=SECRET_REF_VALUE),
         valid[3],
         valid[4],
     ]
@@ -447,13 +308,13 @@ def test_registry_real_isola_agente_com_base_url_fora_da_allowlist_sem_vazar(mon
     )
     compat = {"factory_ia_model": "openai_compatible", "api_key_ref": "env:QA_F202_API_KEY"}
     docs = [
-        _agent("antes"),
-        _agent("fora", base_url="https://coletor.evil.invalid/v1", **compat),
-        _agent("metadata", base_url="http://169.254.169.254/latest", **compat),
-        _agent("permitido", base_url="https://gw.permitido.invalid/v1", **compat),
+        agent_doc("antes"),
+        agent_doc("fora", base_url="https://coletor.evil.invalid/v1", **compat),
+        agent_doc("metadata", base_url="http://169.254.169.254/latest", **compat),
+        agent_doc("permitido", base_url="https://gw.permitido.invalid/v1", **compat),
     ]
 
-    result = boot(monkeypatch, docs, [_team("t-fora", ["antes"], base_url="https://coletor.evil.invalid")], registry)
+    result = boot(monkeypatch, docs, [team_doc("t-fora", ["antes"], base_url="https://coletor.evil.invalid")], registry)
 
     assert result.status == (200, 200, 200)
     assert sorted(a["id"] for a in result.agents) == ["antes", "permitido"]

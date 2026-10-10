@@ -194,7 +194,6 @@ graph TB
         PROV["ProviderRegistry<br/>(models and embedders)"]
         RT["AgnoRuntime<br/>(AgentFactoryService, TeamFactoryService,<br/>user_id guardrail, hierarchical tool)"]
         LOG["Structlog Logging"]
-        CACHE["ModelCacheService"]
         DI["DependencyContainer"]
     end
 
@@ -290,11 +289,7 @@ orquestradorIAPythonArgo/
 │   ├── infrastructure/             # 🔧 INFRASTRUCTURE LAYER (implementations)
 │   │   ├── config/
 │   │   │   └── app_config.py       #   AppConfig — loads environment variables
-│   │   ├── cache/
-│   │   │   └── model_cache_service.py # Cache of instantiated models
 │   │   ├── database/               #   (reserved for future connections)
-│   │   ├── http/
-│   │   │   └── http_tool_factory.py #   Creates agno Functions from HTTP configs
 │   │   ├── providers/
 │   │   │   ├── registry.py         #   ProviderRegistry: models and embedders by spec (IModelFactory/IEmbedderFactory)
 │   │   │   └── builtins.py         #   Built-in specs: ollama, openai, anthropic, gemini, groq, azure, openai_compatible
@@ -312,14 +307,17 @@ orquestradorIAPythonArgo/
 │   │   │   └── mongo_document_tree_repository.py # IDocumentTreeRepository → MongoDB
 │   │   ├── parsers/
 │   │   │   └── text_document_parser.py #  Text document parser → tree
-│   │   ├── runtime/agno/           #   The only place that builds agno Agent/Team (AgentRuntime)
+│   │   ├── runtime/agno/           #   The only place with static agno imports (lint-imports contract agno-so-no-runtime);
+│   │   │                           #   exception: specs in providers/ name agno classes and the registry loads them by name
 │   │   │   ├── runtime.py          #     AgnoRuntime: AgentRuntime port implementation
 │   │   │   ├── agent_factory_service.py #  Creates agno Agents from AgentConfig (tools, RAG)
 │   │   │   ├── team_factory_service.py #   Creates agno Teams from TeamConfig
 │   │   │   ├── user_id_guardrail.py #    Refuses runs without user_id for entities with user memory
-│   │   │   └── hierarchical_search_tool.py # Hierarchical search tool (agno Toolkit)
-│   │   ├── services/
-│   │   │   └── llm_summary_generator.py #  Section summary generator via LLM
+│   │   │   ├── hierarchical_search_tool.py # Hierarchical search tool (agno Toolkit)
+│   │   │   ├── http_tool_factory.py #    Creates agno Functions from HTTP configs (IToolFactory)
+│   │   │   ├── llm_summary_generator.py # Section summary generator via LLM (ISummaryGenerator)
+│   │   │   ├── agui_router.py      #     Per-entity AG-UI routes (POST /agui/{entity_id})
+│   │   │   └── run_cancellation.py #     Run cancellation only for registered runs
 │   │   ├── web/
 │   │   │   └── app_factory.py      #   AppFactory — creates FastAPI + AgentOS + per-entity AG-UI
 │   │   └── dependency_injection.py #   DependencyContainer — Composition Root
@@ -358,7 +356,6 @@ orquestradorIAPythonArgo/
         ├── test_logging_decorators.py
         ├── test_logging_decorators_extended.py
         ├── test_metrics_middleware.py
-        ├── test_model_cache_service.py
         ├── test_provider_matrix.py
         ├── test_provider_registry.py
         ├── test_mongo_agent_config_repository.py
@@ -988,7 +985,6 @@ tests/
     ├── test_http_tool_factory_extended.py  # Infrastructure: HTTP tools (extended)
     ├── test_hierarchical_search_tool.py   # Infrastructure: hierarchical search tool
     ├── test_text_document_parser.py       # Infrastructure: document parser
-    ├── test_model_cache_service.py        # Infrastructure: cache
     ├── test_mongo_agent_config_repository.py # Infrastructure: agent repo
     ├── test_mongo_team_config_repository.py  # Infrastructure: team repo
     ├── test_mongo_team_config_repository_extended.py # Infrastructure: team repo (extended)
@@ -1018,7 +1014,7 @@ tests/
    - Fetches active agent configs from MongoDB
    - For each config, `AgentFactoryService` creates an `agno.Agent` with model, tools, knowledge, and memory
    - Then `GetActiveTeamsUseCase` fetches active team configs and `TeamFactoryService` creates `agno.Team` with agents as members
-5. Created agents and teams are passed to `AgnoRuntime.mount` (`src/infrastructure/runtime/agno/runtime.py`), which creates `AgentOS(agents, teams, base_app)` (REST + SSE routes on FastAPI) and mounts the app's own AG-UI router (`POST /agui/{id}` per entity, `src/infrastructure/web/agui_router.py`); `AppFactory` reinstalls CORS and auth outermost and `runtime.start()` opens the AgentOS lifespans (closed by `runtime.close()` on shutdown, before the container)
+5. Created agents and teams are passed to `AgnoRuntime.mount` (`src/infrastructure/runtime/agno/runtime.py`), which creates `AgentOS(agents, teams, base_app)` (REST + SSE routes on FastAPI) and mounts the app's own AG-UI router (`POST /agui/{id}` per entity, `src/infrastructure/runtime/agno/agui_router.py`); `AppFactory` reinstalls CORS and auth outermost and `runtime.start()` opens the AgentOS lifespans (closed by `runtime.close()` on shutdown, before the container)
 6. Server is ready on port 7777
 
 ### Implemented Patterns

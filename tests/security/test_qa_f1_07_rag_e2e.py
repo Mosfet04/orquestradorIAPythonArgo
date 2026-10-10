@@ -40,8 +40,8 @@ from src.domain.entities.rag_config import RagConfig, SearchStrategy
 from src.infrastructure.parsers.text_document_parser import TextDocumentParser
 from src.infrastructure.runtime.agno import AgnoRuntime, agent_factory_service
 from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService, rag_collection_name
+from src.infrastructure.runtime.agno.llm_summary_generator import LLMSummaryGenerator
 from src.infrastructure.runtime.agno.team_factory_service import TeamFactoryService
-from src.infrastructure.services.llm_summary_generator import LLMSummaryGenerator
 from src.infrastructure.web.app_factory import AppFactory
 from tests.fakes import (
     FakeChatModel,

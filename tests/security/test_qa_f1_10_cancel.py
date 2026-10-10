@@ -24,8 +24,8 @@ from agno.run.cancel import get_cancellation_manager
 from agno.team import Team
 from fastapi import FastAPI
 
+from src.infrastructure.runtime.agno.run_cancellation import RegisteredRunCancellationManager
 from src.infrastructure.web.app_factory import AppFactory
-from src.infrastructure.web.run_cancellation import RegisteredRunCancellationManager
 from tests.fakes import FakeChatModel
 from tests.fakes.agui import parse_agui_sse
 from tests.fakes.web import mount_agent_os

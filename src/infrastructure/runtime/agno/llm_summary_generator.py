@@ -82,7 +82,7 @@ class LLMSummaryGenerator(ISummaryGenerator):
             raise SummaryTimeoutError(
                 f"modelo de sumário sem resposta em {self._timeout_seconds} s"
             ) from exc
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - logado; qualquer falha do modelo cai no truncamento
             self._logger.warning(
                 "Fallback de sumário: falha ao chamar o modelo",
                 factory_ia_model=self._model_config.provider,
