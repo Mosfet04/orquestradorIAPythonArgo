@@ -71,7 +71,7 @@ _ADMIN_PREFIXES = (
     "/schedules",
     "/registry",
     # Aprovações (HITL) listam e decidem runs de qualquer usuário: decisão do operador, não de
-    # quem pediu a tool sensível (F2-05; hoje stub 503: o AgentOS sobe sem ``db=``).
+    # quem pediu a tool sensível (F2-05). Desde o F2-08 são as rotas reais do AgentOS (``db=``).
     "/approvals",
     "/optimize-memories",
 )

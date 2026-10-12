@@ -23,14 +23,21 @@ from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.rag_config import RagConfig, SearchStrategy
 from src.domain.entities.team_config import TeamConfig
 from src.domain.entities.tool import HttpMethod, ParameterType, Tool, ToolParameter
-from tests.fakes.config_stores import ENTITY_BACKENDS, EntityBackend, MemoryBackend, entity_backend
+from tests.fakes.config_stores import (
+    ENTITY_BACKEND_PARAMS,
+    EntityBackend,
+    MemoryBackend,
+    entity_backend,
+    live_mongo_for,
+)
 
 
-@pytest.fixture(params=ENTITY_BACKENDS)
+@pytest.fixture(params=ENTITY_BACKEND_PARAMS)
 def backend(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> MemoryBackend | EntityBackend:
-    return entity_backend(request.param, monkeypatch, tmp_path)
+    """Backend por entidades (memória, Mongo fake, YAML e, ``live``, Mongo real); substitui a do conftest."""
+    return entity_backend(request.param, monkeypatch, tmp_path, live_mongo_for(request))
 
 
 def _agent(agent_id: str, *, active: bool = True, nome: str | None = None) -> AgentConfig:

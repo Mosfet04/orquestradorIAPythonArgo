@@ -4,6 +4,12 @@ O snapshot (``snapshots/f2_05_routes_middlewares.json``) foi gerado exportando a
 ``git archive 811d082`` e montando o mesmo app (1 agente com db, 1 membro, 1 team) com o
 ``AppFactory._mount_agent_os`` de lá; a única diferença deliberada do F2-05 é ``/approvals*`` passar
 de ``RUN`` para ``ADMIN`` (editada à mão no snapshot). Ordem das rotas conta (casamento por ordem).
+
+F2-08: o AgentOS passou a receber ``db=`` (o ``SessionDb`` das entidades), e o agno 2.5.8 troca os
+stubs 503 de ``/schedules`` e ``/approvals`` (``{path:path}``, todos os métodos) pelas rotas reais
+(``/schedules/{schedule_id}...``, ``/approvals/count``, ``/approvals/{approval_id}...``); só a lista
+de rotas do snapshot foi regravada, e a diferença se limita a esses dois prefixos, todos ``ADMIN``.
+``/components`` continua stub (o db é assíncrono). Middlewares e CORS seguem os da base.
 """
 
 from __future__ import annotations
@@ -14,12 +20,12 @@ from typing import Any
 
 import pytest
 from agno.agent import Agent
-from agno.db.in_memory import InMemoryDb
 from agno.team import Team
 
 from src.infrastructure.web.api_key_auth import classify_route
 from src.infrastructure.web.app_factory import AppFactory
 from tests.fakes import FakeChatModel
+from tests.fakes.session_db import fake_session_db
 from tests.fakes.web import mount_agent_os
 
 SNAPSHOT = json.loads((Path(__file__).parent / "snapshots" / "f2_05_routes_middlewares.json").read_text())
@@ -45,7 +51,7 @@ def _mounted_app(monkeypatch: pytest.MonkeyPatch, env: dict[str, str]) -> Any:
         monkeypatch.setenv(name, value)
     factory = AppFactory()
     app = factory.create_app()
-    agent = Agent(id="a1", name="A1", model=FakeChatModel(responses=["x"]), telemetry=False, db=InMemoryDb())
+    agent = Agent(id="a1", name="A1", model=FakeChatModel(responses=["x"]), telemetry=False, db=fake_session_db())
     member = Agent(id="m1", name="M1", model=FakeChatModel(responses=["x"]), telemetry=False)
     team = Team(id="t1", name="T1", members=[member], model=FakeChatModel(responses=["x"]), telemetry=False)
     mount_agent_os(factory, app, [agent, member], [team])
@@ -126,6 +132,10 @@ def test_approvals_com_a_chave_run_nunca_passa_da_auth_na_app_montada(
     response = client.request(method, f"http://127.0.0.1:7777{path}", headers=run_auth, follow_redirects=False)
     admin = client.request(method, "/approvals", headers={"Authorization": "Bearer " + "a" * 40})
 
-    # 403 (auth) ou 404 (rota que não existe): nunca o stub 503 do AgentOS, que só o admin alcança.
+    # 403 (auth) ou 404 (rota que não existe): nunca a resposta do AgentOS, que só o admin alcança.
     assert response.status_code in (403, 404, 307, 308), (method, path, response.status_code)
-    assert admin.status_code == 503
+    # O admin passa da auth e chega ao AgentOS. Desde o F2-08 a rota é a real: o Mongo do agno 2.5.8
+    # não implementa aprovações (503 do próprio router) e ``/approvals`` só tem GET (405 nos demais).
+    assert admin.status_code == (503 if method == "GET" else 405)
+    if method == "GET":
+        assert admin.json() == {"detail": "Approvals not supported by the configured database"}

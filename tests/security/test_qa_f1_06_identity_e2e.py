@@ -2,7 +2,8 @@
 
 Cadeia real como em ``test_user_memory_isolation.py``: factories -> Agent/Team do agno ->
 ``mount_agent_os`` (``AppFactory._mount_runtime``) (auth por chaves run/admin) -> REST. Modelo ``FakeChatModel``,
-db ``InMemoryDb`` compartilhado. Cobre o que o teste do dev não cobre: memória agêntica (o modelo
+db ``SessionDb`` de produção (F2-08) sobre o cliente motor em memória, compartilhado. Cobre o que o
+teste do dev não cobre: memória agêntica (o modelo
 chamando a tool de memória do agno), ``user_id`` explícito ``"default"`` (reservado), formatos hostis de
 ``user_id``, sessão compartilhada por dois usuários, team delegando a membro com memória e o que as
 rotas ``/memories`` do AgentOS deixam cada chave ler/gravar.
@@ -17,16 +18,14 @@ from typing import Any
 
 import pytest
 from agno.agent import Agent
-from agno.db.in_memory import InMemoryDb
-from agno.db.schemas import UserMemory
 from agno.models.response import ModelResponse
 from agno.team import Team
 from starlette.testclient import TestClient
 
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.team_config import TeamConfig
-from src.infrastructure.runtime.agno import agent_factory_service, team_factory_service
 from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService
+from src.infrastructure.runtime.agno.session_db import SessionDb
 from src.infrastructure.runtime.agno.team_factory_service import TeamFactoryService
 from src.infrastructure.web.app_factory import AppFactory
 from tests.fakes import (
@@ -37,6 +36,7 @@ from tests.fakes import (
     InMemoryToolRepository,
     RecordingLogger,
 )
+from tests.fakes.session_db import collection, fake_session_db, memory_rows, seed_memories
 from tests.fakes.web import mount_agent_os
 
 RUN_KEY = "qa6-run-key-" + "r" * 22
@@ -56,12 +56,9 @@ SECRETS = (LEGACY, ANA, BRUNO)
 
 
 @pytest.fixture
-def memory_db(monkeypatch: pytest.MonkeyPatch) -> InMemoryDb:
-    db = InMemoryDb()
-    for user_id, memory in (("default", LEGACY), ("ana", ANA), ("bruno", BRUNO)):
-        db.upsert_user_memory(UserMemory(memory=memory, user_id=user_id))
-    monkeypatch.setattr(agent_factory_service, "MongoAgentDb", lambda **_: db)
-    monkeypatch.setattr(team_factory_service, "MongoAgentDb", lambda **_: db)
+async def memory_db() -> SessionDb:
+    db = fake_session_db()
+    await seed_memories(db, {"default": LEGACY, "ana": ANA, "bruno": BRUNO})
     return db
 
 
@@ -71,10 +68,11 @@ class _NoTools:
 
 
 async def _agent(
-    agent_id: str, *, memory: bool, summary: bool = False, model: FakeChatModel | None = None
+    agent_id: str, *, memory: bool, db: SessionDb, summary: bool = False, model: FakeChatModel | None = None
 ) -> Agent:
     service = AgentFactoryService(
         db_url="mongodb://mongo.invalid:27017",
+        session_db=db,
         logger=RecordingLogger(),
         model_factory=FakeModelFactory(responses=["resposta"] * 30),
         embedder_factory=FakeEmbedderFactory(),
@@ -99,11 +97,16 @@ async def _agent(
 
 
 def _team(
-    team_id: str, members: list[Agent], *, memory: bool, model: FakeChatModel | None = None, mode: str = "coordinate"
+    team_id: str,
+    members: list[Agent],
+    *,
+    memory: bool,
+    db: SessionDb,
+    model: FakeChatModel | None = None,
+    mode: str = "coordinate",
 ) -> Team:
     service = TeamFactoryService(
-        db_url="mongodb://mongo.invalid:27017",
-        logger=RecordingLogger(),
+        session_db=db, logger=RecordingLogger(),
         model_factory=FakeModelFactory(responses=["resposta do time"] * 30),
     )
     team = service.create_team(
@@ -124,7 +127,7 @@ def _team(
 
 
 @pytest.fixture
-def client_for(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[..., TestClient]]:
+def client_for(monkeypatch: pytest.MonkeyPatch, memory_db: SessionDb) -> Iterator[Callable[..., TestClient]]:
     clients: list[TestClient] = []
 
     def _build(agents: list[Agent], teams: list[Team] | None = None) -> TestClient:
@@ -137,7 +140,7 @@ def client_for(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[..., TestCl
         monkeypatch.setenv("API_KEY_ADMIN", ADMIN_KEY)
         factory = AppFactory()
         app = factory.create_app()
-        mount_agent_os(factory, app, agents, teams or [])
+        mount_agent_os(factory, app, agents, teams or [], session_db=memory_db)
         client = TestClient(app, raise_server_exceptions=False)
         clients.append(client)
         return client
@@ -160,10 +163,8 @@ def _prompt(model: FakeChatModel) -> str:
     return "\n".join(content for call in model.calls for _, content in call.messages)
 
 
-def _rows(db: InMemoryDb) -> list[tuple[str | None, str | None]]:
-    rows = db.get_user_memories()
-    assert isinstance(rows, list)
-    return sorted((m.user_id, m.memory) for m in rows if isinstance(m, UserMemory))
+def _rows(db: SessionDb) -> list[tuple[str | None, str | None]]:
+    return memory_rows(db)
 
 
 def _run(client: TestClient, path: str, **form: str) -> dict[str, Any]:
@@ -202,11 +203,11 @@ class _MemoryBrain(FakeChatModel):
 
 
 async def test_memoria_agentica_grava_no_user_id_da_requisicao_e_so_ele_a_le(
-    memory_db: InMemoryDb, client_for: Callable[..., TestClient]
+    memory_db: SessionDb, client_for: Callable[..., TestClient]
 ) -> None:
     fact = "FATO-AGENTICO: a Ana mora em Lisboa"
     brain = _MemoryBrain(task=fact)
-    agent = await _agent("com-memoria", memory=True, model=brain)
+    agent = await _agent("com-memoria", memory=True, model=brain, db=memory_db)
     client = client_for([agent])
 
     body = _run(client, "/agents/com-memoria/runs", user_id="ana")
@@ -229,10 +230,10 @@ async def test_memoria_agentica_grava_no_user_id_da_requisicao_e_so_ele_a_le(
 
 
 async def test_memoria_agentica_de_dois_usuarios_nao_se_mistura(
-    memory_db: InMemoryDb, client_for: Callable[..., TestClient]
+    memory_db: SessionDb, client_for: Callable[..., TestClient]
 ) -> None:
     brain = _MemoryBrain()
-    agent = await _agent("com-memoria", memory=True, model=brain)
+    agent = await _agent("com-memoria", memory=True, model=brain, db=memory_db)
     client = client_for([agent])
 
     for user_id in ("ana", "bruno"):
@@ -244,10 +245,10 @@ async def test_memoria_agentica_de_dois_usuarios_nao_se_mistura(
 
 
 async def test_run_recusado_nao_executa_a_tool_de_memoria(
-    memory_db: InMemoryDb, client_for: Callable[..., TestClient]
+    memory_db: SessionDb, client_for: Callable[..., TestClient]
 ) -> None:
     brain = _MemoryBrain(task="FATO-ANONIMO")
-    agent = await _agent("com-memoria", memory=True, model=brain)
+    agent = await _agent("com-memoria", memory=True, model=brain, db=memory_db)
     client = client_for([agent])
     before = _rows(memory_db)
 
@@ -262,7 +263,7 @@ async def test_run_recusado_nao_executa_a_tool_de_memoria(
 
 
 async def test_user_id_default_explicito_e_recusado_e_nao_le_a_memoria_legada(
-    memory_db: InMemoryDb, client_for: Callable[..., TestClient]
+    memory_db: SessionDb, client_for: Callable[..., TestClient]
 ) -> None:
     """``default`` é o usuário do fallback do agno 2.5.8 para memória sem ``user_id``: é onde cai o
     que escapa do guardrail (ex.: ``continue_run``, que não roda pre-hooks) e o que o próprio agno
@@ -270,7 +271,7 @@ async def test_user_id_default_explicito_e_recusado_e_nao_le_a_memoria_legada(
     reservado (só o literal exato; sem normalização, ``"Default"`` é outro usuário). O pool legado
     deste app, de antes do F1-06, é ``"ava"`` (ver README)."""
     brain = FakeChatModel(responses=["ok"] * 5)
-    agent = await _agent("com-memoria", memory=True, model=brain)
+    agent = await _agent("com-memoria", memory=True, model=brain, db=memory_db)
     client = client_for([agent])
     before = _rows(memory_db)
 
@@ -296,10 +297,10 @@ HOSTIL_IDS = {
 
 @pytest.mark.parametrize("user_id", list(HOSTIL_IDS.values()), ids=list(HOSTIL_IDS))
 async def test_user_id_hostil_ou_atipico_nao_le_a_memoria_de_outro_usuario(
-    user_id: str, memory_db: InMemoryDb, client_for: Callable[..., TestClient]
+    user_id: str, memory_db: SessionDb, client_for: Callable[..., TestClient]
 ) -> None:
     brain = FakeChatModel(responses=["ok"] * 5)
-    agent = await _agent("com-memoria", memory=True, model=brain)
+    agent = await _agent("com-memoria", memory=True, model=brain, db=memory_db)
     client = client_for([agent])
 
     body = _run(client, "/agents/com-memoria/runs", user_id=user_id)
@@ -309,11 +310,11 @@ async def test_user_id_hostil_ou_atipico_nao_le_a_memoria_de_outro_usuario(
 
 
 async def test_user_id_com_espacos_nas_pontas_e_outro_usuario_que_o_sem_espacos(
-    memory_db: InMemoryDb, client_for: Callable[..., TestClient]
+    memory_db: SessionDb, client_for: Callable[..., TestClient]
 ) -> None:
     """Registro: o valor não é normalizado (``" ana "`` != ``"ana"``). Isola, mas fragmenta a memória."""
     brain = FakeChatModel(responses=["ok"] * 5)
-    agent = await _agent("com-memoria", memory=True, model=brain)
+    agent = await _agent("com-memoria", memory=True, model=brain, db=memory_db)
     client = client_for([agent])
 
     _run(client, "/agents/com-memoria/runs", user_id=" ana ")
@@ -325,10 +326,10 @@ async def test_user_id_com_espacos_nas_pontas_e_outro_usuario_que_o_sem_espacos(
 
 @pytest.mark.parametrize("blank", ["\t", "\n", "\r\n", " \t\n ", "\u00a0", "\u3000", "\u2003"])
 async def test_user_id_so_com_espaco_unicode_e_recusado(
-    blank: str, memory_db: InMemoryDb, client_for: Callable[..., TestClient]
+    blank: str, memory_db: SessionDb, client_for: Callable[..., TestClient]
 ) -> None:
     brain = FakeChatModel(responses=["ok"] * 5)
-    agent = await _agent("com-memoria", memory=True, model=brain)
+    agent = await _agent("com-memoria", memory=True, model=brain, db=memory_db)
     client = client_for([agent])
 
     body = _run(client, "/agents/com-memoria/runs", user_id=blank)
@@ -339,13 +340,13 @@ async def test_user_id_so_com_espaco_unicode_e_recusado(
 
 @pytest.mark.parametrize("invisible", ["\u200b", "\ufeff", "\u2060", "\x00"])
 async def test_user_id_invisivel_e_recusado(
-    invisible: str, memory_db: InMemoryDb, client_for: Callable[..., TestClient]
+    invisible: str, memory_db: SessionDb, client_for: Callable[..., TestClient]
 ) -> None:
     """``str.strip`` não remove U+200B/U+FEFF/U+2060/NUL: sem a checagem de caractere visível, um
     cliente mandaria um "anônimo compartilhado" que parece vazio. O guardrail exige ao menos um
     caractere fora das categorias unicode de separador (Z*) e controle/formatação (C*)."""
     brain = FakeChatModel(responses=["ok"] * 5)
-    agent = await _agent("com-memoria", memory=True, model=brain)
+    agent = await _agent("com-memoria", memory=True, model=brain, db=memory_db)
     client = client_for([agent])
 
     body = _run(client, "/agents/com-memoria/runs", user_id=invisible)
@@ -358,10 +359,10 @@ async def test_user_id_invisivel_e_recusado(
 
 
 async def test_dois_user_ids_com_o_mesmo_session_id_nao_vazam_historico(
-    memory_db: InMemoryDb, client_for: Callable[..., TestClient]
+    memory_db: SessionDb, client_for: Callable[..., TestClient]
 ) -> None:
     brain = FakeChatModel(responses=["resposta-para-ana", "resposta-para-bruno", "resposta-2-ana"])
-    agent = await _agent("com-memoria", memory=True, model=brain)
+    agent = await _agent("com-memoria", memory=True, model=brain, db=memory_db)
     client = client_for([agent])
 
     def post(user_id: str, message: str) -> dict[str, Any]:
@@ -384,11 +385,11 @@ async def test_dois_user_ids_com_o_mesmo_session_id_nao_vazam_historico(
 
 
 async def test_sessao_de_um_usuario_nao_e_listada_nem_lida_pelo_outro(
-    memory_db: InMemoryDb, client_for: Callable[..., TestClient]
+    memory_db: SessionDb, client_for: Callable[..., TestClient]
 ) -> None:
     """Registro do que a chave run enxerga em /sessions: filtra por ``user_id`` se informado."""
     brain = FakeChatModel(responses=["ok"] * 5)
-    agent = await _agent("com-memoria", memory=True, model=brain)
+    agent = await _agent("com-memoria", memory=True, model=brain, db=memory_db)
     client = client_for([agent])
     _run(client, "/agents/com-memoria/runs", user_id="ana", session_id="s-ana", message="SEGREDO-DA-ANA-4711")
 
@@ -405,14 +406,14 @@ async def test_sessao_de_um_usuario_nao_e_listada_nem_lida_pelo_outro(
 
 @pytest.mark.parametrize("mode", ["coordinate", "route"])
 async def test_team_repassa_o_user_id_ao_membro_que_tem_memoria(
-    mode: str, memory_db: InMemoryDb, client_for: Callable[..., TestClient]
+    mode: str, memory_db: SessionDb, client_for: Callable[..., TestClient]
 ) -> None:
     member_model = FakeChatModel(responses=["membro-respondeu"] * 5)
-    member = await _agent("membro", memory=True, model=member_model)
+    member = await _agent("membro", memory=True, model=member_model, db=memory_db)
     team_model = FakeChatModel(
         responses=[_tool_call("delegate_task_to_member", {"member_id": "membro", "task": "diga o que sabe"}), "fim"]
     )
-    team = _team("time", [member], memory=False, model=team_model, mode=mode)
+    team = _team("time", [member], memory=False, model=team_model, mode=mode, db=memory_db)
     client = client_for([member], [team])
 
     body = _run(client, "/teams/time/runs", user_id="ana")
@@ -426,10 +427,10 @@ async def test_team_repassa_o_user_id_ao_membro_que_tem_memoria(
 
 
 async def test_team_sem_memoria_e_sem_membro_com_memoria_aceita_run_sem_user_id(
-    memory_db: InMemoryDb, client_for: Callable[..., TestClient]
+    memory_db: SessionDb, client_for: Callable[..., TestClient]
 ) -> None:
-    member = await _agent("membro", memory=False)
-    team = _team("time", [member], memory=False)
+    member = await _agent("membro", memory=False, db=memory_db)
+    team = _team("time", [member], memory=False, db=memory_db)
     client = client_for([member], [team])
 
     body = _run(client, "/teams/time/runs")
@@ -439,14 +440,14 @@ async def test_team_sem_memoria_e_sem_membro_com_memoria_aceita_run_sem_user_id(
 
 
 async def test_team_com_memoria_e_membro_com_memoria_cada_um_le_so_o_user_id_da_requisicao(
-    memory_db: InMemoryDb, client_for: Callable[..., TestClient]
+    memory_db: SessionDb, client_for: Callable[..., TestClient]
 ) -> None:
     member_model = FakeChatModel(responses=["membro-respondeu"] * 5)
-    member = await _agent("membro", memory=True, model=member_model)
+    member = await _agent("membro", memory=True, model=member_model, db=memory_db)
     team_model = FakeChatModel(
         responses=[_tool_call("delegate_task_to_member", {"member_id": "membro", "task": "diga"}), "fim"] * 3
     )
-    team = _team("time", [member], memory=True, model=team_model)
+    team = _team("time", [member], memory=True, model=team_model, db=memory_db)
     client = client_for([member], [team])
 
     body = _run(client, "/teams/time/runs", user_id="bruno")
@@ -458,10 +459,10 @@ async def test_team_com_memoria_e_membro_com_memoria_cada_um_le_so_o_user_id_da_
 
 
 async def test_team_recusa_run_sem_user_id_em_streaming(
-    memory_db: InMemoryDb, client_for: Callable[..., TestClient]
+    memory_db: SessionDb, client_for: Callable[..., TestClient]
 ) -> None:
-    member = await _agent("membro", memory=True)
-    team = _team("time", [member], memory=False)
+    member = await _agent("membro", memory=True, db=memory_db)
+    team = _team("time", [member], memory=False, db=memory_db)
     client = client_for([member], [team])
 
     response = client.post("/teams/time/runs", data={"message": "oi", "stream": "true"}, headers=RUN)
@@ -478,10 +479,10 @@ async def test_team_recusa_run_sem_user_id_em_streaming(
 
 @pytest.mark.parametrize("form", [{}, {"user_id": ""}, {"user_id": "   "}, {"user_id": "ana"}])
 async def test_agente_sem_memoria_aceita_qualquer_user_id_e_nao_le_memoria(
-    form: dict[str, str], memory_db: InMemoryDb, client_for: Callable[..., TestClient]
+    form: dict[str, str], memory_db: SessionDb, client_for: Callable[..., TestClient]
 ) -> None:
     brain = FakeChatModel(responses=["ok"] * 5)
-    agent = await _agent("sem-memoria", memory=False, summary=True, model=brain)
+    agent = await _agent("sem-memoria", memory=False, summary=True, model=brain, db=memory_db)
     client = client_for([agent])
     before = _rows(memory_db)
 
@@ -496,12 +497,12 @@ async def test_agente_sem_memoria_aceita_qualquer_user_id_e_nao_le_memoria(
 
 
 async def test_chave_run_lista_memorias_por_user_id_registro_de_risco(
-    memory_db: InMemoryDb, client_for: Callable[..., TestClient]
+    memory_db: SessionDb, client_for: Callable[..., TestClient]
 ) -> None:
     """Caracterização: a chave run (cliente final) lê as memórias de QUALQUER ``user_id`` em
     ``GET /memories?user_id=`` e, sem ``user_id``, as de TODOS. O ``user_id`` não é amarrado à
     credencial (modelo atual: confiado ao chamador). A admin lê igual."""
-    agent = await _agent("com-memoria", memory=True)
+    agent = await _agent("com-memoria", memory=True, db=memory_db)
     client = client_for([agent])
 
     for headers in (RUN, ADMIN):
@@ -513,11 +514,11 @@ async def test_chave_run_lista_memorias_por_user_id_registro_de_risco(
 
 
 async def test_chave_run_nao_apaga_memoria_mas_admin_apaga(
-    memory_db: InMemoryDb, client_for: Callable[..., TestClient]
+    memory_db: SessionDb, client_for: Callable[..., TestClient]
 ) -> None:
-    agent = await _agent("com-memoria", memory=True)
+    agent = await _agent("com-memoria", memory=True, db=memory_db)
     client = client_for([agent])
-    ana_id = next(m.memory_id for m in memory_db.get_user_memories() if m.user_id == "ana")  # type: ignore[union-attr]
+    ana_id = next(d["memory_id"] for d in collection(memory_db, "agno_memories").docs if d["user_id"] == "ana")
 
     assert client.delete(f"/memories/{ana_id}", params={"user_id": "ana"}, headers=RUN).status_code == 403
     assert ("ana", ANA) in _rows(memory_db)
@@ -529,12 +530,12 @@ async def test_chave_run_nao_apaga_memoria_mas_admin_apaga(
 
 
 async def test_chave_run_grava_memoria_em_nome_de_outro_user_id_registro_de_risco(
-    memory_db: InMemoryDb, client_for: Callable[..., TestClient]
+    memory_db: SessionDb, client_for: Callable[..., TestClient]
 ) -> None:
     """Caracterização: ``POST /memories`` é rota run (só DELETE é admin). Quem tem a chave run grava
     texto na memória de qualquer usuário, que depois entra no prompt dele."""
     brain = FakeChatModel(responses=["ok"] * 5)
-    agent = await _agent("com-memoria", memory=True, model=brain)
+    agent = await _agent("com-memoria", memory=True, model=brain, db=memory_db)
     client = client_for([agent])
 
     payload = {"memory": "INJETADA-VIA-REST", "user_id": "ana", "topics": []}
@@ -546,9 +547,9 @@ async def test_chave_run_grava_memoria_em_nome_de_outro_user_id_registro_de_risc
 
 
 async def test_chave_run_nao_cria_memoria_sem_user_id(
-    memory_db: InMemoryDb, client_for: Callable[..., TestClient]
+    memory_db: SessionDb, client_for: Callable[..., TestClient]
 ) -> None:
-    agent = await _agent("com-memoria", memory=True)
+    agent = await _agent("com-memoria", memory=True, db=memory_db)
     client = client_for([agent])
     before = _rows(memory_db)
 
@@ -559,12 +560,12 @@ async def test_chave_run_nao_cria_memoria_sem_user_id(
 
 
 async def test_chave_run_le_sessao_de_qualquer_usuario_sem_informar_user_id_registro_de_risco(
-    memory_db: InMemoryDb, client_for: Callable[..., TestClient]
+    memory_db: SessionDb, client_for: Callable[..., TestClient]
 ) -> None:
     """Caracterização: como em ``/memories``, ``GET /sessions/{id}/runs`` aceita a chave run e não
     amarra o ``user_id`` à credencial: quem sabe o ``session_id`` lê o histórico de outro usuário."""
     brain = FakeChatModel(responses=["ok"] * 5)
-    agent = await _agent("com-memoria", memory=True, model=brain)
+    agent = await _agent("com-memoria", memory=True, model=brain, db=memory_db)
     client = client_for([agent])
     _run(client, "/agents/com-memoria/runs", user_id="ana", session_id="s-ana", message="SEGREDO-DA-ANA-4711")
 

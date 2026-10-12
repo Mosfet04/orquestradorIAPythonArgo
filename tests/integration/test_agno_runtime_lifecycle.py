@@ -3,10 +3,10 @@
 Pilha real com só o Mongo (cliente motor e coleções de config) e o modelo falsos. Critérios:
 - os lifespans do AgentOS (``db_lifespan`` e ``http_client_lifespan`` do agno 2.5.8) rodam no
   startup e no shutdown do app (B15: com ``get_app()`` dentro do nosso lifespan, não rodavam);
-- o db de sessões de cada entidade é fechado uma vez no shutdown e o startup não provisiona
-  coleções (I/O síncrono no event loop);
-- shutdown fecha o runtime e o cliente Mongo do container uma vez, inclusive com falha parcial
-  de startup.
+- F2-08: agentes, teams e AgentOS dividem um db de sessões só (o ``SessionDb``, assíncrono); o
+  shutdown fecha o cliente dele uma vez e fora do event loop, e o startup não provisiona coleções;
+- shutdown fecha o runtime, o db de sessões e o cliente Mongo do container uma vez (nenhum ``close``
+  no event loop), inclusive com falha parcial de startup.
 """
 
 from __future__ import annotations
@@ -19,16 +19,16 @@ from typing import Any, ClassVar
 
 import agno.os.app as agno_os_app
 import pytest
-from agno.db.in_memory import InMemoryDb
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
 from src.infrastructure import dependency_injection as di
 from src.infrastructure.repositories import mongo_base
-from src.infrastructure.runtime.agno import agent_factory_service, team_factory_service
+from src.infrastructure.runtime.agno.session_db import SessionDb
 from src.infrastructure.web import app_factory
 from src.infrastructure.web.app_factory import AppFactory
-from tests.fakes import FakeChatModel, FakeMongoClient, FakeMongoCollection, RecordingLogger
+from tests.fakes import FakeChatModel, FakeMongoClient, FakeMongoCollection, RecordingLogger, running_on_event_loop
+from tests.fakes.session_db import session_db_client, session_docs, use_fake_session_db
 
 pytestmark = pytest.mark.usefixtures("offline_knowledge")
 
@@ -40,13 +40,14 @@ _ENV_CLEAR = (
 
 
 class _Motor:
-    """Cliente motor falso do container: ping ok, conta os ``close``."""
+    """Cliente motor falso do container: ping ok, conta os ``close`` (e os feitos no event loop)."""
 
     instances: ClassVar[list[_Motor]] = []
 
     def __init__(self, *_: object, **__: object) -> None:
         self.admin = self
         self.closes = 0
+        self.closes_on_event_loop = 0
         _Motor.instances.append(self)
 
     async def command(self, *_: object) -> dict[str, int]:
@@ -54,6 +55,7 @@ class _Motor:
 
     def close(self) -> None:
         self.closes += 1
+        self.closes_on_event_loop += running_on_event_loop()
 
 
 class _Collection(FakeMongoCollection):
@@ -61,26 +63,16 @@ class _Collection(FakeMongoCollection):
         return "idx"
 
 
-class SpyDb(InMemoryDb):
-    """Db de sessões de uma entidade: conta provisionamento e fechamento."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.provisioned = 0
-        self.closes = 0
-
-    def _create_all_tables(self) -> None:
-        self.provisioned += 1
-
-    def close(self) -> None:
-        self.closes += 1
-
-
 @dataclass
 class Spy:
     events: list[str] = field(default_factory=list)
-    dbs: list[SpyDb] = field(default_factory=list)
+    dbs: list[SessionDb] = field(default_factory=list)
+    """Dbs de sessões criados pelo composition root (o ``SessionDb`` real sobre o cliente em memória)."""
     logger: RecordingLogger = field(default_factory=RecordingLogger)
+
+    def session_client_closes(self) -> list[list[bool]]:
+        """Por db de sessões: um item por ``close`` do cliente (``True`` = rodou no event loop)."""
+        return [session_db_client(db).closes for db in self.dbs]
 
 
 def _agent(agent_id: str) -> dict[str, Any]:
@@ -117,13 +109,7 @@ def spy(monkeypatch: pytest.MonkeyPatch) -> Spy:
     monkeypatch.setattr(app_factory, "setup_telemetry", lambda config: None)
     monkeypatch.setattr(app_factory, "shutdown_telemetry", lambda: None)
 
-    def new_db(**_: object) -> SpyDb:
-        db = SpyDb()
-        result.dbs.append(db)
-        return db
-
-    monkeypatch.setattr(agent_factory_service, "MongoAgentDb", new_db)
-    monkeypatch.setattr(team_factory_service, "MongoAgentDb", new_db)
+    result.dbs = use_fake_session_db(monkeypatch)
     monkeypatch.setattr(
         di.ProviderRegistry,
         "create_model",
@@ -170,14 +156,45 @@ def test_lifespans_do_agentos_rodam_no_startup_e_no_shutdown_do_app(spy: Spy, ap
     assert app.router.lifespan_context is own_lifespan
 
 
-def test_shutdown_fecha_o_db_de_cada_entidade_uma_vez_e_o_startup_nao_provisiona(spy: Spy, app: FastAPI) -> None:
+def test_agentes_teams_e_agentos_dividem_um_db_de_sessoes(spy: Spy, app: FastAPI) -> None:
+    form = {"message": "oi", "stream": "false", "user_id": "ana"}
+    with TestClient(app, **LOCAL) as http:  # type: ignore[arg-type]
+        config = http.get("/config").json()
+        agent_run = http.post("/agents/a1/runs", data={**form, "session_id": "s-agente"})
+        team_run = http.post("/teams/t1/runs", data={**form, "session_id": "s-team"})
+        listed = {
+            kind: [item["session_id"] for item in http.get("/sessions", params={"type": kind}).json()["data"]]
+            for kind in ("agent", "team")
+        }
+
+    assert (agent_run.status_code, team_run.status_code) == (200, 200)
+    assert (agent_run.json()["status"], team_run.json()["status"]) == ("COMPLETED", "COMPLETED")
+    # Dois agentes e um team: o composition root criou um db de sessões só, e é ele o do AgentOS.
+    assert len(spy.dbs) == 1
+    db = spy.dbs[0]
+    assert (config["os_database"], config["databases"]) == (db.id, [db.id])
+    # O agente e o team gravaram no mesmo banco, e as rotas do AgentOS leem dele.
+    assert sorted((d["session_id"], d["session_type"], d["user_id"]) for d in session_docs(db)) == [
+        ("s-agente", "agent", "ana"),
+        ("s-team", "team", "ana"),
+    ]
+    assert listed == {"agent": ["s-agente"], "team": ["s-team"]}
+
+
+def test_shutdown_fecha_o_cliente_do_db_de_sessoes_uma_vez_fora_do_event_loop_e_o_startup_nao_provisiona(
+    spy: Spy, app: FastAPI
+) -> None:
     with TestClient(app, **LOCAL) as http:  # type: ignore[arg-type]
         assert sorted(a["id"] for a in http.get("/agents").json()) == ["a1", "a2"]
         assert [t["id"] for t in http.get("/teams").json()] == ["t1"]
-        assert [db.closes for db in spy.dbs] == [0, 0, 0]
+        assert spy.session_client_closes() == [[]]
+        # Sem provisionamento: o startup não tocou em nenhuma coleção do db de sessões.
+        assert session_db_client(spy.dbs[0]).databases == {}
 
-    assert [(db.provisioned, db.closes) for db in spy.dbs] == [(0, 1), (0, 1), (0, 1)]
-    assert [m.closes for m in _Motor.instances] == [1]
+    # Um cliente (não um por entidade), fechado uma vez e numa thread: o AgentOS e o container
+    # pedem o close, e só o primeiro fecha. O cliente do container também fecha fora do loop.
+    assert spy.session_client_closes() == [[False]]
+    assert [(m.closes, m.closes_on_event_loop) for m in _Motor.instances] == [(1, 0)]
 
 
 def test_falha_ao_carregar_entidades_fecha_o_cliente_mongo_uma_vez(
@@ -193,7 +210,8 @@ def test_falha_ao_carregar_entidades_fecha_o_cliente_mongo_uma_vez(
             pass  # pragma: no cover - o startup não completa
 
     assert spy.events == []  # nada montado, nada a fechar no runtime
-    assert [m.closes for m in _Motor.instances] == [1]
+    assert [(m.closes, m.closes_on_event_loop) for m in _Motor.instances] == [(1, 0)]
+    assert spy.session_client_closes() == [[False]]  # o container fecha o db que criou
 
 
 def test_falha_num_lifespan_do_agentos_recusa_o_startup_e_fecha_o_cliente_mongo_uma_vez(
@@ -211,8 +229,9 @@ def test_falha_num_lifespan_do_agentos_recusa_o_startup_e_fecha_o_cliente_mongo_
         with TestClient(app, **LOCAL):  # type: ignore[arg-type]
             pass  # pragma: no cover - o startup não completa
 
-    # O startup falha como no AgentOS; o lifespan combinado do agno desfaz os já abertos (o
-    # db_lifespan do agno 2.5.8 não tem try/finally: o fechamento dos dbs fica para o fim do
-    # processo, que sai com o startup recusado). O cliente Mongo do container fecha uma vez.
+    # O startup falha como no AgentOS; o db_lifespan do agno 2.5.8 não tem try/finally e não chega
+    # a fechar o db, mas o container fecha o db de sessões que criou (F2-08) e o cliente Mongo dele,
+    # uma vez cada e fora do event loop.
     assert spy.events == ["db:start", "http:start"]
-    assert [m.closes for m in _Motor.instances] == [1]
+    assert [(m.closes, m.closes_on_event_loop) for m in _Motor.instances] == [(1, 0)]
+    assert spy.session_client_closes() == [[False]]

@@ -11,6 +11,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from agno.agent import Agent
+from agno.db.base import AsyncBaseDb
 from agno.team import Team
 from fastapi import FastAPI
 from starlette.testclient import TestClient
@@ -37,34 +38,50 @@ def loopback_client(app: ASGIApp, **kwargs: Any) -> TestClient:
     return TestClient(app, **kwargs)
 
 
-def agno_runtime() -> AgnoRuntime:
+def agno_runtime(session_db: AsyncBaseDb | None = None) -> AgnoRuntime:
     """``AgnoRuntime`` real com fábricas de modelo, embedder e tools falsas (construtores sem I/O).
 
-    Para montar entidades já criadas pelo teste: ``mount`` não usa as fábricas.
+    Para montar entidades já criadas pelo teste: ``mount`` não usa as fábricas. ``session_db`` é o
+    ``db=`` do AgentOS (em produção, o db das entidades); sem ele o AgentOS sobe sem db, como as
+    entidades do teste.
     """
     logger = RecordingLogger()
     models = FakeModelFactory()
+    db = session_db
     return AgnoRuntime(
         agent_factory=AgentFactoryService(
             db_url=_RUNTIME_DB_URL,
+            session_db=db,
             logger=logger,
             model_factory=models,
             embedder_factory=FakeEmbedderFactory(),
             tool_factory=HttpToolFactory(logger=logger),
             tool_repository=InMemoryToolRepository(),
         ),
-        team_factory=TeamFactoryService(db_url=_RUNTIME_DB_URL, logger=logger, model_factory=models),
+        team_factory=TeamFactoryService(session_db=db, logger=logger, model_factory=models),
+        session_db=db,
     )
 
 
 def mount_agent_os(
-    factory: AppFactory, app: FastAPI, agents: Sequence[Agent | Any], teams: Sequence[Team | Any]
+    factory: AppFactory,
+    app: FastAPI,
+    agents: Sequence[Agent | Any],
+    teams: Sequence[Team | Any],
+    *,
+    session_db: AsyncBaseDb | None = None,
 ) -> AgnoRuntime:
     """O passo de montagem do lifespan (``AppFactory._mount_runtime``) sem Mongo nem container.
 
     Monta só as rotas (os lifespans do AgentOS ficam para ``runtime.start()``, que o lifespan do
-    app chama); devolve o runtime para quem quiser abri-los ou fechá-los.
+    app chama); devolve o runtime para quem quiser abri-los ou fechá-los. O ``db=`` do AgentOS é
+    ``session_db``; sem ele, o db (assíncrono) da primeira entidade que tiver um, como em produção,
+    onde é o mesmo objeto. Sem nenhum, o AgentOS sobe sem db (``/schedules`` e ``/approvals`` ficam
+    stubs e nenhuma entidade ganha persistência): quem testa a tabela de rotas de produção passa um
+    ``fake_session_db()``.
     """
-    runtime = agno_runtime()
+    if session_db is None:
+        session_db = next((e.db for e in (*agents, *teams) if isinstance(getattr(e, "db", None), AsyncBaseDb)), None)
+    runtime = agno_runtime(session_db)
     factory._mount_runtime(app, runtime, agents, teams)
     return runtime

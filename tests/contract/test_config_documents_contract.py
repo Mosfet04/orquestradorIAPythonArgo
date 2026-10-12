@@ -8,78 +8,28 @@ tipo do erro, nunca o conteúdo; os válidos carregam. Só ``active: true`` (boo
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any
-
 import pytest
 
-from tests.fakes.config_stores import DOCUMENT_BACKENDS, MongoBackend, YamlBackend, document_backend
+from tests.fakes.config_stores import (
+    MARKER,
+    NOT_A_LIST,
+    NOT_TEXT_ITEMS,
+    MongoBackend,
+    YamlBackend,
+    logged_errors,
+    marked_agent_doc,
+    marked_team_doc,
+    marked_tool_doc,
+)
 from tests.fakes.logger import RecordingLogger
 
-MARKER = "SEGREDO-QUE-NAO-PODE-IR-AO-LOG"
 LOCATION_KEY = {"mongo": "mongo_id", "yaml": "position"}
-
-
-@pytest.fixture(params=DOCUMENT_BACKENDS)
-def backend(
-    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> MongoBackend | YamlBackend:
-    return document_backend(request.param, monkeypatch, tmp_path)
-
-
-def _agent(agent_id: Any = "ok", **overrides: Any) -> dict[str, Any]:
-    doc: dict[str, Any] = {
-        "id": agent_id,
-        "nome": "Agente",
-        "factoryIaModel": "ollama",
-        "model": "m",
-        "descricao": "d",
-        "prompt": [MARKER],
-        "tools_ids": [],
-        "rag_config": {"active": False},
-        "active": True,
-    }
-    doc.update(overrides)
-    return doc
-
-
-def _team(team_id: Any = "time", **overrides: Any) -> dict[str, Any]:
-    doc: dict[str, Any] = {
-        "id": team_id,
-        "nome": "Time",
-        "factoryIaModel": "ollama",
-        "model": "m",
-        "prompt": MARKER,
-        "member_ids": ["ok"],
-        "mode": "route",
-        "active": True,
-    }
-    doc.update(overrides)
-    return doc
-
-
-def _tool(tool_id: Any = "t", **overrides: Any) -> dict[str, Any]:
-    doc: dict[str, Any] = {
-        "id": tool_id,
-        "name": "Tool",
-        "description": MARKER,
-        "route": "https://api.example/x",
-        "http_method": "GET",
-        "parameters": [],
-        "active": True,
-    }
-    doc.update(overrides)
-    return doc
-
-
-def _errors(logger: RecordingLogger) -> list[tuple[str, dict[str, Any]]]:
-    return [(r.message, r.context) for r in logger.records if r.level == "error"]
 
 
 def _assert_invalid_logged(
     logger: RecordingLogger, backend: MongoBackend | YamlBackend, message: str, id_field: str, ids: list[str | None]
 ) -> None:
-    errors = _errors(logger)
+    errors = logged_errors(logger)
     assert [m for m, _ in errors] == [message] * len(ids)
     assert [ctx[id_field] for _, ctx in errors] == ids
     for _, ctx in errors:
@@ -91,12 +41,12 @@ def _assert_invalid_logged(
 async def test_agente_invalido_isolado_e_os_validos_carregam(backend):
     logger = RecordingLogger()
     docs = [
-        _agent("antes"),
-        {k: v for k, v in _agent().items() if k != "id"},
-        _agent(123),
-        _agent("sem-nome", nome=""),
-        _agent("rag-estrategia", rag_config={"active": True, "search_strategy": "vetorial"}),
-        _agent("depois"),
+        marked_agent_doc("antes"),
+        {k: v for k, v in marked_agent_doc().items() if k != "id"},
+        marked_agent_doc(123),
+        marked_agent_doc("sem-nome", nome=""),
+        marked_agent_doc("rag-estrategia", rag_config={"active": True, "search_strategy": "vetorial"}),
+        marked_agent_doc("depois"),
     ]
     repo = backend.agents(docs, logger)
 
@@ -109,11 +59,11 @@ async def test_agente_invalido_isolado_e_os_validos_carregam(backend):
 async def test_team_invalido_isolado_e_os_validos_carregam(backend):
     logger = RecordingLogger()
     docs = [
-        _team("antes"),
-        _team(["lista"]),
-        _team("modo", mode="aleatorio"),
-        _team("sem-membros", member_ids=[]),
-        _team("depois"),
+        marked_team_doc("antes"),
+        marked_team_doc(["lista"]),
+        marked_team_doc("modo", mode="aleatorio"),
+        marked_team_doc("sem-membros", member_ids=[]),
+        marked_team_doc("depois"),
     ]
     repo = backend.teams(docs, logger)
 
@@ -126,7 +76,12 @@ async def test_team_invalido_isolado_e_os_validos_carregam(backend):
 @pytest.mark.parametrize("method", ["by_ids", "all_active"])
 async def test_tool_invalida_isolada_e_as_validas_carregam(backend, method):
     logger = RecordingLogger()
-    docs = [_tool("antes"), _tool("sem-rota", route=""), _tool("metodo", http_method="TRACE"), _tool("depois")]
+    docs = [
+        marked_tool_doc("antes"),
+        marked_tool_doc("sem-rota", route=""),
+        marked_tool_doc("metodo", http_method="TRACE"),
+        marked_tool_doc("depois"),
+    ]
     repo = backend.tools(docs, logger)
 
     if method == "by_ids":
@@ -140,18 +95,18 @@ async def test_tool_invalida_isolada_e_as_validas_carregam(backend, method):
 
 async def test_tool_com_id_repetido_fica_com_a_primeira_e_loga_a_repetida(backend):
     logger = RecordingLogger()
-    repo = backend.tools([_tool("dup", name="primeira"), _tool("dup", name="segunda")], logger)
+    repo = backend.tools([marked_tool_doc("dup", name="primeira"), marked_tool_doc("dup", name="segunda")], logger)
 
     assert [t.name for t in await repo.get_tools_by_ids(["dup"])] == ["primeira"]
-    assert _errors(logger) == [("Tool com id repetido ignorada", {"tool_id": "dup"})]
+    assert logged_errors(logger) == [("Tool com id repetido ignorada", {"tool_id": "dup"})]
 
 
 @pytest.mark.parametrize("active", [False, "true", 1, None], ids=["false", "texto", "numero", "nulo"])
 async def test_so_active_true_booleano_entra_nas_listagens(backend, active):
     """Como a consulta ``{"active": True}`` do Mongo (BSON: ``1`` e ``"true"`` não casam com ``true``)."""
-    agents = backend.agents([_agent("sim"), _agent("nao", active=active)])
-    teams = backend.teams([_team("sim"), _team("nao", active=active)])
-    tools = backend.tools([_tool("sim"), _tool("nao", active=active)])
+    agents = backend.agents([marked_agent_doc("sim"), marked_agent_doc("nao", active=active)])
+    teams = backend.teams([marked_team_doc("sim"), marked_team_doc("nao", active=active)])
+    tools = backend.tools([marked_tool_doc("sim"), marked_tool_doc("nao", active=active)])
 
     assert [c.id for c in await agents.get_active_agents()] == ["sim"]
     assert [c.id for c in await teams.get_active_teams()] == ["sim"]
@@ -160,7 +115,7 @@ async def test_so_active_true_booleano_entra_nas_listagens(backend, active):
 
 
 async def test_documento_sem_active_nao_entra_na_listagem_mas_e_achado_por_id(backend):
-    doc = {k: v for k, v in _agent("sem-active").items() if k != "active"}
+    doc = {k: v for k, v in marked_agent_doc("sem-active").items() if k != "active"}
     repo = backend.agents([doc])
 
     assert await repo.get_active_agents() == []
@@ -168,13 +123,13 @@ async def test_documento_sem_active_nao_entra_na_listagem_mas_e_achado_por_id(ba
 
 
 async def test_formato_legado_camel_case_vira_a_mesma_entidade(backend):
-    legacy_team = {k: v for k, v in _team("legado").items() if k != "member_ids"} | {
+    legacy_team = {k: v for k, v in marked_team_doc("legado").items() if k != "member_ids"} | {
         "memberIds": ["a", "b"],
         "userMemoryActive": False,
         "summaryActive": True,
     }
     teams = backend.teams([legacy_team])
-    agents = backend.agents([_agent("legado", factoryIaModel="openai", prompt=["l1", "l2"])])
+    agents = backend.agents([marked_agent_doc("legado", factoryIaModel="openai", prompt=["l1", "l2"])])
 
     (team,) = await teams.get_active_teams()
     (agent,) = await agents.get_active_agents()
@@ -185,7 +140,7 @@ async def test_formato_legado_camel_case_vira_a_mesma_entidade(backend):
 
 async def test_campos_novos_em_camel_case_sao_ignorados_com_aviso_sem_valores(backend):
     logger = RecordingLogger()
-    repo = backend.agents([_agent("camel", apiKeyRef=f"env:{MARKER}", baseUrl=MARKER)], logger)
+    repo = backend.agents([marked_agent_doc("camel", apiKeyRef=f"env:{MARKER}", baseUrl=MARKER)], logger)
 
     (config,) = await repo.get_active_agents()
 
@@ -203,7 +158,7 @@ async def test_campos_novos_em_camel_case_sao_ignorados_com_aviso_sem_valores(ba
 
 async def test_busca_por_id_de_documento_invalido_levanta_erro_de_validacao(backend):
     """Na busca por id não há lista para isolar: o erro de validação sobe (sem o conteúdo)."""
-    repo = backend.agents([_agent("ruim", nome="")])
+    repo = backend.agents([marked_agent_doc("ruim", nome="")])
 
     with pytest.raises(ValueError, match="Nome do agente") as exc_info:
         await repo.get_agent_by_id("ruim")
@@ -214,8 +169,6 @@ async def test_busca_por_id_de_documento_invalido_levanta_erro_de_validacao(back
 # ── tipos aceitos em silêncio antes (QA do F2-06): listas de id e campos HTTP da tool ──
 
 
-NOT_A_LIST = "Lista de ids que não é lista ignorada"
-NOT_TEXT_ITEMS = "Itens que não são texto ignorados na lista de ids"
 
 
 @pytest.mark.parametrize(
@@ -226,10 +179,10 @@ NOT_TEXT_ITEMS = "Itens que não são texto ignorados na lista de ids"
 async def test_tools_ids_que_nao_e_lista_sobe_o_agente_sem_tools_com_log(backend, tools_ids, value_type):
     """Documento que já existia com ``tools_ids`` sujo continua carregando (degradado), nos dois backends."""
     logger = RecordingLogger()
-    repo = backend.agents([_agent("sujo", tools_ids=tools_ids), _agent("bom")], logger)
+    repo = backend.agents([marked_agent_doc("sujo", tools_ids=tools_ids), marked_agent_doc("bom")], logger)
 
     assert [(c.id, c.tools_ids) for c in await repo.get_active_agents()] == [("sujo", []), ("bom", [])]
-    assert _errors(logger) == [(NOT_A_LIST, {"agent_id": "sujo", "field": "tools_ids", "value_type": value_type})]
+    assert logged_errors(logger) == [(NOT_A_LIST, {"agent_id": "sujo", "field": "tools_ids", "value_type": value_type})]
     assert all(MARKER not in repr(r) for r in logger.records)
 
 
@@ -245,10 +198,10 @@ async def test_tools_ids_que_nao_e_lista_sobe_o_agente_sem_tools_com_log(backend
 )
 async def test_itens_de_tools_ids_que_nao_sao_texto_sao_descartados_com_um_log(backend, tools_ids, kept, dropped):
     logger = RecordingLogger()
-    repo = backend.agents([_agent("sujo", tools_ids=tools_ids)], logger)
+    repo = backend.agents([marked_agent_doc("sujo", tools_ids=tools_ids)], logger)
 
     assert [(c.id, c.tools_ids) for c in await repo.get_active_agents()] == [("sujo", kept)]
-    assert _errors(logger) == [
+    assert logged_errors(logger) == [
         (
             NOT_TEXT_ITEMS,
             {"agent_id": "sujo", "field": "tools_ids", "dropped_count": len(dropped), "item_positions": dropped},
@@ -261,10 +214,10 @@ async def test_lista_de_ids_com_muitos_itens_sujos_gera_um_log_so_com_as_primeir
     """Um log por campo por documento, com teto de posições: lista enorme não vira enxurrada de log."""
     logger = RecordingLogger()
     tools_ids = ["a", *range(500), "b"]
-    repo = backend.agents([_agent("sujo", tools_ids=tools_ids)], logger)
+    repo = backend.agents([marked_agent_doc("sujo", tools_ids=tools_ids)], logger)
 
     assert [(c.id, c.tools_ids) for c in await repo.get_active_agents()] == [("sujo", ["a", "b"])]
-    assert _errors(logger) == [
+    assert logged_errors(logger) == [
         (
             NOT_TEXT_ITEMS,
             {"agent_id": "sujo", "field": "tools_ids", "dropped_count": 500, "item_positions": list(range(2, 12))},
@@ -274,18 +227,18 @@ async def test_lista_de_ids_com_muitos_itens_sujos_gera_um_log_so_com_as_primeir
 
 async def test_busca_por_id_de_agente_com_tools_ids_sujo_devolve_o_agente_degradado(backend):
     logger = RecordingLogger()
-    repo = backend.agents([_agent("sujo", tools_ids=["a", 1])], logger)
+    repo = backend.agents([marked_agent_doc("sujo", tools_ids=["a", 1])], logger)
 
     assert (await repo.get_agent_by_id("sujo")).tools_ids == ["a"]
-    assert _errors(logger) == [
+    assert logged_errors(logger) == [
         (NOT_TEXT_ITEMS, {"agent_id": "sujo", "field": "tools_ids", "dropped_count": 1, "item_positions": [2]})
     ]
 
 
 async def test_tools_ids_nulo_ou_ausente_continua_valido(backend):
     logger = RecordingLogger()
-    without = {k: v for k, v in _agent("ausente").items() if k != "tools_ids"}
-    repo = backend.agents([_agent("nulo", tools_ids=None), without], logger)
+    without = {k: v for k, v in marked_agent_doc("ausente").items() if k != "tools_ids"}
+    repo = backend.agents([marked_agent_doc("nulo", tools_ids=None), without], logger)
 
     assert [(c.id, c.tools_ids) for c in await repo.get_active_agents()] == [("nulo", None), ("ausente", [])]
     assert logger.records == []
@@ -294,11 +247,12 @@ async def test_tools_ids_nulo_ou_ausente_continua_valido(backend):
 async def test_itens_de_member_ids_que_nao_sao_texto_sao_descartados_e_o_team_sobe_com_os_demais(backend):
     """O log cita a chave efetivamente lida (``member_ids`` ou o legado ``memberIds``)."""
     logger = RecordingLogger()
-    legacy = {k: v for k, v in _team("legado").items() if k != "member_ids"} | {"memberIds": [{"a": MARKER}, "b"]}
-    repo = backend.teams([_team("sujo", member_ids=["a", 3, "b", None]), legacy], logger)
+    legacy = {k: v for k, v in marked_team_doc("legado").items() if k != "member_ids"}
+    legacy |= {"memberIds": [{"a": MARKER}, "b"]}
+    repo = backend.teams([marked_team_doc("sujo", member_ids=["a", 3, "b", None]), legacy], logger)
 
     assert [(c.id, c.member_ids) for c in await repo.get_active_teams()] == [("sujo", ["a", "b"]), ("legado", ["b"])]
-    assert _errors(logger) == [
+    assert logged_errors(logger) == [
         (NOT_TEXT_ITEMS, {"team_id": "sujo", "field": "member_ids", "dropped_count": 2, "item_positions": [2, 4]}),
         (NOT_TEXT_ITEMS, {"team_id": "legado", "field": "memberIds", "dropped_count": 1, "item_positions": [1]}),
     ]
@@ -317,11 +271,11 @@ async def test_itens_de_member_ids_que_nao_sao_texto_sao_descartados_e_o_team_so
 async def test_member_ids_sem_nenhum_id_de_texto_continua_invalidando_o_team(backend, member_ids, cleanup_log):
     """A limpeza não muda a regra do team: sem membro válido, documento inválido (isolado)."""
     logger = RecordingLogger()
-    repo = backend.teams([_team("ruim", member_ids=member_ids), _team("bom")], logger)
+    repo = backend.teams([marked_team_doc("ruim", member_ids=member_ids), marked_team_doc("bom")], logger)
 
     assert [c.id for c in await repo.get_active_teams()] == ["bom"]
     message, context = cleanup_log
-    errors = _errors(logger)
+    errors = logged_errors(logger)
     assert errors[0] == (message, {"team_id": "ruim", **context})
     assert [(m, ctx["team_id"], ctx["error_type"]) for m, ctx in errors[1:]] == [
         ("Documento de team inválido ignorado", "ruim", "ValueError")
@@ -346,7 +300,8 @@ async def test_member_ids_sem_nenhum_id_de_texto_continua_invalidando_o_team(bac
 )
 async def test_route_ou_headers_fora_do_tipo_invalida_a_tool(backend, overrides):
     logger = RecordingLogger()
-    repo = backend.tools([_tool("ruim", **overrides), _tool("boa", headers={"Accept": "application/json"})], logger)
+    docs = [marked_tool_doc("ruim", **overrides), marked_tool_doc("boa", headers={"Accept": "application/json"})]
+    repo = backend.tools(docs, logger)
 
     tools = await repo.get_all_active_tools()
 

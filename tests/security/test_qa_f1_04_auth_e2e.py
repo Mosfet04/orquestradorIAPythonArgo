@@ -26,6 +26,7 @@ from src.infrastructure.runtime.agno import AgnoRuntime
 from src.infrastructure.web.api_key_auth import RouteAccess, classify_route
 from src.infrastructure.web.app_factory import AppFactory
 from tests.fakes import FakeChatModel, loopback_client
+from tests.fakes.session_db import fake_session_db
 from tests.fakes.web import agno_runtime, mount_agent_os
 
 ALL_INTERFACES = "0.0.0" + ".0"  # bind recusado sem chaves: é o cenário sob teste
@@ -70,7 +71,7 @@ def _make_app(mp: pytest.MonkeyPatch, entities: tuple[Agent, Team] | None, **env
     app = factory.create_app()
     if entities is not None:
         agent, team = entities
-        mount_agent_os(factory, app, [agent], [team])
+        mount_agent_os(factory, app, [agent], [team], session_db=fake_session_db())
     return app
 
 
@@ -209,7 +210,7 @@ def test_modelo_nao_e_chamado_quando_a_auth_recusa(monkeypatch: pytest.MonkeyPat
     agent, team = _entities()
     factory = AppFactory()
     app = factory.create_app()
-    mount_agent_os(factory, app, [agent], [team])
+    mount_agent_os(factory, app, [agent], [team], session_db=fake_session_db())
     client = TestClient(app, raise_server_exceptions=False)
 
     client.post("/agents/agente-1/runs", data={"message": "oi", "stream": "false"})
@@ -257,7 +258,7 @@ def sweep_apps() -> dict[str, FastAPI]:
             factory = AppFactory()
             app = factory.create_app()
             agent, team = _entities()
-            mount_agent_os(factory, app, [agent], [team])
+            mount_agent_os(factory, app, [agent], [team], session_db=fake_session_db())
             apps[label] = app
     return apps
 
@@ -306,12 +307,15 @@ def test_varredura_toda_rota_real_respeita_a_classe(sweep_apps: dict[str, FastAP
         ("GET", "/admin/health", {200}),
         ("POST", "/admin/refresh-cache", {200}),
         ("GET", "/metrics/cache", {200}),
-        ("POST", "/databases/all/migrate", {200}),
+        # F2-08: o AgentOS tem o db de sessões (db=). O migrate do agno 2.5.8 não funciona com Mongo
+        # (get_latest_schema_version sem table_name, no MongoDb síncrono também): 207 com a falha.
+        ("POST", "/databases/all/migrate", {207}),
         ("GET", "/registry", {200}),
-        ("GET", "/components", {503}),  # AgentOS sem db: stub 503 (e não 401/403)
+        ("GET", "/components", {503}),  # db assíncrono: /components segue stub 503 (e não 401/403)
+        # Rotas reais desde o F2-08; o Mongo do agno 2.5.8 não implementa agenda nem aprovações (503).
         ("GET", "/schedules", {503}),
         ("GET", "/approvals", {503}),  # F2-05: decisão sobre run de outro usuário é do operador
-        ("POST", "/approvals/qualquer/resolve", {503}),
+        ("POST", "/approvals/qualquer/resolve", {422}),  # rota real: o corpo é obrigatório
         ("POST", "/optimize-memories", {422}),
         ("POST", "/knowledge/search", {422}),
         ("POST", "/knowledge/content", {400, 422}),

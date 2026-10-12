@@ -164,7 +164,8 @@ def test_startup_real_run_rest_e_agui_com_chave_e_sigterm_gracioso(spawn: Callab
         agui = http.post("/agui/a1", json=AGUI_BODY, headers=RUN_AUTH)
         assert agui.status_code == 200
         assert "RUN_FINISHED" in agui.text and "resposta do modelo" in agui.text
-        # Stubs 503 sem db= e /approvals* só admin (F2-05).
+        # /approvals* só admin (F2-05). Com db= (F2-08) a rota é a real e responde 503 porque o Mongo
+        # do agno 2.5.8 não implementa aprovações; /components segue stub 503 (db assíncrono).
         assert http.get("/approvals", headers=RUN_AUTH).status_code == 403
         assert http.get("/approvals", headers=ADMIN_AUTH).status_code == 503
         assert http.get("/components", headers=ADMIN_AUTH).status_code == 503
@@ -172,11 +173,13 @@ def test_startup_real_run_rest_e_agui_com_chave_e_sigterm_gracioso(spawn: Callab
     child.process.send_signal(signal.SIGTERM)
     child.assert_graceful_exit()
     events = child.events()
-    assert events[:2] == ["db:start", "http:start"]
+    # Um db de sessões para o agente e o team (F2-08), criado no wiring, antes dos lifespans do agno.
+    assert events[:3] == ["db:created", "db:start", "http:start"]
     # Shutdown em ordem: flush da telemetria (antes do fechamento que pode demorar), runtime (lifespans
-    # do agno: http, dbs), cliente Mongo; cada um uma vez.
+    # do agno: http, db de sessões), cliente Mongo; cada um uma vez. O db de sessões tem um cliente só
+    # (antes, um por entidade) e nenhum close roda no event loop (seria "db:close:on-loop").
     assert events[events.index("telemetry:shutdown"):] == [
-        "telemetry:shutdown", "runtime:close", "http:stop", "db:close", "db:close", "db:stop", "motor:close",
+        "telemetry:shutdown", "runtime:close", "http:stop", "db:close", "db:stop", "motor:close",
     ]
     assert "db:provisioned" not in events
     _assert_clean_log(child)
@@ -229,7 +232,18 @@ def test_sigterm_com_run_agui_em_streaming_conclui_o_stream_e_fecha_uma_vez(spaw
     _assert_clean_log(child)
 
 
-def test_sigterm_com_timeout_gracioso_menor_que_o_run_ainda_fecha_uma_vez(spawn: Callable[..., Child]) -> None:
+def test_sigterm_com_timeout_gracioso_menor_que_o_run_responde_500_ao_run_cortado_e_fecha_uma_vez(
+    spawn: Callable[..., Child],
+) -> None:
+    """SIGTERM com um run de 8 s em andamento e ``timeout_graceful_shutdown`` de 1 s.
+
+    O uvicorn cancela a task do request e segue para o shutdown. Desde o F2-08 os ``close`` (db de
+    sessões e cliente Mongo) rodam fora do event loop, então o shutdown cede o loop e a task
+    cancelada termina antes da saída: o cliente recebe **HTTP 500** e o uvicorn loga a exceção ASGI
+    do cancelamento. Antes (closes síncronos no loop) o processo saía sem rodar a task: a conexão
+    caía sem resposta e nada era logado. Decisão do usuário no F2-08: aceitar o 500 (uma resposta
+    HTTP em vez de reset) para não voltar a ter I/O síncrono no loop no shutdown.
+    """
     child = spawn("--run-delay", "8", "--graceful-timeout", "1")
     child.wait_ready()
     result: dict[str, object] = {}
@@ -252,10 +266,17 @@ def test_sigterm_com_timeout_gracioso_menor_que_o_run_ainda_fecha_uma_vez(spawn:
     worker.join(timeout=30)
 
     assert time.monotonic() - started < 7  # não esperou o run de 8 s
+    response = result["r"]
+    assert isinstance(response, httpx.Response), type(response).__name__  # resposta HTTP, não reset
+    assert response.status_code == 500
     events = child.events()
-    assert [events.count(n) for n in ("runtime:close", "telemetry:shutdown", "motor:close")] == [1, 1, 1]
-    assert not [m for m in ("Exception in ASGI application", "Task exception was never retrieved")
-                if m in child.non_event_log()], child.non_event_log()
+    assert [events.count(n) for n in ("runtime:close", "telemetry:shutdown", "motor:close", "db:close")] == [1, 1, 1, 1]
+    assert not [e for e in events if e.endswith(":on-loop")]  # nenhum close no event loop (F2-08)
+    log = child.non_event_log()
+    assert "Task exception was never retrieved" not in log, log
+    # A única exceção ASGI no log é a do cancelamento feito pelo uvicorn.
+    assert log.count("Exception in ASGI application") == 1
+    assert "Task cancelled, timeout graceful shutdown exceeded" in log
 
 
 # ── falha em cada etapa do startup ───────────────────────────────────
@@ -306,8 +327,10 @@ def test_falha_ao_montar_o_runtime_segue_logada_como_antes_e_fecha_uma_vez(spawn
     assert "Erro ao montar AgentOS" in log and "RuntimeError" in log
     assert "falha injetada: mount" not in log  # F2-07 (R3): o log leva o tipo do erro, nunca o texto
     assert [events.count(n) for n in ("runtime:close", "telemetry:shutdown", "motor:close")] == [1, 1, 1]
-    # Montagem não concluída: start não abre lifespan nenhum e close não tem o que fechar.
-    assert not [e for e in events if e in ("db:start", "http:start", "http:stop", "db:stop", "db:close")]
+    # Montagem não concluída: start não abre lifespan nenhum e o close do runtime não tem o que fechar.
+    assert not [e for e in events if e in ("db:start", "http:start", "http:stop", "db:stop")]
+    # O db de sessões é fechado pelo container, que o criou (F2-08; antes ficava para o fim do processo).
+    assert events.count("db:close") == 1
 
 
 # ── /livez durante startup lento ─────────────────────────────────────
@@ -382,7 +405,9 @@ def test_lifespan_duas_vezes_no_mesmo_app_e_recusado_sem_reabrir_nem_fechar_de_n
     assert events.names.count("db:start") == events.names.count("db:stop") == 1
     assert events.names.count("http:start") == events.names.count("http:stop") == 1
     assert events.names.count("runtime:close") == 1
-    assert events.names.count("db:close") == 2  # agente a1 e team t1, uma vez cada
+    assert events.names.count("db:created") == 1  # um db de sessões para o agente a1 e o team t1 (F2-08)
+    assert events.names.count("db:close") == 1  # e um cliente só, fechado uma vez
+    assert not [e for e in events.names if e.endswith(":on-loop")]  # nenhum close no event loop
     assert not [e for e in events.names if e == "db:provisioned"]
 
 

@@ -25,6 +25,7 @@ from src.domain.ports.summary_generator_port import ISummaryGenerator
 from src.infrastructure.parsers.text_document_parser import TextDocumentParser
 from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService
 from src.infrastructure.runtime.agno.http_tool_factory import HttpToolFactory
+from src.infrastructure.runtime.agno.session_db import create_session_db
 from src.infrastructure.runtime.agno.team_factory_service import TeamFactoryService
 from tests.fakes import (
     FakeChatModel,
@@ -163,9 +164,13 @@ class _Assembly:
         model_factory = FakeModelFactory()
         embedder_factory = FakeEmbedderFactory(dimensions=8)
         tree_repo = InMemoryDocumentTreeRepository()
+        # O db de sessões como o composition root o cria (F2-08): um para todas as entidades;
+        # o cliente motor só conecta no primeiro uso, e aqui nenhuma operação é feita.
+        session_db = create_session_db(DB_URL, DB_NAME)
         agents = AgentFactoryService(
             db_url=DB_URL,
             db_name=DB_NAME,
+            session_db=session_db,
             logger=logger,
             model_factory=model_factory,
             embedder_factory=embedder_factory,
@@ -180,7 +185,7 @@ class _Assembly:
             ),
             search_factory=KnowledgeSearchFactory(tree_repository=tree_repo, logger=logger),
         )
-        teams = TeamFactoryService(db_url=DB_URL, db_name=DB_NAME, logger=logger, model_factory=model_factory)
+        teams = TeamFactoryService(session_db=session_db, logger=logger, model_factory=model_factory)
         return cls(
             logger=logger,
             model_factory=model_factory,
@@ -346,16 +351,15 @@ def test_mask_url_userinfo_esconde_so_as_credenciais(url: str | None, expected: 
     assert mask_url_userinfo(url) == expected
 
 
-# agno_calls: MongoClient com connect=False (MongoDb do agno criaria cliente real ao construir)
+# agno_calls: MongoClient com connect=False (o vector db do agno criaria cliente real ao construir)
 @pytest.mark.usefixtures("agno_calls")
 def test_normalize_nao_grava_credenciais_das_urls_de_conexao():
-    from agno.db.mongo import MongoDb as MongoAgentDb
     from agno.vectordb.mongodb import MongoDb as MongoVectorDb
 
     url = "mongodb://user:s3nh4@db.invalid:27017/app"
     embedder = FakeEmbedderFactory().create_embedder(ModelConfig("x", "y"))
 
-    db = normalize(MongoAgentDb(db_url=url, db_name=DB_NAME))
+    db = normalize(create_session_db(url, DB_NAME))
     vector = normalize(MongoVectorDb(collection_name="rag", db_url=url, database=DB_NAME, embedder=embedder))
 
     assert isinstance(db, dict) and isinstance(vector, dict)

@@ -2,7 +2,8 @@
 
 O `.env.example` documenta exatamente as variáveis que o projeto lê: as lidas pelo
 código (``os.getenv``/``os.environ``), as do padrão ``<PROVIDER>_API_KEY`` das
-factories de modelo e as interpoladas pelo ``docker-compose.yml``. O
+factories de modelo, as interpoladas pelo ``docker-compose.yml`` e a dos testes ``live``
+(``MONGO_LIVE_URL``, lida só por ``tests/fakes/live_mongo.py``, comentada e sem valor). O
 ``.env.development`` é versionado, então só pode ter placeholders.
 
 As mensagens de falha citam só NOMES de chaves, nunca valores.
@@ -15,6 +16,8 @@ import re
 from pathlib import Path
 
 import yaml
+
+from tests.fakes.live_mongo import LIVE_URL_ENV
 
 ROOT = Path(__file__).resolve().parents[2]
 ENV_EXAMPLE = ROOT / ".env.example"
@@ -101,8 +104,19 @@ def _entries(path: Path) -> list[tuple[str, str, bool]]:
     return entries
 
 
+# Lidas só pelos testes (nunca pelo app nem pelo compose): documentadas comentadas e sem valor.
+TEST_ONLY_KEYS = {LIVE_URL_ENV}
+
+
 def _allowed_keys() -> set[str]:
-    return _env_vars_read_by_code() | PROVIDER_API_KEYS | set(_compose_vars())
+    return _env_vars_read_by_code() | PROVIDER_API_KEYS | set(_compose_vars()) | TEST_ONLY_KEYS
+
+
+def test_env_example_documenta_a_variavel_dos_testes_live_comentada_e_sem_valor():
+    entries = {key: (value, commented) for key, value, commented in _entries(ENV_EXAMPLE)}
+
+    assert {key: entries.get(key) for key in TEST_ONLY_KEYS} == {key: ("", True) for key in TEST_ONLY_KEYS}
+    assert not TEST_ONLY_KEYS & _env_vars_read_by_code(), "variável de teste lida pelo app"
 
 
 def test_scanner_enxerga_as_leituras_conhecidas():

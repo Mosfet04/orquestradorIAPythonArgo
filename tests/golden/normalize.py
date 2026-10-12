@@ -17,7 +17,7 @@ from inspect import iscoroutinefunction
 from typing import Any
 
 from agno.agent import Agent
-from agno.db.base import BaseDb
+from agno.db.base import AsyncBaseDb, BaseDb
 from agno.guardrails.base import BaseGuardrail
 from agno.knowledge import Knowledge
 from agno.knowledge.embedder.base import Embedder
@@ -90,7 +90,7 @@ def normalize(value: Any) -> JsonValue:
             "provider": getattr(value, "provider", None),
             "dimensions": value.dimensions,
         }
-    if isinstance(value, BaseDb):
+    if isinstance(value, BaseDb | AsyncBaseDb):
         return {
             "__type__": _type_name(value),
             "db_url": mask_url_userinfo(getattr(value, "db_url", None)),

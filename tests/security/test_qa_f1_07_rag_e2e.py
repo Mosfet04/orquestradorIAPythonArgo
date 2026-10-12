@@ -24,7 +24,6 @@ from typing import Any
 
 import pytest
 from agno.agent import Agent
-from agno.db.in_memory import InMemoryDb
 from agno.knowledge import Knowledge
 from agno.knowledge.document import Document
 from agno.models.response import ModelResponse
@@ -56,6 +55,7 @@ from tests.fakes import (
 )
 from tests.fakes.knowledge import OfflineKnowledge
 from tests.fakes.models import factory_call
+from tests.fakes.session_db import fake_session_db
 from tests.fakes.web import mount_agent_os
 
 pytestmark = pytest.mark.usefixtures("offline_knowledge")
@@ -101,13 +101,6 @@ def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     (tmp_path / ".env").write_text(f"API_KEY={SEGREDO}\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     return tmp_path
-
-
-@pytest.fixture(autouse=True)
-def memory_db(monkeypatch: pytest.MonkeyPatch) -> InMemoryDb:
-    db = InMemoryDb()
-    monkeypatch.setattr(agent_factory_service, "MongoAgentDb", lambda **_: db)
-    return db
 
 
 @dataclass
@@ -213,6 +206,7 @@ def _assembly(
     service = AgentFactoryService(
         db_url="mongodb://mongo.test.invalid:27017",
         db_name="test_db",
+        session_db=fake_session_db(),
         logger=logger,
         model_factory=FakeModelFactory(responses=["resposta"] * 30),
         embedder_factory=embedders,
@@ -424,9 +418,8 @@ async def test_doc_name_hostil_num_agente_nao_derruba_os_outros_nem_o_startup(
     ]
     runtime = AgnoRuntime(
         agent_factory=asm.service,
-        team_factory=TeamFactoryService(
-            db_url="mongodb://mongo.test.invalid:27017", logger=asm.logger, model_factory=FakeModelFactory()
-        ),
+        team_factory=TeamFactoryService(session_db=None, logger=asm.logger, model_factory=FakeModelFactory()),
+        session_db=None,
     )
     use_case = GetActiveAgentsUseCase(runtime, InMemoryAgentConfigRepository(configs), asm.logger)
 

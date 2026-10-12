@@ -19,7 +19,7 @@ from agno.models.response import ModelResponse
 
 from src.infrastructure import dependency_injection as di
 from tests.fakes import RecordingLogger
-from tests.integration.test_qa_f2_06_yaml_e2e import BASE, RUN, _World, yaml_app
+from tests.fakes.yaml_world import BASE, RUN, YamlWorld, yaml_app
 
 MARKER = "SEGREDO-IDS-SUJOS-R3"
 NOT_TEXT_ITEMS = "Itens que não são texto ignorados na lista de ids"
@@ -81,7 +81,7 @@ def _tool_call() -> ModelResponse:
 @contextmanager
 def _dirty_app(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, scripts: dict[str, list[str | ModelResponse]] | None = None
-) -> Iterator[tuple[_World, RecordingLogger, Any]]:
+) -> Iterator[tuple[YamlWorld, RecordingLogger, Any]]:
     logger = RecordingLogger()
     with (
         patch.object(di, "StructlogLoggerAdapter", lambda name="app": logger),

@@ -1,11 +1,13 @@
 """Startup real do app (``AppFactory`` -> container -> ``AgnoRuntime`` -> AgentOS) sem Mongo, LLM nem rede.
 
 Usado pelos testes de ciclo de vida com uvicorn real (F2-05): no mesmo processo (thread) e num
-subprocesso (SIGTERM de verdade). Só o Mongo (cliente motor e coleções de config), o db de sessões
-das entidades e o modelo são falsos; o resto da pilha é o de produção. Cada ponto de fechamento e
-de abertura registra um evento (``Events``): ``motor:close``, ``db:close``, ``db:start``,
-``http:start``/``http:stop``/``db:stop`` (lifespans do agno 2.5.8), ``runtime:close``,
-``telemetry:shutdown`` e ``model:start`` (run em andamento).
+subprocesso (SIGTERM de verdade). Só o Mongo (cliente motor do container, coleções de config e o
+cliente motor do db de sessões) e o modelo são falsos; o resto da pilha é o de produção, inclusive o
+``SessionDb`` (F2-08). Cada ponto de fechamento e de abertura registra um evento (``Events``):
+``motor:close`` (cliente do container), ``db:created`` e ``db:close`` (db de sessões e o cliente
+dele), ``db:start``, ``http:start``/``http:stop``/``db:stop`` (lifespans do agno 2.5.8),
+``runtime:close``, ``telemetry:shutdown`` e ``model:start`` (run em andamento). Um ``close`` que
+rode na thread do event loop vira ``motor:close:on-loop``/``db:close:on-loop``.
 
 Como programa (``python -m tests.fakes.startup_world``): sobe o uvicorn num socket herdado
 (``--fd``) e imprime cada evento como ``EVT <nome>`` no stdout.
@@ -25,17 +27,17 @@ from typing import Any
 from unittest.mock import patch
 
 import agno.os.app as agno_os_app
-from agno.db.in_memory import InMemoryDb
 from agno.models.response import ModelResponse
 from fastapi import FastAPI
 
 from src.infrastructure import dependency_injection as di
 from src.infrastructure.repositories import mongo_base
-from src.infrastructure.runtime.agno import AgnoRuntime, agent_factory_service, team_factory_service
+from src.infrastructure.runtime.agno import AgnoRuntime
 from src.infrastructure.runtime.agno import runtime as agno_runtime_module
+from src.infrastructure.runtime.agno.session_db import SessionDb
 from src.infrastructure.web import app_factory
-from tests.fakes.models import FakeChatModel
-from tests.fakes.mongo import FakeMongoClient, FakeMongoCollection
+from tests.fakes.models import FakeChatModel, running_on_event_loop
+from tests.fakes.mongo import FakeMongoClient, FakeMongoCollection, FakeMotorClient
 
 FAIL_STEPS = ("container", "entities", "mount", "start")
 CLEAN_ENV = (
@@ -113,36 +115,35 @@ class _Motor:
 
     def close(self) -> None:
         self.closes += 1
-        self._events.add("motor:close")
+        self._events.add("motor:close:on-loop" if running_on_event_loop() else "motor:close")
 
 
-class _SessionDb(InMemoryDb):
-    """Db de sessões em memória; como o ``MongoClient`` do pymongo, depois de ``close`` recusa o uso."""
+class _SessionMotorClient(FakeMotorClient):
+    """Cliente motor do db de sessões: registra o ``close`` e o uso depois dele."""
 
     def __init__(self, events: Events) -> None:
         super().__init__()
         self._events = events
-        self._closed = False
 
-    def _refuse_if_closed(self) -> None:
-        if self._closed:
+    def refuse_if_closed(self) -> None:
+        if self.closes:
             self._events.add("db:use-after-close")
-            raise RuntimeError("Cannot use MongoClient after close")
-
-    def upsert_session(self, *args: Any, **kwargs: Any) -> Any:
-        self._refuse_if_closed()
-        return super().upsert_session(*args, **kwargs)
-
-    def get_session(self, *args: Any, **kwargs: Any) -> Any:
-        self._refuse_if_closed()
-        return super().get_session(*args, **kwargs)
-
-    def _create_all_tables(self) -> None:
-        self._events.add("db:provisioned")
+        super().refuse_if_closed()
 
     def close(self) -> None:
-        self._closed = True
-        self._events.add("db:close")
+        super().close()
+        self._events.add("db:close:on-loop" if self.closes[-1] else "db:close")
+
+
+class _WorldSessionDb(SessionDb):
+    """O ``SessionDb`` de produção sobre o cliente falso; registra se o agno provisionar coleções."""
+
+    def __init__(self, events: Events, db_url: str, db_name: str) -> None:
+        super().__init__(_SessionMotorClient(events), db_url=db_url, db_name=db_name)  # type: ignore[arg-type]
+        self._events = events
+
+    async def _create_all_tables(self) -> None:
+        self._events.add("db:provisioned")
 
 
 @contextmanager
@@ -216,8 +217,9 @@ def startup_world(
     def broken_agui(*_: object, **__: object) -> None:
         raise RuntimeError("falha injetada: mount")
 
-    def new_db(**_: object) -> _SessionDb:
-        return _SessionDb(events)
+    def new_session_db(db_url: str, db_name: str) -> _WorldSessionDb:
+        events.add("db:created")
+        return _WorldSessionDb(events, db_url, db_name)
 
     with ExitStack() as stack:
         enter = stack.enter_context
@@ -225,8 +227,7 @@ def startup_world(
         enter(patch.object(di, "AsyncIOMotorClient", new_motor))
         enter(patch.object(app_factory, "setup_telemetry", lambda config: None))
         enter(patch.object(app_factory, "shutdown_telemetry", lambda: events.add("telemetry:shutdown")))
-        enter(patch.object(agent_factory_service, "MongoAgentDb", new_db))
-        enter(patch.object(team_factory_service, "MongoAgentDb", new_db))
+        enter(patch.object(di, "create_session_db", new_session_db))
         enter(patch.object(di.ProviderRegistry, "create_model", create_model))
         enter(patch.object(agno_os_app, "db_lifespan", db_lifespan))
         enter(patch.object(agno_os_app, "http_client_lifespan", http_lifespan))

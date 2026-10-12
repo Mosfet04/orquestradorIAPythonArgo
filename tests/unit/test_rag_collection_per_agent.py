@@ -37,6 +37,7 @@ def _service(logger: RecordingLogger) -> AgentFactoryService:
     return AgentFactoryService(
         db_url="mongodb://mongo.test.invalid:27017",
         db_name="test_db",
+        session_db=None,
         logger=logger,
         model_factory=FakeModelFactory(),
         embedder_factory=FakeEmbedderFactory(dimensions=8),

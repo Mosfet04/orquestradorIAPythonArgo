@@ -20,7 +20,7 @@ from src.application.use_cases.get_active_teams_use_case import GetActiveTeamsUs
 from src.infrastructure.repositories import mongo_base
 from src.infrastructure.repositories.mongo_agent_config_repository import MongoAgentConfigRepository
 from src.infrastructure.repositories.mongo_team_config_repository import MongoTeamConfigRepository
-from src.infrastructure.runtime.agno import AgnoRuntime, agent_factory_service, team_factory_service
+from src.infrastructure.runtime.agno import AgnoRuntime
 from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService
 from src.infrastructure.runtime.agno.http_tool_factory import HttpToolFactory
 from src.infrastructure.runtime.agno.team_factory_service import TeamFactoryService
@@ -35,6 +35,7 @@ from tests.fakes import (
     InMemoryToolRepository,
     RecordingLogger,
 )
+from tests.fakes.session_db import fake_session_db
 
 _ENV_NAMES = ("ENVIRONMENT", "ENABLE_DOCS", "CORS_ALLOWED_ORIGINS", "APP_HOST", "API_KEY_RUN", "API_KEY_ADMIN")
 CONN = "mongodb://mongo.invalid:27017"
@@ -100,19 +101,20 @@ def _controller(monkeypatch: pytest.MonkeyPatch, logger: RecordingLogger) -> tup
         {"agents_config": FakeMongoCollection(AGENT_DOCS), "teams_config": FakeMongoCollection(TEAM_DOCS)}
     )
     monkeypatch.setattr(mongo_base.MongoClientFactory, "get_client", classmethod(lambda cls, _conn: client))
-    monkeypatch.setattr(agent_factory_service, "MongoAgentDb", lambda **_: None)
-    monkeypatch.setattr(team_factory_service, "MongoAgentDb", lambda **_: None)
     models = FakeModelFactory(responses=["oi"], invalid_models={"modelo-invalido"})
+    session_db = fake_session_db()
     runtime = AgnoRuntime(
         agent_factory=AgentFactoryService(
             db_url=CONN,
+            session_db=session_db,
             logger=logger,
             model_factory=models,
             embedder_factory=FakeEmbedderFactory(),
             tool_factory=HttpToolFactory(logger=logger),
             tool_repository=InMemoryToolRepository(),
         ),
-        team_factory=TeamFactoryService(db_url=CONN, logger=logger, model_factory=models),
+        team_factory=TeamFactoryService(session_db=session_db, logger=logger, model_factory=models),
+        session_db=session_db,
     )
     agents = GetActiveAgentsUseCase(
         runtime,

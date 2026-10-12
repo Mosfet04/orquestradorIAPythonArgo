@@ -1,5 +1,5 @@
-"""``AgnoRuntime``: implementação da porta ``AgentRuntime`` com o agno 2.5 (F2-04) e ciclo de vida
-do AgentOS no app (F2-05)."""
+"""``AgnoRuntime``: implementação da porta ``AgentRuntime`` com o agno 2.5 (F2-04), ciclo de vida
+do AgentOS no app (F2-05) e db de sessões compartilhado com o AgentOS (F2-08)."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, cast
 
 from agno.agent import Agent
+from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os import AgentOS
 from agno.team import Team
 from fastapi import FastAPI
@@ -41,11 +42,30 @@ class AgnoRuntime(AgentRuntime):
 
     Ciclo de vida no lifespan do app: ``mount`` (rotas, síncrono e sem I/O) -> ``start`` (abre os
     lifespans do AgentOS) -> ``close`` no shutdown.
+
+    ``session_db``: o db de sessões e memória que as fábricas deram às entidades; vai também como
+    ``db=`` ao AgentOS. Tem de ser assíncrono (``AsyncBaseDb``): com um ``BaseDb`` síncrono as
+    rotas do AgentOS carregam do banco agente/team que não existe no código
+    (``agno/os/utils.py``, ``get_agent_by_id``/``get_team_by_id``) e ``/components`` passa a
+    gravá-los, fora do ``ProviderRegistry`` e do guardrail de ``user_id``. Quem fecha o db é quem
+    o criou (o composition root) e o lifespan de db do AgentOS.
     """
 
-    def __init__(self, *, agent_factory: AgentFactoryService, team_factory: TeamFactoryService) -> None:
+    def __init__(
+        self,
+        *,
+        agent_factory: AgentFactoryService,
+        team_factory: TeamFactoryService,
+        session_db: AsyncBaseDb | None,
+    ) -> None:
+        if isinstance(session_db, BaseDb):
+            raise TypeError(
+                "session_db do AgnoRuntime precisa ser assíncrono (AsyncBaseDb): com um db síncrono o "
+                "AgentOS carregaria agentes e teams gravados no banco"
+            )
         self._agent_factory = agent_factory
         self._team_factory = team_factory
+        self._session_db = session_db
         self._app: FastAPI | None = None
         self._agent_os_lifespan: Lifespan[Any] | None = None
         self._open_lifespans: AsyncExitStack | None = None
@@ -85,6 +105,9 @@ class AgnoRuntime(AgentRuntime):
         agno_agents = cast(list[Agent], list(agents))
         agno_teams = cast(list[Team], list(teams))
         agent_os = AgentOS(
+            # O db das entidades: habilita /schedules e /approvals (admin na auth da borda);
+            # /components segue stub 503 e nada é carregado do banco, porque o db é assíncrono.
+            db=self._session_db,
             agents=list(agno_agents),  # cópia: o AgentOS tipa list[Agent | RemoteAgent] (invariante)
             teams=list(agno_teams) or None,
             cors_allowed_origins=list(cors_allowed_origins),
@@ -92,9 +115,9 @@ class AgnoRuntime(AgentRuntime):
             on_route_conflict="preserve_base_app",
             tracing=False,
             telemetry=False,
-            # Sem provisionar coleções no startup: o db de sessões é o MongoDb síncrono e o
-            # db_lifespan chamaria _create_all_tables no event loop para cada entidade (com o
-            # Mongo fora, cada um espera o server selection). O agno cria a coleção na 1ª escrita.
+            # Sem provisionar coleções no startup: o db_lifespan aguardaria _create_all_tables
+            # (com o Mongo fora, cada coleção espera a seleção de servidor e o startup atrasa
+            # minutos). O agno cria a coleção e os índices na 1ª operação, como sempre foi.
             auto_provision_dbs=False,
         )
         # Cancel só de run registrado (F1-10): gerenciador antes de qualquer run e as rotas
@@ -124,8 +147,7 @@ class AgnoRuntime(AgentRuntime):
 
         Falha sobe (o startup do app falha, como no AgentOS) e ``close`` continua seguro. Os
         lifespans do agno 2.5.8 não têm ``try/finally``: os que já tinham aberto não rodam o
-        fechamento (ex.: dbs das entidades ficam para o fim do processo, que sai com o startup
-        recusado).
+        fechamento (o db de sessões é fechado por quem o criou, o ``cleanup`` do container).
         """
         if self._app is None or self._agent_os_lifespan is None or self._open_lifespans is not None:
             return
@@ -134,7 +156,7 @@ class AgnoRuntime(AgentRuntime):
         self._open_lifespans = stack
 
     async def close(self) -> None:
-        """Fecha os lifespans abertos por ``start`` (dbs das entidades, clientes httpx do agno).
+        """Fecha os lifespans abertos por ``start`` (db de sessões, clientes httpx do agno).
 
         Idempotente: a segunda chamada, ou sem ``start``, não faz nada.
         """

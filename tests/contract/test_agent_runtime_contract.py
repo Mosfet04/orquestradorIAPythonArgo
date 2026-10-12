@@ -16,12 +16,13 @@ import pytest
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.team_config import TeamConfig
 from src.domain.ports import AgentRuntime, InvalidModelConfigError
-from src.infrastructure.runtime.agno import AgnoRuntime, agent_factory_service, team_factory_service
+from src.infrastructure.runtime.agno import AgnoRuntime
 from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService
 from src.infrastructure.runtime.agno.http_tool_factory import HttpToolFactory
 from src.infrastructure.runtime.agno.team_factory_service import TeamFactoryService
 from tests.fakes import FakeEmbedderFactory, FakeModelFactory, InMemoryToolRepository, RecordingLogger
 from tests.fakes.runtime import FakeAgentRuntime
+from tests.fakes.session_db import fake_session_db
 
 REFUSED_MODEL = "recusado"
 
@@ -55,23 +56,22 @@ def _fake(monkeypatch: pytest.MonkeyPatch) -> Implementation:
 
 
 def _agno(monkeypatch: pytest.MonkeyPatch) -> Implementation:
-    monkeypatch.setattr(agent_factory_service, "MongoAgentDb", lambda **_: None)
-    monkeypatch.setattr(team_factory_service, "MongoAgentDb", lambda **_: None)
     monkeypatch.setenv("AGNO_TELEMETRY", "false")
     logger = RecordingLogger()
     models = FakeModelFactory(invalid_models={REFUSED_MODEL})
+    session_db = fake_session_db()
     runtime = AgnoRuntime(
         agent_factory=AgentFactoryService(
             db_url="mongodb://mongo.contrato.invalid:27017",
+            session_db=session_db,
             logger=logger,
             model_factory=models,
             embedder_factory=FakeEmbedderFactory(),
             tool_factory=HttpToolFactory(logger=logger),
             tool_repository=InMemoryToolRepository(),
         ),
-        team_factory=TeamFactoryService(
-            db_url="mongodb://mongo.contrato.invalid:27017", logger=logger, model_factory=models
-        ),
+        team_factory=TeamFactoryService(session_db=session_db, logger=logger, model_factory=models),
+        session_db=session_db,
     )
     return Implementation(
         runtime=runtime,

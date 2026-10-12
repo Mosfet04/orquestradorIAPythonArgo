@@ -26,11 +26,10 @@ from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.model_config import ModelConfig
 from src.infrastructure.repositories import mongo_base
 from src.infrastructure.repositories.mongo_tool_repository import MongoToolRepository
-from src.infrastructure.runtime.agno import agent_factory_service
 from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService
 from src.infrastructure.runtime.agno.http_tool_factory import HttpToolFactory
 from tests.fakes import FakeChatModel, FakeEmbedderFactory, RecordingLogger
-from tests.unit.test_seed_tools import SEED, _seed_tool_docs
+from tests.fakes.seed import SEED, seed_tool_docs
 
 
 class _Cursor:
@@ -69,11 +68,6 @@ class _FakeModelFactory:
         return self.model
 
 
-@pytest.fixture(autouse=True)
-def no_mongo(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(agent_factory_service, "MongoAgentDb", lambda **_: None)
-
-
 def _repository(
     docs: list[dict[str, Any]], logger: RecordingLogger, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[MongoToolRepository, _FakeCollection]:
@@ -92,6 +86,7 @@ def _repository(
 def _service(logger: RecordingLogger, repository: MongoToolRepository, model: FakeChatModel) -> AgentFactoryService:
     return AgentFactoryService(
         db_url="mongodb://mongo.invalid:27017",
+        session_db=None,
         logger=logger,
         model_factory=_FakeModelFactory(model),  # type: ignore[arg-type]
         embedder_factory=FakeEmbedderFactory(),
@@ -121,7 +116,7 @@ def _errors(logger: RecordingLogger) -> list[tuple[str, dict[str, Any]]]:
 
 async def test_agente_do_seed_carrega_as_tools_semeadas_e_o_schema_chega_ao_modelo(monkeypatch: pytest.MonkeyPatch):
     logger = RecordingLogger()
-    repository, collection = _repository(_seed_tool_docs(), logger, monkeypatch)
+    repository, collection = _repository(seed_tool_docs(), logger, monkeypatch)
     model = FakeChatModel(responses=["ok"])
 
     agent = await _service(logger, repository, model).create_agent(_config("weather-tool", "calculator-tool"))
@@ -147,7 +142,7 @@ async def test_agente_do_seed_carrega_as_tools_semeadas_e_o_schema_chega_ao_mode
 
 async def test_weather_tool_do_seed_executa_get_com_query_string_sem_chave_de_api(monkeypatch: pytest.MonkeyPatch):
     logger = RecordingLogger()
-    repository, _ = _repository(_seed_tool_docs(), logger, monkeypatch)
+    repository, _ = _repository(seed_tool_docs(), logger, monkeypatch)
     call = ModelResponse(
         role="assistant",
         tool_calls=[
@@ -313,5 +308,5 @@ def test_seed_executa_em_js_e_insere_as_mesmas_tools_que_o_teste_le_como_json(tm
 
     assert result.returncode == 0, result.stderr
     inserted = json.loads(result.stdout)
-    assert inserted["tools"] == _seed_tool_docs()
+    assert inserted["tools"] == seed_tool_docs()
     assert [d["id"] for d in inserted["agents_config"]] == ["general-assistant", "code-assistant", "analyst-assistant"]

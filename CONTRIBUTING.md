@@ -279,6 +279,14 @@ tests/
 - Layer markers (`unit`, `contract`, `integration`, `security`, `eval`) are applied **by directory**
   in `tests/conftest.py`; do not decorate files with them. A test in an unmapped directory fails
   collection. `live` (needs a real external service) is set on the test itself and never runs in CI.
+- `live` tests against a real MongoDB take the server from `MONGO_LIVE_URL` through the `live_mongo`
+  fixture (`tests/fakes/live_mongo.py`): no variable, clean skip; each test gets a throwaway
+  `orq_live_<id>` database that is dropped on teardown. The URL is an internal credential: never
+  put it in a test id (`parametrize`), an assertion, a log line or a `repr`. The contract suites for
+  config and for the document tree, plus `tests/contract/test_mongo_collection_fidelity_contract.py`,
+  have a `mongo-live` backend that checks the in-memory collection of `tests/fakes/mongo.py`
+  against the real server; `tests/integration/test_session_db_live.py` covers sessions, user
+  memory, run cancellation and compatibility with data written by agno's synchronous `MongoDb`.
 - No real LLM, network or MongoDB in tests: use `tests/fakes/` (`FakeChatModel` is an
   `agno.models.base.Model`, so it can be passed straight to `Agent`/`Team`).
 - Tests that configure OpenTelemetry providers use the `reset_otel_providers` fixture.
@@ -358,6 +366,10 @@ pytest
 
 # Default CI run (everything but `live`), in parallel (8 workers: ~30 s; serial ~95 s)
 pytest -m "not live" -n auto
+
+# Live tests against a disposable MongoDB (skipped without MONGO_LIVE_URL; never in CI),
+# e.g. `docker run --rm -p 27017:27017 mongo:7.0.43-jammy` (the image of docker-compose.dev.yml) in another terminal
+MONGO_LIVE_URL='mongodb://localhost:27017/?directConnection=true' pytest -m live -rs
 
 # One layer only
 pytest -m unit

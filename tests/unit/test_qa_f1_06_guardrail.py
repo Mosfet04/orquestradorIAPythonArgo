@@ -38,6 +38,7 @@ class _NoTools:
 async def _agent(agent_id: str, *, memory: bool) -> Agent:
     service = AgentFactoryService(
         db_url="mongodb://mongo.invalid:27017",
+        session_db=None,
         logger=RecordingLogger(),
         model_factory=FakeModelFactory(),
         embedder_factory=FakeEmbedderFactory(),
@@ -54,7 +55,7 @@ async def _agent(agent_id: str, *, memory: bool) -> Agent:
 
 def _team(team_id: str, members: list[Agent], *, memory: bool) -> Team:
     service = TeamFactoryService(
-        db_url="mongodb://mongo.invalid:27017", logger=RecordingLogger(), model_factory=FakeModelFactory()
+        session_db=None, logger=RecordingLogger(), model_factory=FakeModelFactory()
     )
     return service.create_team(
         TeamConfig(

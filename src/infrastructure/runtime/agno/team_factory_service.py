@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from agno.agent import Agent
-from agno.db.mongo import MongoDb as MongoAgentDb
+from agno.db.base import AsyncBaseDb
 from agno.team import Team
 from agno.team.mode import TeamMode
 
@@ -32,13 +32,13 @@ class TeamFactoryService:
     def __init__(
         self,
         *,
-        db_url: str,
-        db_name: str = "agno",
+        session_db: AsyncBaseDb | None,
         logger: ILogger,
         model_factory: IModelFactory,
     ) -> None:
-        self._db_url = db_url
-        self._db_name = db_name
+        """``session_db``: db de sessões e memória, o mesmo das demais entidades (F2-08); ``None``
+        = team sem persistência."""
+        self._session_db = session_db
         self._logger = logger
         self._model_factory = model_factory
 
@@ -53,7 +53,6 @@ class TeamFactoryService:
         # roda create_team via asyncio.to_thread (GetActiveTeamsUseCase, pelo AgnoRuntime).
         model: Any = self._model_factory.create_model(config.model_config)
         mode = _MODE_MAP.get(config.mode, TeamMode.route)
-        db = MongoAgentDb(db_url=self._db_url, db_name=self._db_name)
         # O team repassa o user_id da requisição aos membros: exige se ele ou um membro
         # guarda memória de usuário (recusa logo no team, antes de delegar).
         user_memories = agentic_memory = config.user_memory_active
@@ -69,7 +68,7 @@ class TeamFactoryService:
             members=list(members),
             description=config.descricao or "",
             instructions=config.prompt or None,
-            db=db,
+            db=self._session_db,
             pre_hooks=[UserIdRequiredGuardrail(config.id)] if guarded else None,
             markdown=True,
             respond_directly=(mode == TeamMode.route),

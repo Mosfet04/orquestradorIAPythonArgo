@@ -30,11 +30,11 @@ from starlette.testclient import TestClient
 from src.infrastructure import dependency_injection as di
 from src.infrastructure.providers.plugins import ENTRY_POINT_GROUP, PluginLoadError
 from src.infrastructure.repositories import mongo_base
-from src.infrastructure.runtime.agno import agent_factory_service, team_factory_service
 from src.infrastructure.web import app_factory
 from src.infrastructure.web.app_factory import AppFactory
 from tests.fakes import FakeMongoClient, FakeMongoCollection, RecordingLogger
 from tests.fakes.plugins import FakeSite
+from tests.fakes.session_db import use_fake_session_db
 
 pytestmark = pytest.mark.usefixtures("offline_knowledge")
 
@@ -179,9 +179,8 @@ def _install_fakes(monkeypatch: pytest.MonkeyPatch, result: Booted, docs: list[d
     client = FakeMongoClient(collections)
     monkeypatch.setattr(mongo_base.MongoClientFactory, "get_client", classmethod(lambda cls, _conn: client))
     monkeypatch.setattr(di, "AsyncIOMotorClient", FakeMotor)
+    use_fake_session_db(monkeypatch)
     monkeypatch.setattr(di, "StructlogLoggerAdapter", lambda _name: result.logger)
-    monkeypatch.setattr(agent_factory_service, "MongoAgentDb", lambda **_: None)
-    monkeypatch.setattr(team_factory_service, "MongoAgentDb", lambda **_: None)
     monkeypatch.setattr(app_factory, "setup_telemetry", lambda config: None)
     monkeypatch.setattr(app_factory, "shutdown_telemetry", lambda: None)
     original = di.ProviderRegistry.create_model

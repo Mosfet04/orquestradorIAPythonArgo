@@ -32,7 +32,7 @@ import yaml
 
 from src.infrastructure.config.app_config import AppConfig
 from src.infrastructure.web.server_settings import build_uvicorn_settings
-from tests.unit.test_container_hygiene import _excluded, _parse_dockerignore
+from tests.fakes.dockerignore import excluded, parse_dockerignore
 
 ROOT = Path(__file__).resolve().parents[2]
 DOCKERFILE = ROOT / "Dockerfile"
@@ -48,7 +48,7 @@ ALL_INTERFACES = "0.0.0.0"  # noqa: S104 - valor de APP_HOST dentro do container
 
 def _context_files() -> list[str]:
     """Arquivos da árvore real que entrariam no contexto de build (poda diretórios excluídos)."""
-    rules = _parse_dockerignore(DOCKERIGNORE.read_text(encoding="utf-8"))
+    rules = parse_dockerignore(DOCKERIGNORE.read_text(encoding="utf-8"))
     included: list[str] = []
     for current, dirs, files in os.walk(ROOT, followlinks=False):
         rel_dir = Path(current).relative_to(ROOT).as_posix()
@@ -58,7 +58,7 @@ def _context_files() -> list[str]:
             dirs[:] = [d for d in dirs if not (d.startswith(".venv") or d in {".git", "venv", "node_modules"})]
         for name in files:
             rel = f"{rel_dir}/{name}".lstrip("/")
-            if not _excluded(rel, rules):
+            if not excluded(rel, rules):
                 included.append(rel)
     return sorted(included)
 

@@ -27,7 +27,6 @@ from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.model_config import ModelConfig
 from src.domain.entities.tool import HttpMethod, ParameterType, Tool, ToolParameter
 from src.domain.ports import IModelFactory
-from src.infrastructure.runtime.agno import agent_factory_service
 from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService
 from src.infrastructure.runtime.agno.http_tool_factory import HttpToolFactory
 from src.infrastructure.web.app_factory import AppFactory
@@ -111,12 +110,6 @@ class _ScriptedModelFactory(IModelFactory):
         return self.models[config.model_id]
 
 
-@pytest.fixture(autouse=True)
-def no_mongo(monkeypatch: pytest.MonkeyPatch) -> None:
-    """O ``MongoDb`` do agno criaria um ``MongoClient`` real; o agente funciona sem db."""
-    monkeypatch.setattr(agent_factory_service, "MongoAgentDb", lambda **_: None)
-
-
 Handler = Callable[[httpx.Request], httpx.Response]
 
 
@@ -165,6 +158,7 @@ async def _build_agent(
 ) -> Agent:
     service = AgentFactoryService(
         db_url="mongodb://mongo.invalid:27017",
+        session_db=None,
         logger=logger,
         model_factory=models,
         embedder_factory=FakeEmbedderFactory(),

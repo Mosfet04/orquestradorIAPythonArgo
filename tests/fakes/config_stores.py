@@ -1,4 +1,5 @@
-"""Backends de config (``CONFIG_STORE``) para a suíte de contrato: memória, Mongo (coleção fake) e YAML.
+"""Backends de config (``CONFIG_STORE``) para a suíte de contrato: memória, Mongo (coleção fake), YAML
+e, só com ``MONGO_LIVE_URL`` (marker ``live``), Mongo real (``mongo-live``).
 
 Cada backend monta os repositórios das portas ``IAgentConfigRepository``, ``ITeamConfigRepository``
 e ``IToolRepository`` a partir de **documentos** (o formato gravado no Mongo e escrito no YAML) ou de
@@ -34,6 +35,7 @@ from src.infrastructure.repositories.yaml_config_repository import (
     YamlTeamConfigRepository,
     YamlToolRepository,
 )
+from tests.fakes.live_mongo import LiveMongo
 from tests.fakes.logger import RecordingLogger
 from tests.fakes.mongo import FakeMongoClient, FakeMongoCollection
 from tests.fakes.repositories import (
@@ -96,6 +98,48 @@ class MongoBackend:
         return MongoToolRepository(connection_string=_CONN, logger=logger or RecordingLogger())
 
 
+class MongoLiveBackend:
+    """Repositórios Mongo reais sobre um Mongo de verdade (banco efêmero do ``live_mongo``).
+
+    Confere a fidelidade da coleção fake (F2-06, R5): a mesma suíte de contrato roda aqui. ``name``
+    é ``"mongo"`` porque o contrato é o do backend Mongo (ex.: o log traz ``mongo_id``). Os
+    documentos são gravados com o pymongo síncrono, ``_id`` crescente na ordem da lista, e lidos
+    pelos repositórios com um cliente motor do próprio teste.
+    """
+
+    name = "mongo"
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, live: LiveMongo) -> None:
+        self._live = live
+        client = live.motor()
+        monkeypatch.setattr(mongo_base.MongoClientFactory, "get_client", classmethod(lambda cls, _conn: client))
+
+    def _collection(self, name: str, docs: Iterable[Document]) -> None:
+        collection = self._live.collection(name)
+        collection.delete_many({})
+        documents = [{"_id": ObjectId(), **doc} for doc in docs]
+        if documents:
+            collection.insert_many(documents)
+
+    def agents(self, docs: Iterable[Document], logger: RecordingLogger | None = None) -> IAgentConfigRepository:
+        self._collection("agents_config", docs)
+        return MongoAgentConfigRepository(
+            connection_string=_CONN, database_name=self._live.database, logger=logger or RecordingLogger()
+        )
+
+    def teams(self, docs: Iterable[Document], logger: RecordingLogger | None = None) -> ITeamConfigRepository:
+        self._collection("teams_config", docs)
+        return MongoTeamConfigRepository(
+            connection_string=_CONN, database_name=self._live.database, logger=logger or RecordingLogger()
+        )
+
+    def tools(self, docs: Iterable[Document], logger: RecordingLogger | None = None) -> IToolRepository:
+        self._collection("tools", docs)
+        return MongoToolRepository(
+            connection_string=_CONN, database_name=self._live.database, logger=logger or RecordingLogger()
+        )
+
+
 class _NoAliasDumper(yaml.SafeDumper):
     """O mesmo objeto em dois documentos (ex.: uma lista de ids) vira cópia, não âncora/alias (recusados)."""
 
@@ -155,7 +199,7 @@ class MemoryBackend:
 class EntityBackend:
     """Adapta um backend de documentos para receber entidades (contrato comum aos três backends)."""
 
-    def __init__(self, backend: MongoBackend | YamlBackend) -> None:
+    def __init__(self, backend: MongoBackend | MongoLiveBackend | YamlBackend) -> None:
         self.name = backend.name
         self._backend = backend
 
@@ -171,19 +215,93 @@ class EntityBackend:
 
 DOCUMENT_BACKENDS = ("mongo", "yaml")
 ENTITY_BACKENDS = ("memory", *DOCUMENT_BACKENDS)
+LIVE_BACKEND = "mongo-live"
+_LIVE_PARAM = pytest.param(LIVE_BACKEND, marks=pytest.mark.live)
+DOCUMENT_BACKEND_PARAMS = (*DOCUMENT_BACKENDS, _LIVE_PARAM)
+"""``params`` da fixture de backend de documentos: os de sempre e o Mongo real (marker ``live``)."""
+ENTITY_BACKEND_PARAMS = (*ENTITY_BACKENDS, _LIVE_PARAM)
 
 
-def document_backend(name: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> MongoBackend | YamlBackend:
+def live_mongo_for(request: pytest.FixtureRequest) -> LiveMongo | None:
+    """O ``live_mongo`` do teste se o parâmetro da fixture for ``mongo-live`` (pula sem a URL)."""
+    if request.param != LIVE_BACKEND:
+        return None
+    live: LiveMongo = request.getfixturevalue("live_mongo")
+    return live
+
+
+def document_backend(
+    name: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, live: LiveMongo | None = None
+) -> MongoBackend | MongoLiveBackend | YamlBackend:
     if name == "mongo":
         return MongoBackend(monkeypatch)
     if name == "yaml":
         return YamlBackend(tmp_path)
+    if name == LIVE_BACKEND and live is not None:
+        return MongoLiveBackend(monkeypatch, live)
     raise ValueError(f"backend de documentos desconhecido: {name}")
 
 
 def entity_backend(
-    name: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    name: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, live: LiveMongo | None = None
 ) -> MemoryBackend | EntityBackend:
     if name == "memory":
         return MemoryBackend()
-    return EntityBackend(document_backend(name, monkeypatch, tmp_path))
+    return EntityBackend(document_backend(name, monkeypatch, tmp_path, live))
+
+
+# ── documentos de exemplo da suíte de contrato de documentos ─────────
+
+MARKER = "SEGREDO-QUE-NAO-PODE-IR-AO-LOG"
+"""Texto plantado nos documentos de exemplo: nenhum log pode trazê-lo."""
+NOT_A_LIST = "Lista de ids que não é lista ignorada"
+NOT_TEXT_ITEMS = "Itens que não são texto ignorados na lista de ids"
+
+
+def marked_agent_doc(agent_id: Any = "ok", **overrides: Any) -> dict[str, Any]:
+    doc: dict[str, Any] = {
+        "id": agent_id,
+        "nome": "Agente",
+        "factoryIaModel": "ollama",
+        "model": "m",
+        "descricao": "d",
+        "prompt": [MARKER],
+        "tools_ids": [],
+        "rag_config": {"active": False},
+        "active": True,
+    }
+    doc.update(overrides)
+    return doc
+
+
+def marked_team_doc(team_id: Any = "time", **overrides: Any) -> dict[str, Any]:
+    doc: dict[str, Any] = {
+        "id": team_id,
+        "nome": "Time",
+        "factoryIaModel": "ollama",
+        "model": "m",
+        "prompt": MARKER,
+        "member_ids": ["ok"],
+        "mode": "route",
+        "active": True,
+    }
+    doc.update(overrides)
+    return doc
+
+
+def marked_tool_doc(tool_id: Any = "t", **overrides: Any) -> dict[str, Any]:
+    doc: dict[str, Any] = {
+        "id": tool_id,
+        "name": "Tool",
+        "description": MARKER,
+        "route": "https://api.example/x",
+        "http_method": "GET",
+        "parameters": [],
+        "active": True,
+    }
+    doc.update(overrides)
+    return doc
+
+
+def logged_errors(logger: RecordingLogger) -> list[tuple[str, dict[str, Any]]]:
+    return [(r.message, r.context) for r in logger.records if r.level == "error"]

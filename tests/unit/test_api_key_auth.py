@@ -1,8 +1,10 @@
 """Classificador de rotas e política de chaves do F1-04 (``api_key_auth``).
 
 A tabela abaixo é a de rotas REAIS do app com o AgentOS (agno 2.5.8) montado com um
-Agent e um Team de modelo fake. Rota nova no agno (ou no app) quebra
-``test_tabela_cobre_todas_as_rotas_do_app``: classifique-a aqui antes de seguir.
+Agent e um Team de modelo fake e com ``db=`` (o db de sessões, assíncrono, como em produção desde
+o F2-08: ``/schedules`` e ``/approvals`` são as rotas reais; ``/components`` segue stub). Rota nova
+no agno (ou no app) quebra ``test_tabela_cobre_todas_as_rotas_do_app``: classifique-a aqui antes de
+seguir.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ from src.infrastructure.web.api_key_auth import (
 )
 from src.infrastructure.web.app_factory import AppFactory
 from tests.fakes import FakeChatModel
+from tests.fakes.session_db import fake_session_db
 from tests.fakes.web import mount_agent_os
 
 RUN_KEY = "chave-de-teste-run-" + "r" * 21
@@ -76,14 +79,14 @@ PATCH /components/{path:path} ADMIN
 DELETE /components/{path:path} ADMIN
 GET /schedules ADMIN
 POST /schedules ADMIN
-PUT /schedules ADMIN
-PATCH /schedules ADMIN
-DELETE /schedules ADMIN
-GET /schedules/{path:path} ADMIN
-POST /schedules/{path:path} ADMIN
-PUT /schedules/{path:path} ADMIN
-PATCH /schedules/{path:path} ADMIN
-DELETE /schedules/{path:path} ADMIN
+GET /schedules/{schedule_id} ADMIN
+PATCH /schedules/{schedule_id} ADMIN
+DELETE /schedules/{schedule_id} ADMIN
+POST /schedules/{schedule_id}/enable ADMIN
+POST /schedules/{schedule_id}/disable ADMIN
+POST /schedules/{schedule_id}/trigger ADMIN
+GET /schedules/{schedule_id}/runs ADMIN
+GET /schedules/{schedule_id}/runs/{run_id} ADMIN
 GET /registry ADMIN
 POST /optimize-memories ADMIN
 GET / RUN
@@ -137,15 +140,11 @@ GET /traces/{trace_id} RUN
 POST /traces/search RUN
 GET /trace_session_stats RUN
 GET /approvals ADMIN
-POST /approvals ADMIN
-PUT /approvals ADMIN
-PATCH /approvals ADMIN
-DELETE /approvals ADMIN
-GET /approvals/{path:path} ADMIN
-POST /approvals/{path:path} ADMIN
-PUT /approvals/{path:path} ADMIN
-PATCH /approvals/{path:path} ADMIN
-DELETE /approvals/{path:path} ADMIN
+GET /approvals/count ADMIN
+GET /approvals/{approval_id} ADMIN
+DELETE /approvals/{approval_id} ADMIN
+GET /approvals/{approval_id}/status ADMIN
+POST /approvals/{approval_id}/resolve ADMIN
 """
 
 
@@ -180,7 +179,7 @@ def mounted_app() -> Iterator[FastAPI]:
         team = Team(id="time-1", name="Time 1", members=[member], model=FakeChatModel(responses=[]), telemetry=False)
         factory = AppFactory()
         app = factory.create_app()
-        mount_agent_os(factory, app, [agent], [team])
+        mount_agent_os(factory, app, [agent], [team], session_db=fake_session_db())
         yield app
 
 

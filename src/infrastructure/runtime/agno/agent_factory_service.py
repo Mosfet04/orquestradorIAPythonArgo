@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from agno.agent import Agent
-from agno.db.mongo import MongoDb as MongoAgentDb
+from agno.db.base import AsyncBaseDb
 from agno.knowledge import Knowledge
 from agno.vectordb.mongodb import MongoDb as MongoVectorDb
 
@@ -87,6 +87,7 @@ class AgentFactoryService:
         *,
         db_url: str,
         db_name: str = "agno",
+        session_db: AsyncBaseDb | None,
         logger: ILogger,
         model_factory: IModelFactory,
         embedder_factory: IEmbedderFactory,
@@ -95,8 +96,11 @@ class AgentFactoryService:
         indexing_service: DocumentIndexingService | None = None,
         search_factory: KnowledgeSearchFactory | None = None,
     ) -> None:
+        """``session_db``: db de sessões e memória, o mesmo para todas as entidades (F2-08); ``None``
+        = agente sem persistência. ``db_url``/``db_name`` são do vector db do RAG semântico."""
         self._db_url = db_url
         self._db_name = db_name
+        self._session_db = session_db
         self._logger = logger
         self._model_factory = model_factory
         self._embedder_factory = embedder_factory
@@ -127,8 +131,7 @@ class AgentFactoryService:
         if hierarchical_tool:
             tools.append(hierarchical_tool)
 
-        db = self._build_db()
-        agent = self._assemble_agent(config, model, db, tools, knowledge)
+        agent = self._assemble_agent(config, model, tools, knowledge)
         elapsed = (datetime.now(UTC) - start).total_seconds()
         self._logger.info(
             "Agente criado",
@@ -138,13 +141,6 @@ class AgentFactoryService:
         return agent
 
     # ── private ─────────────────────────────────────────────────────
-
-    def _build_db(self) -> MongoAgentDb:
-        """Cria instância unificada de db (storage + memory) — agno v2."""
-        return MongoAgentDb(
-            db_url=self._db_url,
-            db_name=self._db_name,
-        )
 
     async def _build_tools(self, config: AgentConfig) -> list[Any]:
         """Tools do agente; cada tool referenciada que não entra gera log de erro com os ids."""
@@ -324,7 +320,6 @@ class AgentFactoryService:
         self,
         config: AgentConfig,
         model: Any,
-        db: MongoAgentDb,
         tools: list[Any],
         knowledge: Knowledge | None,
     ) -> Agent:
@@ -333,7 +328,8 @@ class AgentFactoryService:
             id=config.id,
             name=config.nome,
             model=model,
-            db=db,
+            # Sessões e memória: o db compartilhado (assíncrono; um cliente para todos).
+            db=self._session_db,
             # Sem user_id fixo: vem da requisição; memória de usuário sem ele é recusada.
             pre_hooks=(
                 [UserIdRequiredGuardrail(config.id)]

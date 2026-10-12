@@ -42,6 +42,7 @@ from src.infrastructure.runtime.agno import AgnoRuntime
 from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService
 from src.infrastructure.runtime.agno.http_tool_factory import HttpToolFactory
 from src.infrastructure.runtime.agno.llm_summary_generator import LLMSummaryGenerator
+from src.infrastructure.runtime.agno.session_db import SessionDb, create_session_db
 from src.infrastructure.runtime.agno.team_factory_service import TeamFactoryService
 from src.infrastructure.telemetry.metrics import TelemetryMetrics
 from src.infrastructure.web.api_key_auth import is_local_dev_mode
@@ -165,6 +166,7 @@ class DependencyContainer:
         self.config = config
         self._logger: ILogger = StructlogLoggerAdapter("app")
         self._mongo_client: AsyncIOMotorClient[MongoDocument] | None = None
+        self._session_db: SessionDb | None = None
         self._health_service: HealthService | None = None
         self._controller: OrquestradorController | None = None
         self._runtime: AgnoRuntime | None = None
@@ -242,9 +244,15 @@ class DependencyContainer:
             tree_repository=tree_repo, logger=self._logger
         )
 
+        # Um db de sessões e memória para todas as entidades e para o AgentOS (F2-08): um cliente
+        # só, que conecta na primeira operação e é fechado no cleanup.
+        session_db = create_session_db(conn, db)
+        self._session_db = session_db
+
         agent_factory = AgentFactoryService(
             db_url=conn,
             db_name=db,
+            session_db=session_db,
             logger=self._logger,
             model_factory=providers,
             embedder_factory=providers,
@@ -255,12 +263,11 @@ class DependencyContainer:
         )
 
         team_factory = TeamFactoryService(
-            db_url=conn,
-            db_name=db,
+            session_db=session_db,
             logger=self._logger,
             model_factory=providers,
         )
-        runtime = AgnoRuntime(agent_factory=agent_factory, team_factory=team_factory)
+        runtime = AgnoRuntime(agent_factory=agent_factory, team_factory=team_factory, session_db=session_db)
         self._runtime = runtime
 
         agents_use_case = GetActiveAgentsUseCase(
@@ -319,10 +326,23 @@ class DependencyContainer:
         return self._health_service
 
     async def cleanup(self) -> None:
+        """Fecha o db de sessões e o cliente Mongo do container, cada um mesmo se o outro falhar.
+
+        Nenhum ``close`` roda no event loop: o do motor é o do pymongo síncrono (manda
+        ``endSessions`` pela rede e, com o Mongo fora, espera a seleção de servidor).
+        """
+        if self._session_db is not None:
+            try:
+                # Idempotente: o lifespan de db do AgentOS pode já ter fechado.
+                await self._session_db.close()
+            except Exception as exc:  # noqa: BLE001 - shutdown segue; tipo no log
+                self._logger.warning(
+                    "Falha ao fechar o db de sessões", error_type=type(exc).__name__
+                )
         if self._mongo_client:
             try:
                 # O close do motor é síncrono e devolve None; o de um cliente async (corrotina) é aguardado.
-                result: Any = self._mongo_client.close()  # type: ignore[func-returns-value]
+                result: Any = await asyncio.to_thread(self._mongo_client.close)
                 if asyncio.iscoroutine(result):
                     await result
             except Exception as exc:  # noqa: BLE001 - shutdown segue; tipo no log

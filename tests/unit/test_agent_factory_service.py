@@ -3,7 +3,7 @@
 Sem ``patch`` de ``Agent``/``Knowledge``/``MongoDb`` no módulo da fábrica: a montagem é a de produção
 com fakes nas portas (modelo, embedder, repositório de tools) e o I/O do agno cortado na borda pela
 fixture ``offline_knowledge`` (cliente Mongo sem conexão, ``Knowledge.insert`` só registrado). O db de
-sessões é o ``MongoDb`` real do agno, que só conecta no primeiro uso; o F2-08 passa a injetá-lo.
+sessões é injetado (F2-08): o ``SessionDb`` de produção sobre o cliente motor em memória.
 
 O que já é coberto em outro lugar não se repete aqui: kwargs completos de ``Agent`` (``tests/golden``),
 tools (``test_agent_factory_tools.py``), guardrail de ``user_id`` (``test_qa_f1_06_guardrail.py``),
@@ -15,7 +15,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from agno.db.mongo import MongoDb
 from agno.knowledge import Knowledge
 
 from src.application.services.document_indexing_service import DocumentIndexingService
@@ -35,11 +34,13 @@ from tests.fakes import (
     RecordingLogger,
 )
 from tests.fakes.knowledge import OfflineKnowledge
+from tests.fakes.session_db import fake_session_db
 
 pytestmark = pytest.mark.usefixtures("offline_knowledge")
 
 DB_URL = "mongodb://mongo.test.invalid:27017"
 DB_NAME = "test_db"
+SESSION_DB = fake_session_db()
 
 
 class _FixedSummary(ISummaryGenerator):
@@ -72,6 +73,7 @@ def _service(
     return AgentFactoryService(
         db_url=DB_URL,
         db_name=DB_NAME,
+        session_db=SESSION_DB,
         logger=logger,
         model_factory=models or FakeModelFactory(),
         embedder_factory=embedders,
@@ -114,8 +116,7 @@ async def test_agente_montado_carrega_identidade_modelo_e_db_da_config() -> None
     assert agent.instructions == "Você é o agente de teste."
     assert agent.model is models.models[0]
     assert (agent.model.id, agent.model.provider) == ("llama3.2:latest", "ollama")
-    assert isinstance(agent.db, MongoDb)
-    assert (agent.db.db_url, agent.db.db_name) == (DB_URL, DB_NAME)
+    assert agent.db is SESSION_DB  # o db de sessões injetado, o mesmo de todas as entidades
     # sem RAG: nada de knowledge nem das tools de busca que o agno liga com ele
     assert agent.knowledge is None
     assert (agent.search_knowledge, agent.read_chat_history) == (False, False)

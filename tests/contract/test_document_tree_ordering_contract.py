@@ -1,4 +1,6 @@
-"""Contrato do ``IDocumentTreeRepository``: memória e Mongo (coleção em memória de ``tests/fakes/mongo.py``).
+"""Contrato do ``IDocumentTreeRepository``: memória, Mongo (coleção em memória de ``tests/fakes/mongo.py``)
+e, só com ``MONGO_LIVE_URL`` (marker ``live``), Mongo real (``mongo-live``): o índice único
+``idx_node_id`` de verdade, o ``BulkWriteError`` 11000 com ``ordered=False`` e a ordem por ``_batch``.
 
 Quem consome a árvore (``HierarchicalSearchTool``, indexação) depende de raízes e filhos voltarem
 na ordem em que foram salvos. Semântica (pendência da F0-03, definida no F2-06):
@@ -12,6 +14,8 @@ emula quando o índice é criado.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from src.domain.entities.document_node import DocumentNode
@@ -19,15 +23,21 @@ from src.domain.ports.document_tree_repository_port import IDocumentTreeReposito
 from src.infrastructure.repositories import mongo_base
 from src.infrastructure.repositories.mongo_document_tree_repository import MongoDocumentTreeRepository
 from tests.fakes import FakeMongoClient, FakeMongoCollection, InMemoryDocumentTreeRepository, RecordingLogger
+from tests.fakes.config_stores import LIVE_BACKEND, live_mongo_for
 
 
-@pytest.fixture(params=["memory", "mongo"])
+@pytest.fixture(params=["memory", "mongo", pytest.param(LIVE_BACKEND, marks=pytest.mark.live)])
 async def tree_repo(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> IDocumentTreeRepository:
     if request.param == "memory":
         return InMemoryDocumentTreeRepository()
-    client = FakeMongoClient({"document_tree": FakeMongoCollection()})
+    live = live_mongo_for(request)
+    client: Any = live.motor() if live else FakeMongoClient({"document_tree": FakeMongoCollection()})
     monkeypatch.setattr(mongo_base.MongoClientFactory, "get_client", classmethod(lambda cls, _conn: client))
-    repo = MongoDocumentTreeRepository(connection_string="mongodb://mongo.invalid", logger=RecordingLogger())
+    repo = MongoDocumentTreeRepository(
+        connection_string="mongodb://mongo.invalid",
+        database_name=live.database if live else "agno",
+        logger=RecordingLogger(),
+    )
     await repo.ensure_indexes()
     return repo
 

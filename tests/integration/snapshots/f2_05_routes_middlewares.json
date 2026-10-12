@@ -892,17 +892,17 @@
    ],
    [
     "APIRoute",
-    "/schedules",
+    "/schedules/{schedule_id}",
     [
-     "PUT"
+     "GET"
     ],
     {
-     "PUT": "ADMIN"
+     "GET": "ADMIN"
     }
    ],
    [
     "APIRoute",
-    "/schedules",
+    "/schedules/{schedule_id}",
     [
      "PATCH"
     ],
@@ -912,7 +912,7 @@
    ],
    [
     "APIRoute",
-    "/schedules",
+    "/schedules/{schedule_id}",
     [
      "DELETE"
     ],
@@ -922,20 +922,52 @@
    ],
    [
     "APIRoute",
-    "/schedules/{path:path}",
+    "/schedules/{schedule_id}/enable",
     [
-     "DELETE",
-     "GET",
-     "PATCH",
-     "POST",
-     "PUT"
+     "POST"
     ],
     {
-     "DELETE": "ADMIN",
-     "GET": "ADMIN",
-     "PATCH": "ADMIN",
-     "POST": "ADMIN",
-     "PUT": "ADMIN"
+     "POST": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/schedules/{schedule_id}/disable",
+    [
+     "POST"
+    ],
+    {
+     "POST": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/schedules/{schedule_id}/trigger",
+    [
+     "POST"
+    ],
+    {
+     "POST": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/schedules/{schedule_id}/runs",
+    [
+     "GET"
+    ],
+    {
+     "GET": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/schedules/{schedule_id}/runs/{run_id}",
+    [
+     "GET"
+    ],
+    {
+     "GET": "ADMIN"
     }
    ],
    [
@@ -950,7 +982,37 @@
    ],
    [
     "APIRoute",
-    "/approvals",
+    "/approvals/count",
+    [
+     "GET"
+    ],
+    {
+     "GET": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/approvals/{approval_id}/status",
+    [
+     "GET"
+    ],
+    {
+     "GET": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/approvals/{approval_id}",
+    [
+     "GET"
+    ],
+    {
+     "GET": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/approvals/{approval_id}/resolve",
     [
      "POST"
     ],
@@ -960,50 +1022,12 @@
    ],
    [
     "APIRoute",
-    "/approvals",
-    [
-     "PUT"
-    ],
-    {
-     "PUT": "ADMIN"
-    }
-   ],
-   [
-    "APIRoute",
-    "/approvals",
-    [
-     "PATCH"
-    ],
-    {
-     "PATCH": "ADMIN"
-    }
-   ],
-   [
-    "APIRoute",
-    "/approvals",
+    "/approvals/{approval_id}",
     [
      "DELETE"
     ],
     {
      "DELETE": "ADMIN"
-    }
-   ],
-   [
-    "APIRoute",
-    "/approvals/{path:path}",
-    [
-     "DELETE",
-     "GET",
-     "PATCH",
-     "POST",
-     "PUT"
-    ],
-    {
-     "DELETE": "ADMIN",
-     "GET": "ADMIN",
-     "PATCH": "ADMIN",
-     "POST": "ADMIN",
-     "PUT": "ADMIN"
     }
    ],
    [
@@ -1943,17 +1967,17 @@
    ],
    [
     "APIRoute",
-    "/schedules",
+    "/schedules/{schedule_id}",
     [
-     "PUT"
+     "GET"
     ],
     {
-     "PUT": "ADMIN"
+     "GET": "ADMIN"
     }
    ],
    [
     "APIRoute",
-    "/schedules",
+    "/schedules/{schedule_id}",
     [
      "PATCH"
     ],
@@ -1963,7 +1987,7 @@
    ],
    [
     "APIRoute",
-    "/schedules",
+    "/schedules/{schedule_id}",
     [
      "DELETE"
     ],
@@ -1973,20 +1997,52 @@
    ],
    [
     "APIRoute",
-    "/schedules/{path:path}",
+    "/schedules/{schedule_id}/enable",
     [
-     "DELETE",
-     "GET",
-     "PATCH",
-     "POST",
-     "PUT"
+     "POST"
     ],
     {
-     "DELETE": "ADMIN",
-     "GET": "ADMIN",
-     "PATCH": "ADMIN",
-     "POST": "ADMIN",
-     "PUT": "ADMIN"
+     "POST": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/schedules/{schedule_id}/disable",
+    [
+     "POST"
+    ],
+    {
+     "POST": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/schedules/{schedule_id}/trigger",
+    [
+     "POST"
+    ],
+    {
+     "POST": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/schedules/{schedule_id}/runs",
+    [
+     "GET"
+    ],
+    {
+     "GET": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/schedules/{schedule_id}/runs/{run_id}",
+    [
+     "GET"
+    ],
+    {
+     "GET": "ADMIN"
     }
    ],
    [
@@ -2001,7 +2057,37 @@
    ],
    [
     "APIRoute",
-    "/approvals",
+    "/approvals/count",
+    [
+     "GET"
+    ],
+    {
+     "GET": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/approvals/{approval_id}/status",
+    [
+     "GET"
+    ],
+    {
+     "GET": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/approvals/{approval_id}",
+    [
+     "GET"
+    ],
+    {
+     "GET": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/approvals/{approval_id}/resolve",
     [
      "POST"
     ],
@@ -2011,50 +2097,12 @@
    ],
    [
     "APIRoute",
-    "/approvals",
-    [
-     "PUT"
-    ],
-    {
-     "PUT": "ADMIN"
-    }
-   ],
-   [
-    "APIRoute",
-    "/approvals",
-    [
-     "PATCH"
-    ],
-    {
-     "PATCH": "ADMIN"
-    }
-   ],
-   [
-    "APIRoute",
-    "/approvals",
+    "/approvals/{approval_id}",
     [
      "DELETE"
     ],
     {
      "DELETE": "ADMIN"
-    }
-   ],
-   [
-    "APIRoute",
-    "/approvals/{path:path}",
-    [
-     "DELETE",
-     "GET",
-     "PATCH",
-     "POST",
-     "PUT"
-    ],
-    {
-     "DELETE": "ADMIN",
-     "GET": "ADMIN",
-     "PATCH": "ADMIN",
-     "POST": "ADMIN",
-     "PUT": "ADMIN"
     }
    ],
    [

@@ -40,7 +40,6 @@ from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.model_config import ModelConfig
 from src.domain.entities.tool import HttpMethod, ParameterType, Tool, ToolParameter
 from src.domain.ports import IModelFactory
-from src.infrastructure.runtime.agno import agent_factory_service
 from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService
 from src.infrastructure.runtime.agno.http_tool_factory import HttpToolFactory
 from src.infrastructure.web.app_factory import AppFactory
@@ -191,13 +190,13 @@ def upstream(monkeypatch: pytest.MonkeyPatch) -> list[httpx.Request]:
         return httpx.Response(200, json={"logradouro": "Praça da Sé"})
 
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real_client(transport=httpx.MockTransport(handler), **kw))
-    monkeypatch.setattr(agent_factory_service, "MongoAgentDb", lambda **_: None)
     return requests
 
 
 async def _http_agent(models: _ScriptedModelFactory, agent_id: str) -> Agent:
     service = AgentFactoryService(
         db_url="mongodb://mongo.invalid:27017",
+        session_db=None,
         logger=RecordingLogger(),
         model_factory=models,
         embedder_factory=FakeEmbedderFactory(),

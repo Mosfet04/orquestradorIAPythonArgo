@@ -524,6 +524,7 @@ Toda rota exige chave de API, exceto `GET /livez` e o preflight CORS (`OPTIONS` 
 - **Chaves**: `API_KEY_RUN` (uso dos agentes) e `API_KEY_ADMIN` (operação; vale também onde a run vale). As duas juntas, diferentes entre si, com ao menos 32 caracteres ASCII visíveis. Gere cada uma com `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
 - **Credencial**: `Authorization: Bearer <chave>` ou `X-API-Key: <chave>`. Com os dois headers vale o Bearer.
 - **Rotas admin** (só `API_KEY_ADMIN`): `/admin/*`, `/metrics` e `/metrics/*`, `/databases/*`, `/eval-runs*`, `/components*`, `/schedules*`, `/registry*`, `/approvals*`, `POST /optimize-memories` (reescreve memórias de qualquer `user_id` com o modelo que o request escolher); `DELETE` em `/sessions*` e `/memories*`; `POST|PUT|PATCH|DELETE` em `/knowledge*` (inclusive `POST /knowledge/search`, que devolve o texto dos chunks de toda a base e gera custo de embedding); `/docs`, `/redoc` e `/openapi.json` fora de `ENVIRONMENT=development`.
+- **`/schedules*`, `/approvals*` e `/components*`**: o AgentOS recebe o db de sessões (`db=`), então `/schedules*` e `/approvals*` são as rotas reais dele (não mais um stub genérico), todas só com a chave admin. Com MongoDB, o agno 2.5.8 não implementa agenda nem aprovações: elas respondem `503` (`... not supported by the configured database`); método ou caminho que a rota real não tem responde `405`/`404`. `/components*` continua `503`: o db é assíncrono e, por isso, o AgentOS não grava nem carrega do banco agente ou team que não esteja na configuração.
 - **Rotas run**: todo o resto (runs de agente/team, `/agui` e `/agui/{id}`, `/agents`, `/teams`, `/sessions`, `/memories` exceto `DELETE`, `/config`, `/health`, WebSocket `/workflows/ws`...).
 - **Respostas**: `401 {"detail":"unauthorized"}` + `WWW-Authenticate: Bearer` sem credencial ou com chave inválida; `403 {"detail":"forbidden"}` com a chave run em rota admin. WebSocket sem chave válida é recusado no handshake (`websocket.close` 1008 antes do accept; o servidor responde 403). O WebSocket só autentica por header (`Authorization`/`X-API-Key`): navegador não manda header customizado no handshake, então com chaves configuradas o `/workflows/ws` só é usável por cliente não-navegador. O 401 de uma origem permitida leva os headers CORS.
 - **Fail-closed**: sem nenhuma chave o app só inicia com `APP_HOST` em loopback (`127.0.0.0/8`, `::1`, `localhost`) **e** `ENVIRONMENT` `development` ou `test`; nesse modo dev local não há chave (aviso no log), mas cada request só passa se o cliente, o endereço local do servidor e o header `Host` (`localhost`, `127.x`, `[::1]`, porta opcional) forem loopback (socket UNIX não é suportado nesse modo) e se não vier de outro site no navegador: `Origin` presente precisa estar em `CORS_ALLOWED_ORIGINS` (origem permitida passa mesmo `cross-site`, como os.agno.com → localhost) e, sem `Origin`, `Sec-Fetch-Site: cross-site` é recusado. O resto recebe 401 (WebSocket: 1008). `/livez` segue público. Em qualquer outro caso (ex.: `0.0.0.0`, ou `production` no loopback) o app recusa iniciar com erro claro. Só uma das chaves também é erro.
@@ -638,6 +639,8 @@ O MongoDB é o coração da configuração. Todas as collections estão no datab
 | `agno_memories` | **agno** (automático) | Memórias de longo prazo por usuário |
 | `agno_traces` | **agno** (automático) | Traces de execução do agente (interno agno, não OTel) |
 | `agno_spans` | **agno** (automático) | Spans de operações do agente (interno agno, não OTel) |
+
+**Db de sessões compartilhado:** `agno_sessions` e `agno_memories` são lidas e gravadas por um único db assíncrono (`SessionDb`, em `src/infrastructure/runtime/agno/session_db.py`: o `AsyncMongoDb` do agno sobre um cliente motor), o mesmo para todos os agentes, teams e para o AgentOS. O I/O de sessão e memória não roda no event loop, há um cliente Mongo só para elas (antes, um por agente/team) e ele é fechado uma vez no shutdown, fora do event loop. Coleções, documentos e índices são os mesmos de antes: dados existentes continuam legíveis, e um `session_id` usado com um agente e depois com um team (ou o contrário) continua a mesma conversa. Timeouts e pool desse cliente são os do driver; ajuste pela própria `MONGO_CONNECTION_STRING` (ex.: `serverSelectionTimeoutMS`). No shutdown, um run que ainda esteja em andamento quando o prazo gracioso do servidor (`timeout_graceful_shutdown` do uvicorn) vence é cortado e o cliente recebe `500`.
 
 ### Collection: `agents_config`
 
@@ -947,6 +950,10 @@ pytest
 
 # Suíte padrão em paralelo, como na CI (um worker por núcleo físico, pytest-xdist)
 pytest -m "not live" -n auto
+
+# Testes live contra um MongoDB real (nunca na CI; sem MONGO_LIVE_URL são pulados).
+# Use um Mongo descartável: cada teste cria um banco orq_live_<id> e o apaga no fim.
+MONGO_LIVE_URL='mongodb://localhost:27017/?directConnection=true' pytest -m live
 
 # Com output verboso
 pytest -v

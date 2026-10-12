@@ -20,9 +20,9 @@ import yaml
 from src.infrastructure.web import app_factory
 from tests.fakes import RecordingLogger
 from tests.fakes.config_stores import MongoBackend, YamlBackend
+from tests.fakes.seed import SEED
 from tests.fakes.startup_world import CLEAN_ENV, Events, startup_world
 from tests.fakes.web import loopback_client
-from tests.unit.test_seed_tools import SEED
 
 ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE = ROOT / "config.example.yaml"

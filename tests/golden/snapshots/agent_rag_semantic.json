@@ -4,7 +4,7 @@
       "add_datetime_to_context": true,
       "add_history_to_context": true,
       "db": {
-        "__type__": "agno.db.mongo.mongo.MongoDb",
+        "__type__": "src.infrastructure.runtime.agno.session_db.SessionDb",
         "db_name": "golden_db",
         "db_url": "mongodb://mongo.golden.invalid:27017",
         "memory_table_name": "agno_memories",

@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 import agno.os.app as agno_os_app
 import pytest
 from agno.agent import Agent
+from agno.db.base import AsyncBaseDb
 from agno.os import AgentOS
 from agno.team import Team
 from fastapi import FastAPI
@@ -16,9 +17,10 @@ from starlette.testclient import TestClient
 
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.team_config import TeamConfig
-from src.infrastructure.runtime.agno import AgnoRuntime, agent_factory_service, team_factory_service
+from src.infrastructure.runtime.agno import AgnoRuntime
 from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService
 from src.infrastructure.runtime.agno.http_tool_factory import HttpToolFactory
+from src.infrastructure.runtime.agno.session_db import SessionDb
 from src.infrastructure.runtime.agno.team_factory_service import TeamFactoryService
 from tests.fakes import (
     FakeChatModel,
@@ -27,6 +29,7 @@ from tests.fakes import (
     InMemoryToolRepository,
     RecordingLogger,
 )
+from tests.fakes.session_db import fake_session_db
 
 CONN = "mongodb://mongo.test.invalid:27017"
 
@@ -35,23 +38,32 @@ def _agent(agent_id: str) -> AgentConfig:
     return AgentConfig(id=agent_id, nome=agent_id, factory_ia_model="openai", model="m", descricao="d", prompt="p")
 
 
-@pytest.fixture
-def runtime(monkeypatch: pytest.MonkeyPatch) -> AgnoRuntime:
-    monkeypatch.setattr(agent_factory_service, "MongoAgentDb", lambda **_: None)
-    monkeypatch.setattr(team_factory_service, "MongoAgentDb", lambda **_: None)
+def _runtime(session_db: AsyncBaseDb | None) -> AgnoRuntime:
     logger = RecordingLogger()
     models = FakeModelFactory()
     return AgnoRuntime(
         agent_factory=AgentFactoryService(
             db_url=CONN,
+            session_db=session_db,
             logger=logger,
             model_factory=models,
             embedder_factory=FakeEmbedderFactory(),
             tool_factory=HttpToolFactory(logger=logger),
             tool_repository=InMemoryToolRepository(),
         ),
-        team_factory=TeamFactoryService(db_url=CONN, logger=logger, model_factory=models),
+        team_factory=TeamFactoryService(session_db=session_db, logger=logger, model_factory=models),
+        session_db=session_db,
     )
+
+
+@pytest.fixture
+def session_db() -> SessionDb:
+    return fake_session_db()
+
+
+@pytest.fixture
+def runtime(session_db: SessionDb) -> AgnoRuntime:
+    return _runtime(session_db)
 
 
 async def test_handles_sao_agent_e_team_do_agno_e_o_team_recebe_os_agentes_membros(runtime: AgnoRuntime):

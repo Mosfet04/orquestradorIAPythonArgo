@@ -14,19 +14,19 @@ from typing import Any
 
 from src.infrastructure.repositories.config_documents import map_team_document
 from tests.fakes.logger import RecordingLogger
-from tests.unit.test_seed_tools import _insert_many_block
+from tests.fakes.seed import insert_many_block
 
 NON_CANONICAL_KEYS = {"memberIds", "userMemoryActive", "summaryActive", "factory_ia_model"}
 
 
 def _seed_team_docs() -> list[dict[str, Any]]:
-    docs = json.loads(_insert_many_block("teams_config"))
+    docs = json.loads(insert_many_block("teams_config"))
     assert isinstance(docs, list) and docs
     return docs
 
 
 def _seed_agent_ids() -> list[str]:
-    return re.findall(r'^\s{4}"id":\s*"([^"]+)"', _insert_many_block("agents_config"), re.MULTILINE)
+    return re.findall(r'^\s{4}"id":\s*"([^"]+)"', insert_many_block("agents_config"), re.MULTILINE)
 
 
 def test_seed_de_teams_usa_so_o_formato_canonico():

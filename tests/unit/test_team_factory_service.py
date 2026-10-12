@@ -1,9 +1,8 @@
 """``TeamFactoryService``: o ``Team`` real do agno 2.5 montado a partir de ``TeamConfig``.
 
-Sem ``patch`` de ``Team``/``MongoDb`` no módulo da fábrica: membros são ``Agent`` reais do agno, o
-modelo vem do ``FakeModelFactory`` e o I/O do agno é cortado na borda pela fixture
-``offline_knowledge`` (o ``MongoDb`` de sessões é o real, com cliente que só conecta no primeiro uso;
-o F2-08 passa a injetá-lo).
+Sem ``patch`` no módulo da fábrica: membros são ``Agent`` reais do agno, o modelo vem do
+``FakeModelFactory`` e o db de sessões é injetado (F2-08: o ``SessionDb`` de produção sobre o
+cliente motor em memória).
 
 Coberto em outro lugar (e por isso não repetido): kwargs completos de ``Team`` (``tests/golden``),
 guardrail de ``user_id`` (``test_qa_f1_06_guardrail.py``) e o contrato do runtime
@@ -14,17 +13,16 @@ from __future__ import annotations
 
 import pytest
 from agno.agent import Agent
-from agno.db.mongo import MongoDb
 from agno.team.mode import TeamMode
 
 from src.domain.entities.team_config import TeamConfig
 from src.infrastructure.runtime.agno.team_factory_service import TeamFactoryService
 from tests.fakes import FakeChatModel, FakeModelFactory, RecordingLogger
+from tests.fakes.session_db import fake_session_db
 
 pytestmark = pytest.mark.usefixtures("offline_knowledge")
 
-DB_URL = "mongodb://mongo.test.invalid:27017"
-DB_NAME = "testdb"
+SESSION_DB = fake_session_db()
 
 
 def _config(**overrides: object) -> TeamConfig:
@@ -45,9 +43,7 @@ def _agent(agent_id: str) -> Agent:
 
 
 def _service(logger: RecordingLogger, models: FakeModelFactory | None = None) -> TeamFactoryService:
-    return TeamFactoryService(
-        db_url=DB_URL, db_name=DB_NAME, logger=logger, model_factory=models or FakeModelFactory()
-    )
+    return TeamFactoryService(session_db=SESSION_DB, logger=logger, model_factory=models or FakeModelFactory())
 
 
 def test_team_montado_carrega_identidade_modelo_membros_e_db_da_config() -> None:
@@ -73,8 +69,7 @@ def test_team_montado_carrega_identidade_modelo_membros_e_db_da_config() -> None
     members = team.members
     assert isinstance(members, list)
     assert len(members) == 2 and members[0] is a and members[1] is b
-    assert isinstance(team.db, MongoDb)
-    assert (team.db.db_url, team.db.db_name) == (DB_URL, DB_NAME)
+    assert team.db is SESSION_DB  # o db de sessões injetado, o mesmo de todas as entidades
     assert logger.messages("warning", "error") == []
     assert [(r.message, r.context) for r in logger.records if r.level == "info"] == [
         ("Team criado", {"team_id": "team-1", "mode": "route", "member_count": 2})

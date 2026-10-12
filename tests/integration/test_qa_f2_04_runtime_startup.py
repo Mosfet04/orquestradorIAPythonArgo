@@ -26,7 +26,6 @@ from typing import Any
 
 import pytest
 from agno.agent import Agent
-from agno.db.in_memory import InMemoryDb
 from agno.models.response import ModelResponse
 from agno.team import Team
 from starlette.testclient import TestClient
@@ -34,7 +33,6 @@ from starlette.testclient import TestClient
 from src.domain.ports import InvalidModelConfigError
 from src.infrastructure import dependency_injection as di
 from src.infrastructure.repositories import mongo_base
-from src.infrastructure.runtime.agno import agent_factory_service, team_factory_service
 from src.infrastructure.runtime.agno import runtime as agno_runtime_module
 from src.infrastructure.web import app_factory
 from src.infrastructure.web.app_factory import AppFactory
@@ -48,6 +46,7 @@ from tests.fakes import (
     running_on_event_loop,
 )
 from tests.fakes.knowledge import cut_agno_io
+from tests.fakes.session_db import use_fake_session_db
 
 LOCAL = {"base_url": "http://127.0.0.1:7777", "client": ("127.0.0.1", 50000)}
 SECRET = "SEGREDO-QA-F204-DA-EXCECAO"  # noqa: S105 - marcador de vazamento, não é credencial
@@ -195,13 +194,11 @@ def _boot(root: Path, *, search_fails: bool) -> Booted:
         collections["teams_config"] = _Collection(copy.deepcopy(TEAM_DOCS))
         collections["tools"] = _Collection([copy.deepcopy(TOOL_DOC)])
         client = FakeMongoClient(collections)
-        memory_db = InMemoryDb()
         mp.setattr(mongo_base.MongoClientFactory, "get_client", classmethod(lambda cls, _conn: client))
         mp.setattr(di, "AsyncIOMotorClient", _Motor)
         mp.setattr(di, "StructlogLoggerAdapter", lambda _name: result.logger)
         mp.setattr(di, "MongoDocumentTreeRepository", lambda **_: _Tree())
-        mp.setattr(agent_factory_service, "MongoAgentDb", lambda **_: memory_db)
-        mp.setattr(team_factory_service, "MongoAgentDb", lambda **_: memory_db)
+        use_fake_session_db(mp)
         mp.setattr(app_factory, "setup_telemetry", lambda config: None)
         mp.setattr(app_factory, "shutdown_telemetry", lambda: None)
 

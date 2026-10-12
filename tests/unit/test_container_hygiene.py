@@ -9,13 +9,14 @@ sem credencial literal.
 
 from __future__ import annotations
 
-import posixpath
 import re
 from pathlib import Path
 from typing import Any
 
 import pytest
 import yaml
+
+from tests.fakes.dockerignore import excluded, parse_dockerignore
 
 ROOT = Path(__file__).resolve().parents[2]
 DOCKERIGNORE = ROOT / ".dockerignore"
@@ -34,80 +35,12 @@ INTERPOLATION = re.compile(r"\$\{[A-Z][A-Z0-9_]*(?::?[-?][^}]*)?\}")
 URL_USERINFO = re.compile(r"://(?P<userinfo>[^/@\s]+)@")
 
 
-# ── .dockerignore (emulação do moby/patternmatcher) ────────────────
-
-
-def _compile_pattern(pattern: str) -> re.Pattern[str]:
-    """Converte um padrão do `.dockerignore` em regex como o ``patternmatcher.compile``.
-
-    ``**`` casa qualquer coisa (inclusive ``/``; ``**/`` também casa zero diretórios),
-    ``*`` casa tudo menos ``/``, ``?`` casa um caractere que não é ``/``; os
-    metacaracteres ``.+()|{}$`` são escapados, o resto passa como regex (ex.: ``[cod]``).
-    Ancorado nas duas pontas.
-    """
-    regex = "^"
-    i = 0
-    while i < len(pattern):
-        ch = pattern[i]
-        if ch == "*":
-            if i + 1 < len(pattern) and pattern[i + 1] == "*":
-                i += 1
-                if i + 1 < len(pattern) and pattern[i + 1] == "/":
-                    i += 1
-                regex += ".*" if i + 1 >= len(pattern) else "(.*/)?"
-            else:
-                regex += "[^/]*"
-        elif ch == "?":
-            regex += "[^/]"
-        elif ch in ".+()|{}$":
-            regex += "\\" + ch
-        elif ch == "\\" and i + 1 < len(pattern):
-            i += 1
-            regex += re.escape(pattern[i])
-        else:
-            regex += ch
-        i += 1
-    return re.compile(regex + "$")
-
-
-def _parse_dockerignore(text: str) -> list[tuple[bool, re.Pattern[str]]]:
-    """(é negação, regex), na ordem do arquivo, como o ``ignorefile.ReadAll``.
-
-    Comentário só se ``#`` for o 1º caractere da linha ANTES do trim (``"  #x"`` é padrão).
-    """
-    rules: list[tuple[bool, re.Pattern[str]]] = []
-    for raw in text.splitlines():
-        if raw.startswith("#"):
-            continue
-        line = raw.strip()
-        if not line:
-            continue
-        negate = line.startswith("!")
-        pattern = (line[1:] if negate else line).strip()
-        pattern = posixpath.normpath(pattern)  # filepath.Clean: "src/" -> "src"
-        if len(pattern) > 1 and pattern.startswith("/"):
-            pattern = pattern[1:]
-        rules.append((negate, _compile_pattern(pattern)))
-    return rules
-
-
-def _excluded(path: str, rules: list[tuple[bool, re.Pattern[str]]]) -> bool:
-    """``PatternMatcher.MatchesOrParentMatches``: o arquivo ou um diretório pai casa;
-    a última regra aplicável vence (negação ``!`` reinclui)."""
-    parents = posixpath.dirname(path).split("/") if "/" in path else []
-    prefixes = ["/".join(parents[: i + 1]) for i in range(len(parents))]
-    matched = False
-    for negate, regex in rules:
-        if negate != matched:
-            continue
-        if regex.match(path) or any(regex.match(p) for p in prefixes):
-            matched = not negate
-    return matched
+# ── .dockerignore (emulação em tests/fakes/dockerignore.py) ─────────
 
 
 @pytest.fixture(scope="module")
 def dockerignore_rules() -> list[tuple[bool, re.Pattern[str]]]:
-    return _parse_dockerignore(DOCKERIGNORE.read_text(encoding="utf-8"))
+    return parse_dockerignore(DOCKERIGNORE.read_text(encoding="utf-8"))
 
 
 @pytest.mark.parametrize(
@@ -132,7 +65,7 @@ def dockerignore_rules() -> list[tuple[bool, re.Pattern[str]]]:
     ],
 )
 def test_emulador_segue_a_semantica_do_patternmatcher(rules, path, expected):
-    assert _excluded(path, _parse_dockerignore(rules)) is expected
+    assert excluded(path, parse_dockerignore(rules)) is expected
 
 
 def test_dockerignore_existe_e_nao_esta_no_gitignore():
@@ -186,7 +119,7 @@ def test_dockerignore_e_allowlist():
     ],
 )
 def test_dockerignore_exclui_segredos_e_lixo_local(dockerignore_rules, path):
-    assert _excluded(path, dockerignore_rules), f"{path} entraria no contexto de build"
+    assert excluded(path, dockerignore_rules), f"{path} entraria no contexto de build"
 
 
 @pytest.mark.parametrize(
@@ -201,7 +134,7 @@ def test_dockerignore_exclui_segredos_e_lixo_local(dockerignore_rules, path):
     ],
 )
 def test_dockerignore_mantem_o_necessario_para_a_imagem(dockerignore_rules, path):
-    assert not _excluded(path, dockerignore_rules), f"{path} ficaria fora do contexto de build"
+    assert not excluded(path, dockerignore_rules), f"{path} ficaria fora do contexto de build"
 
 
 # ── Dockerfile ─────────────────────────────────────────────────────
