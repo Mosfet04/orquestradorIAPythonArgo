@@ -16,6 +16,7 @@ Ordem de execução = numeração. Cada item passa por `/dev-cycle <item> --comm
 | F9 Execução durável | Fila durável, runs em background, cancelamento | F3 | [F3-F9.md](F3-F9.md) |
 
 ## Status dos itens
+
 | Item | Status |
 |---|---|
 | F0-01 | concluído |
@@ -39,8 +40,10 @@ Ordem de execução = numeração. Cada item passa por `/dev-cycle <item> --comm
 | F2-06 | concluído |
 | F2-07 | concluído |
 | F2-08 | concluído |
+| F2-09 | concluído |
 
 ## Molde de item (lido pelo `/dev-cycle`)
+
 ```
 ## <id> — <título>
 Base: <branch/commit> (opcional)   Branch: <branch> (opcional)

@@ -121,6 +121,7 @@ fixes a vulnerable version by itself. Every remaining `pip-audit` finding must b
 justified in the PR description (why it does not apply or why it cannot be fixed yet).
 
 Notes:
+
 - Locks are generated on **Linux / CPython 3.12** and validated for Linux CPython 3.11 and 3.12 (Docker image and CI). `pip-compile` resolves for the machine it runs on: Windows-only transitive dependencies are dropped. That is why `colorama` is listed explicitly in `requirements.in`. On native Windows, if `--require-hashes` still fails, use WSL/Docker or regenerate locally (and do not commit that lock).
 - `uvloop` is declared with `sys_platform != "win32"`. Note: `app.py` still imports `uvloop` unconditionally, so it fails on native Windows until roadmap item F1-03.
 - Optional extras are **not installed by default** and stay out of the lock: `PyJWT` (AgentOS JWT auth), `mcp` (MCP tools), `anthropic`, `groq` (model providers). To adopt one, add it to `requirements.in` with a minimum version and regenerate.
@@ -211,6 +212,11 @@ The legacy findings are recorded as an explicit baseline (`per-file-ignores` in 
 `ignore_errors` modules in mypy, `ignore_imports` in import-linter). **The baseline can only
 shrink**: fix and remove an entry when you touch that code; never add new entries. New modules
 are checked with every rule.
+
+Docstrings are linted by ruff's `D` rules (pydocstyle, `pep257` convention plus `D212`: the
+summary goes on the first line) in `src/` only; `tests/` and `examples/` are exempt. Docstrings
+are written in Portuguese, so `D401` (English imperative mood) is off, as are `D104`/`D105`/`D107`
+(empty package `__init__.py`, magic methods and `__init__`: the class docstring documents them).
 
 ### Python Standards
 
@@ -403,8 +409,7 @@ pytest tests/unit/domain/test_agent_config.py -v
 
 ```python
 def create_agent(self, config: AgentConfig) -> Agent:
-    """
-    Create a new agent instance based on the provided configuration.
+    """Create a new agent instance based on the provided configuration.
     
     Args:
         config: The agent configuration containing model, prompt, and other settings.

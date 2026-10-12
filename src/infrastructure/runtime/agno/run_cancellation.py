@@ -63,6 +63,7 @@ class RegisteredRunCancellationManager(BaseRunCancellationManager):
             self._runs.setdefault(run_id, False)
 
     async def aregister_run(self, run_id: str) -> None:
+        """Versão assíncrona de ``register_run``."""
         self.register_run(run_id)
 
     def cancel_run(self, run_id: str) -> bool:
@@ -74,35 +75,44 @@ class RegisteredRunCancellationManager(BaseRunCancellationManager):
             return True
 
     async def acancel_run(self, run_id: str) -> bool:
+        """Versão assíncrona de ``cancel_run``."""
         return self.cancel_run(run_id)
 
     def is_cancelled(self, run_id: str) -> bool:
+        """Diz se o cancelamento do run foi pedido."""
         with self._lock:
             return self._runs.get(run_id, False)
 
     async def ais_cancelled(self, run_id: str) -> bool:
+        """Versão assíncrona de ``is_cancelled``."""
         return self.is_cancelled(run_id)
 
     def cleanup_run(self, run_id: str) -> None:
+        """Esquece o run (encerrado)."""
         with self._lock:
             self._runs.pop(run_id, None)
 
     async def acleanup_run(self, run_id: str) -> None:
+        """Versão assíncrona de ``cleanup_run``."""
         self.cleanup_run(run_id)
 
     def raise_if_cancelled(self, run_id: str) -> None:
+        """Levanta ``RunCancelledException`` se o cancelamento do run foi pedido."""
         if self.is_cancelled(run_id):
             # Mesma mensagem do gerenciador do agno: vira o conteúdo do RunCancelledEvent.
             raise RunCancelledException(f"Run {run_id} was cancelled")
 
     async def araise_if_cancelled(self, run_id: str) -> None:
+        """Versão assíncrona de ``raise_if_cancelled``."""
         self.raise_if_cancelled(run_id)
 
     def get_active_runs(self) -> dict[str, bool]:
+        """Cópia do estado dos runs registrados (id -> cancelado)."""
         with self._lock:
             return dict(self._runs)
 
     async def aget_active_runs(self) -> dict[str, bool]:
+        """Versão assíncrona de ``get_active_runs``."""
         return self.get_active_runs()
 
 

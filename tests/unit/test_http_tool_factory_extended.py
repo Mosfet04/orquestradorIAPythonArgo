@@ -91,6 +91,7 @@ class TestResolveUrl:
             {"key": "not a dict {bad}"},
         )
         assert url == "http://example.com/api"
+        assert remaining == {"key": "not a dict {bad}"}
 
 
 # ── _serialize ──────────────────────────────────────────────────────

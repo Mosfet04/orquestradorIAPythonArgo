@@ -63,6 +63,7 @@ class HealthService:
         self._logger = logger
 
     async def check_async(self) -> dict[str, Any]:
+        """Roda os checks (Mongo, memória, OTLP) em paralelo e devolve o corpo do health."""
         start = asyncio.get_event_loop().time()
         checks = await asyncio.gather(
             self._check_mongodb(),
@@ -131,8 +132,9 @@ class HealthService:
 
 
 def build_provider_registry(config: AppConfig, logger: ILogger) -> ProviderRegistry:
-    """Registry de providers do app: built-ins + plugins + segredos em ``SECRETS_DIR`` + destino
-    permitido para ``base_url``.
+    """Registry de providers do app.
+
+    Built-ins + plugins + segredos em ``SECRETS_DIR`` + destino permitido para ``base_url``.
 
     ``OLLAMA_BASE_URL`` é do operador: vai só para o Ollama e não passa pela allowlist.
     Loopback em ``base_url`` e import dinâmico de spec só no modo dev local (mesma regra da
@@ -193,6 +195,40 @@ class DependencyContainer:
         # Um registry atende modelos e embedders (portas IModelFactory e IEmbedderFactory).
         providers = await asyncio.to_thread(build_provider_registry, self.config, self._logger)
 
+        await self._connect_mongo()
+
+        # ── Wiring ──────────────────────────────────────────────────
+        tool_factory = HttpToolFactory(logger=self._logger)
+
+        agent_config_repo, team_config_repo, tool_repo = self._build_config_repositories()
+
+        indexing_service, search_factory = await self._build_hierarchical_rag(providers)
+
+        runtime = self._build_runtime(
+            providers,
+            tool_factory=tool_factory,
+            tool_repo=tool_repo,
+            indexing_service=indexing_service,
+            search_factory=search_factory,
+        )
+
+        agents_use_case = GetActiveAgentsUseCase(
+            runtime, agent_config_repo, self._logger
+        )
+        teams_use_case = GetActiveTeamsUseCase(
+            runtime, team_config_repo, self._logger
+        )
+
+        self._controller = OrquestradorController(
+            get_active_agents_use_case=agents_use_case,
+            get_active_teams_use_case=teams_use_case,
+            logger=self._logger,
+            on_cache_hit=TelemetryMetrics.record_cache_hit,
+            on_cache_miss=TelemetryMetrics.record_cache_miss,
+        )
+
+    async def _connect_mongo(self) -> None:
+        """Cliente Mongo do container e health service; o app sobe mesmo sem o Mongo."""
         self._mongo_client = AsyncIOMotorClient(
             self.config.mongo_connection_string,
             maxPoolSize=50,
@@ -209,18 +245,15 @@ class DependencyContainer:
 
         self._health_service = HealthService(self._mongo_client, self._logger)
 
-        # ── Wiring ──────────────────────────────────────────────────
-        conn = self.config.mongo_connection_string
-        db = self.config.mongo_database_name
-
-        tool_factory = HttpToolFactory(logger=self._logger)
-
-        agent_config_repo, team_config_repo, tool_repo = self._build_config_repositories()
-
-        # ── Hierárquica: parser, tree repo, summary gen, factories ──
+    async def _build_hierarchical_rag(
+        self, providers: ProviderRegistry
+    ) -> tuple[DocumentIndexingService, KnowledgeSearchFactory]:
+        """Parser, árvore de documentos (com índices), gerador de resumo e as fábricas do RAG hierárquico."""
         doc_parser = TextDocumentParser()
         tree_repo = MongoDocumentTreeRepository(
-            connection_string=conn, database_name=db, logger=self._logger
+            connection_string=self.config.mongo_connection_string,
+            database_name=self.config.mongo_database_name,
+            logger=self._logger,
         )
         try:
             await tree_repo.ensure_indexes()
@@ -243,6 +276,20 @@ class DependencyContainer:
         search_factory = KnowledgeSearchFactory(
             tree_repository=tree_repo, logger=self._logger
         )
+        return indexing_service, search_factory
+
+    def _build_runtime(
+        self,
+        providers: ProviderRegistry,
+        *,
+        tool_factory: HttpToolFactory,
+        tool_repo: IToolRepository,
+        indexing_service: DocumentIndexingService,
+        search_factory: KnowledgeSearchFactory,
+    ) -> AgnoRuntime:
+        """Db de sessões compartilhado, fábricas de agente e team e o runtime do agno."""
+        conn = self.config.mongo_connection_string
+        db = self.config.mongo_database_name
 
         # Um db de sessões e memória para todas as entidades e para o AgentOS (F2-08): um cliente
         # só, que conecta na primeira operação e é fechado no cleanup.
@@ -269,21 +316,7 @@ class DependencyContainer:
         )
         runtime = AgnoRuntime(agent_factory=agent_factory, team_factory=team_factory, session_db=session_db)
         self._runtime = runtime
-
-        agents_use_case = GetActiveAgentsUseCase(
-            runtime, agent_config_repo, self._logger
-        )
-        teams_use_case = GetActiveTeamsUseCase(
-            runtime, team_config_repo, self._logger
-        )
-
-        self._controller = OrquestradorController(
-            get_active_agents_use_case=agents_use_case,
-            get_active_teams_use_case=teams_use_case,
-            logger=self._logger,
-            on_cache_hit=TelemetryMetrics.record_cache_hit,
-            on_cache_miss=TelemetryMetrics.record_cache_miss,
-        )
+        return runtime
 
     def _build_config_repositories(
         self,
@@ -311,6 +344,7 @@ class DependencyContainer:
         )
 
     def get_orquestrador_controller(self) -> OrquestradorController:
+        """Devolve o controller; ``RuntimeError`` se o container não foi inicializado."""
         if self._controller is None:
             raise RuntimeError("Container não inicializado: chame create_async() antes")
         return self._controller
@@ -323,6 +357,7 @@ class DependencyContainer:
 
     @property
     def health_service(self) -> HealthService | None:
+        """Serviço de health check, ou ``None`` antes da inicialização."""
         return self._health_service
 
     async def cleanup(self) -> None:

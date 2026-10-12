@@ -217,13 +217,20 @@ def test_falha_ao_carregar_entidades_fecha_o_cliente_mongo_uma_vez(
 def test_falha_num_lifespan_do_agentos_recusa_o_startup_e_fecha_o_cliente_mongo_uma_vez(
     spy: Spy, app: FastAPI, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    @asynccontextmanager
-    async def failing(app: FastAPI) -> AsyncIterator[None]:
-        spy.events.append("http:start")
-        raise RuntimeError("lifespan do agno quebrado")
-        yield  # pragma: no cover
+    class _FailingLifespan:
+        """Lifespan do agno (``async with lifespan(app)``) que quebra ao entrar."""
 
-    monkeypatch.setattr(agno_os_app, "http_client_lifespan", failing)
+        def __init__(self, app: FastAPI) -> None:
+            self.app = app
+
+        async def __aenter__(self) -> None:
+            spy.events.append("http:start")
+            raise RuntimeError("lifespan do agno quebrado")
+
+        async def __aexit__(self, *exc_info: object) -> None:
+            """Nunca chamado: ``__aenter__`` falha antes."""
+
+    monkeypatch.setattr(agno_os_app, "http_client_lifespan", _FailingLifespan)
 
     with pytest.raises(RuntimeError, match="lifespan do agno quebrado"):
         with TestClient(app, **LOCAL):  # type: ignore[arg-type]

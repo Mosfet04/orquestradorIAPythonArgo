@@ -22,19 +22,25 @@ class AgentHandle(Protocol):
     """Agente montado pelo runtime; fora dele, só o ``id`` (o da configuração) é lido."""
 
     @property
-    def id(self) -> str: ...
+    def id(self) -> str:
+        """Id do agente (o mesmo da configuração)."""
+        ...
 
 
 class TeamHandle(Protocol):
     """Team montado pelo runtime; fora dele, só o ``id`` (o da configuração) é lido."""
 
     @property
-    def id(self) -> str: ...
+    def id(self) -> str:
+        """Id do team (o mesmo da configuração)."""
+        ...
 
 
 class AgentRuntime(ABC):
-    """Monta uma entidade por vez; a política de carga (id repetido, isolamento de falha,
-    paralelismo e log) é dos casos de uso."""
+    """Monta uma entidade por vez.
+
+    A política de carga (id repetido, isolamento de falha, paralelismo e log) é dos casos de uso.
+    """
 
     @abstractmethod
     async def build_agent(self, config: AgentConfig) -> AgentHandle:

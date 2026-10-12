@@ -31,6 +31,7 @@ class MongoAgentConfigRepository(AsyncMongoRepository, IAgentConfigRepository):
         )
 
     async def get_active_agents(self) -> list[AgentConfig]:
+        """Lista os agentes ativos, do documento mais antigo ao mais novo."""
         try:
             # Ordem determinística (o documento mais antigo primeiro): com id repetido, o
             # use case fica com o primeiro.
@@ -51,6 +52,7 @@ class MongoAgentConfigRepository(AsyncMongoRepository, IAgentConfigRepository):
             raise
 
     async def get_agent_by_id(self, agent_id: str) -> AgentConfig:
+        """Devolve o agente pelo id; ``ValueError`` se não existir."""
         try:
             doc = await self._collection.find_one({"id": agent_id}, sort=self._STABLE_ORDER)
             if not doc:

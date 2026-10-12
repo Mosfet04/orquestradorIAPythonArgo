@@ -15,13 +15,17 @@ class StructlogLoggerAdapter(ILogger):
         self._logger = LoggerFactory.get_logger(name)
 
     def info(self, msg: str, **kwargs: Any) -> None:
+        """Repassa a mensagem informativa ao logger estruturado."""
         self._logger.info(msg, **kwargs)
 
     def warning(self, msg: str, **kwargs: Any) -> None:
+        """Repassa o aviso ao logger estruturado."""
         self._logger.warning(msg, **kwargs)
 
     def error(self, msg: str, **kwargs: Any) -> None:
+        """Repassa o erro ao logger estruturado."""
         self._logger.error(msg, **kwargs)
 
     def debug(self, msg: str, **kwargs: Any) -> None:
+        """Repassa a mensagem de depuração ao logger estruturado."""
         self._logger.debug(msg, **kwargs)

@@ -51,8 +51,10 @@ def parse_secret_ref(ref: object) -> tuple[str, str]:
 
 
 class ModelParams(Mapping[str, ParamValue]):
-    """Parâmetros escalares do modelo: mapeamento somente leitura, com hash, copiável
-    (``deepcopy``/``pickle``/``dataclasses.asdict``) e na ordem do documento."""
+    """Parâmetros escalares do modelo: mapeamento somente leitura e com hash.
+
+    Copiável (``deepcopy``/``pickle``/``dataclasses.asdict``) e na ordem do documento.
+    """
 
     __slots__ = ("_items",)
 
@@ -103,24 +105,30 @@ def _split_url(url: str) -> SplitResult | None:
     return parts
 
 
-def _check_base_url(url: object) -> None:
-    """``http(s)://host[:porta][/caminho]``; sem credencial, query ou fragmento (lugar de segredo).
-
-    Host só ASCII sem ``%`` e sem ``\\`` em lugar nenhum: parsers diferentes (stdlib x WHATWG)
-    leriam hosts diferentes. Destino (SSRF, allowlist) é política de quem conecta (F2-02/F4-01).
-    """
+def _base_url_text(url: object) -> str:
+    r"""A ``base_url`` como texto curto, sem espaço, ``\`` nem caractere de controle (antes de parsear)."""
     if not isinstance(url, str):
         raise ValueError("base_url deve ser texto")
     if len(url) > MAX_BASE_URL_LENGTH:
         raise ValueError(f"base_url maior que {MAX_BASE_URL_LENGTH} caracteres")
     if any(ch.isspace() or not ch.isprintable() for ch in url) or "\\" in url:
         raise ValueError("base_url não pode ter espaço, '\\' nem caractere de controle")
-    parts = _split_url(url)
+    return url
+
+
+def _check_base_url(url: object) -> None:
+    r"""``http(s)://host[:porta][/caminho]``; sem credencial, query ou fragmento (lugar de segredo).
+
+    Host só ASCII sem ``%`` e sem ``\`` em lugar nenhum: parsers diferentes (stdlib x WHATWG)
+    leriam hosts diferentes. Destino (SSRF, allowlist) é política de quem conecta (F2-02/F4-01).
+    """
+    text = _base_url_text(url)
+    parts = _split_url(text)
     if parts is None or parts.scheme not in ("http", "https") or not parts.hostname:
         raise ValueError("base_url deve ser http(s)://host[:porta][/caminho]")
     if "@" in parts.netloc:
         raise ValueError("base_url não pode ter credenciais; use api_key_ref")
-    if "?" in url or "#" in url:
+    if "?" in text or "#" in text:
         raise ValueError("base_url não pode ter query nem fragmento")
     if not parts.netloc.isascii() or "%" in parts.netloc:
         raise ValueError("base_url: host só em ASCII, sem '%' (IDN em punycode)")

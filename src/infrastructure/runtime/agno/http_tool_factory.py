@@ -65,6 +65,7 @@ class HttpToolFactory(IToolFactory):
     # ── IToolFactory ────────────────────────────────────────────────
 
     async def create_tools_from_configs(self, tools: list[Tool]) -> list[Any]:
+        """Cria uma ``Function`` do agno por tool HTTP; tool inválida é descartada com log."""
         functions: list[Function] = []
         for tool in tools:
             invalid = _invalid_route_placeholders(tool)
@@ -219,12 +220,26 @@ def _validated_arguments(tool: Tool, kwargs: dict[str, Any]) -> dict[str, Any]:
     (o ``quote`` não codifica ponto e o segmento seria normalizado pelo httpx).
     """
     declared = {p.name: p for p in tool.parameters}
+    _reject_unknown(declared, kwargs)
+    arguments = _present_arguments(declared, kwargs)
+    _reject_missing(tool, arguments)
+    _reject_wrong_types(declared, arguments)
+    _reject_dot_segments(tool, arguments)
+    return arguments
+
+
+def _reject_unknown(declared: dict[str, ToolParameter], kwargs: dict[str, Any]) -> None:
+    """Recusa chave não declarada; o log leva até ``_MAX_UNKNOWN_NAMES`` nomes truncados."""
     unknown = sorted(name for name in kwargs if name not in declared)
     if unknown:
         shown = [name[:_MAX_NAME_LENGTH] for name in unknown[:_MAX_UNKNOWN_NAMES]]
         if len(unknown) > _MAX_UNKNOWN_NAMES:
             shown.append("...")
         raise _ArgumentError(f"argumento não declarado: {', '.join(shown)}", shown)
+
+
+def _present_arguments(declared: dict[str, ToolParameter], kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Argumentos sem os ``None`` (ausentes), com o booleano de ``string`` desfeito."""
     arguments: dict[str, Any] = {}
     for name, value in kwargs.items():
         if value is None:
@@ -234,19 +249,31 @@ def _validated_arguments(tool: Tool, kwargs: dict[str, Any]) -> dict[str, Any]:
         if isinstance(value, bool) and declared[name].type is ParameterType.STRING:
             value = "true" if value else "false"
         arguments[name] = value
+    return arguments
+
+
+def _reject_missing(tool: Tool, arguments: dict[str, Any]) -> None:
+    """Recusa a falta de argumento obrigatório."""
     missing = [p.name for p in tool.parameters if p.required and p.name not in arguments]
     if missing:
         raise _ArgumentError(f"argumento obrigatório ausente: {', '.join(missing)}", missing)
+
+
+def _reject_wrong_types(declared: dict[str, ToolParameter], arguments: dict[str, Any]) -> None:
+    """Recusa argumento fora do tipo básico declarado."""
     for name, value in arguments.items():
         expected = _JSON_SCHEMA_TYPES[declared[name].type]
         if not _has_json_type(value, expected):
             raise _ArgumentError(f"tipo inválido para {name}: esperado {expected}", [name])
+
+
+def _reject_dot_segments(tool: Tool, arguments: dict[str, Any]) -> None:
+    """Recusa ``.`` e ``..`` em parâmetro de rota (o httpx normalizaria o segmento)."""
     for name in _PLACEHOLDER.findall(tool.route):
         if arguments.get(name) in _DOT_SEGMENTS:
             raise _ArgumentError(
                 f"valor inválido para {name}: '.' e '..' não são permitidos na rota", [name]
             )
-    return arguments
 
 
 def _build_request_kwargs(

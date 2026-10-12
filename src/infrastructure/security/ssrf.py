@@ -81,8 +81,10 @@ def _canonical_ip(candidate: str) -> str | None:
 
 
 def normalize_host(host: str) -> str:
-    """Forma única para comparar hosts (allowlist, hosts do provider): minúsculo, sem colchetes,
-    IP na forma canônica (``[FD00:0::7]`` -> ``fd00::7``) e nome sem o ponto final. Não valida.
+    """Forma única para comparar hosts (allowlist, hosts do provider). Não valida.
+
+    Minúsculo, sem colchetes, IP na forma canônica (``[FD00:0::7]`` -> ``fd00::7``) e nome sem
+    o ponto final.
 
     ``10.0.0.5.`` fica como está: é um nome DNS (``inet_aton``/``AI_NUMERICHOST`` recusam), não o
     IP, e não pode casar com ``10.0.0.5`` nem contar como loopback literal.

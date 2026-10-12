@@ -1,4 +1,4 @@
-"""Middleware ASGI para emissão de métricas de negócio.
+r"""Middleware ASGI para emissão de métricas de negócio.
 
 Intercepta a execução de agentes e teams (``POST /agents/{id}/runs``,
 ``POST /teams/{id}/runs``) e registra contadores, histogramas e gauges
@@ -13,7 +13,7 @@ de run conta no máximo um erro. O Agno 2.5.8 captura a exceção do run e o Age
 responde 200, então a falha também é lida no corpo da resposta:
 
 - SSE: evento ``RunError`` (agente) ou ``TeamRunError`` (team), no formato de
-  ``agno.os.utils.format_sse_event`` (``event: <nome>\\n``). No stream de team,
+  ``agno.os.utils.format_sse_event`` (``event: <nome>\n``). No stream de team,
   ``RunError`` de membro não conta (o team pode se recuperar).
 - JSON (``stream=false``): ``status == "ERROR"`` no topo do ``RunOutput``.
 
@@ -136,6 +136,7 @@ class MetricsMiddleware:
         return None
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Repassa a requisição ao app e registra as métricas dos runs de agente/team."""
         match = None
         if scope["type"] == "http" and scope.get("method") == "POST":
             match = self._match_entity(scope.get("path", ""))

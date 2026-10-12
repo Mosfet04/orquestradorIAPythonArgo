@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import math
+from collections.abc import Callable
 
 import pytest
 from agno.agent import Agent
@@ -12,6 +14,7 @@ from agno.run.base import RunStatus
 
 from src.domain.entities.model_config import ModelConfig
 from src.domain.ports import InvalidModelConfigError
+from src.infrastructure.telemetry.metrics import TelemetryMetrics
 from tests.fakes import (
     FakeChatModel,
     FakeEmbedder,
@@ -20,6 +23,7 @@ from tests.fakes import (
     RecordingLogger,
     ScriptExhaustedError,
 )
+from tests.fakes.telemetry import RecordingTelemetryMetrics
 
 # ── FakeChatModel ───────────────────────────────────────────────────
 
@@ -196,3 +200,20 @@ def test_recording_logger_registra_nivel_mensagem_e_contexto():
     ]
     assert logger.records[0].context == {"x": 1}
     assert logger.messages("warning", "error") == ["b", "c"]
+
+
+# ── RecordingTelemetryMetrics ───────────────────────────────────────
+
+
+def _public_params(method: Callable[..., object]) -> list[tuple[str, object, object]]:
+    params = inspect.signature(method).parameters.values()
+    return [(p.name, p.kind, p.default) for p in params]
+
+
+def test_recording_telemetry_metrics_tem_a_assinatura_da_fachada_real():
+    fake = RecordingTelemetryMetrics()
+    names = [n for n in vars(RecordingTelemetryMetrics) if n.startswith("record_")]
+
+    assert len(names) == 6
+    for name in names:
+        assert _public_params(getattr(fake, name)) == _public_params(getattr(TelemetryMetrics, name)), name

@@ -24,7 +24,7 @@ from src.infrastructure.runtime.agno.http_tool_factory import HttpToolFactory
 from tests.fakes import FakeEmbedderFactory, FakeModelFactory, InMemoryToolRepository, RecordingLogger
 from tests.fakes.knowledge import cut_agno_io
 
-SECRET = "mongodb://app:s3nh4@db.interno.invalid:27017"  # noqa: S105 - marcador de vazamento, não é segredo
+LEAK_MARKER = "mongodb://app:s3nh4@db.interno.invalid:27017"  # marcador de vazamento, não é segredo
 
 
 def _config(rag: RagConfig) -> AgentConfig:
@@ -133,7 +133,7 @@ async def test_falha_ao_indexar_o_documento_loga_so_o_tipo_e_o_agente_sobe_com_o
 ) -> None:
     """O texto do erro do driver (URI com credencial) não vai ao log."""
     logger = RecordingLogger()
-    insert.error = RuntimeError(f"falha ao gravar em {SECRET}")
+    insert.error = RuntimeError(f"falha ao gravar em {LEAK_MARKER}")
     rag = RagConfig(active=True, model="m", factory_ia_model="ollama", doc_name="manual.md")
 
     agent = await _service(logger, FakeEmbedderFactory()).create_agent(_config(rag))
@@ -143,4 +143,4 @@ async def test_falha_ao_indexar_o_documento_loga_so_o_tipo_e_o_agente_sobe_com_o
     assert [(r.level, r.message, r.context) for r in logger.records if r.level in ("warning", "error")] == [
         ("error", "Erro ao carregar documento RAG", {"path": "docs/manual.md", "error_type": "RuntimeError"})
     ]
-    assert SECRET not in repr(logger.records)
+    assert LEAK_MARKER not in repr(logger.records)

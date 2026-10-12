@@ -48,8 +48,9 @@ class SessionDb(AsyncMongoDb):
         user_id: str | None = None,
         deserialize: bool | None = True,
     ) -> Session | dict[str, Any] | None:
-        """Lê a sessão por ``session_id`` (e ``user_id``) sem filtrar por ``session_type``, como o
-        ``MongoDb`` síncrono (``agno/db/mongo/mongo.py``, ``get_session``).
+        """Lê a sessão por ``session_id`` (e ``user_id``) sem filtrar por ``session_type``.
+
+        Como o ``MongoDb`` síncrono (``agno/db/mongo/mongo.py``, ``get_session``).
 
         O ``AsyncMongoDb`` do agno 2.5.8 filtra também pelo tipo. Com isso um team que recebe o
         ``session_id`` de uma sessão de agente (ou o contrário) não a acharia, criaria outra e o

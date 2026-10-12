@@ -31,6 +31,7 @@ class MongoTeamConfigRepository(AsyncMongoRepository, ITeamConfigRepository):
         )
 
     async def get_active_teams(self) -> list[TeamConfig]:
+        """Lista os teams ativos, do documento mais antigo ao mais novo."""
         try:
             # Ordem determinística (o documento mais antigo primeiro): com id repetido, o
             # use case fica com o primeiro.
@@ -51,6 +52,7 @@ class MongoTeamConfigRepository(AsyncMongoRepository, ITeamConfigRepository):
             raise
 
     async def get_team_by_id(self, team_id: str) -> TeamConfig | None:
+        """Devolve o team pelo id, ou ``None`` se não existir."""
         try:
             doc = await self._collection.find_one({"id": team_id}, sort=self._STABLE_ORDER)
             if not doc:

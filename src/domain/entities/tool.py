@@ -1,3 +1,5 @@
+"""Entidades de tool HTTP: método, parâmetros e definição da tool."""
+
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional
@@ -5,6 +7,7 @@ from typing import Any, Dict, List, Optional
 
 class HttpMethod(Enum):
     """Métodos HTTP suportados."""
+
     GET = "GET"
     POST = "POST"
     PUT = "PUT"
@@ -14,6 +17,7 @@ class HttpMethod(Enum):
 
 class ParameterType(Enum):
     """Tipos de parâmetros suportados."""
+
     STRING = "string"
     INTEGER = "integer"
     FLOAT = "float"
@@ -25,6 +29,7 @@ class ParameterType(Enum):
 @dataclass
 class ToolParameter:
     """Parâmetro de uma tool."""
+
     name: str
     type: ParameterType
     description: str

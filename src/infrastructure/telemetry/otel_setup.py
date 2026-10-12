@@ -1,5 +1,4 @@
-"""
-Configuração centralizada do OpenTelemetry SDK.
+"""Configuração centralizada do OpenTelemetry SDK.
 
 Inicializa TracerProvider, MeterProvider e LoggerProvider com exporters
 OTLP gRPC apontando para o Grafana LGTM (via OTEL Collector embutido).

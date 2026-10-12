@@ -66,8 +66,10 @@ def rag_collection_name(agent_id: str) -> str:
 
 
 def _failure(exc: BaseException) -> dict[str, str]:
-    """Contexto de log de uma falha: só o tipo (texto de SDK pode ter segredo); a recusa da
-    fábrica de modelo/embedder é texto nosso e vai também como ``reason``."""
+    """Contexto de log de uma falha: só o tipo (texto de SDK pode ter segredo).
+
+    A recusa da fábrica de modelo/embedder é texto nosso e vai também como ``reason``.
+    """
     context = {"error_type": type(exc).__name__}
     if isinstance(exc, InvalidModelConfigError):
         context["reason"] = str(exc)
@@ -96,8 +98,11 @@ class AgentFactoryService:
         indexing_service: DocumentIndexingService | None = None,
         search_factory: KnowledgeSearchFactory | None = None,
     ) -> None:
-        """``session_db``: db de sessões e memória, o mesmo para todas as entidades (F2-08); ``None``
-        = agente sem persistência. ``db_url``/``db_name`` são do vector db do RAG semântico."""
+        """Guarda as dependências da montagem.
+
+        ``session_db``: db de sessões e memória, o mesmo para todas as entidades (F2-08); ``None``
+        = agente sem persistência. ``db_url``/``db_name`` são do vector db do RAG semântico.
+        """
         self._db_url = db_url
         self._db_name = db_name
         self._session_db = session_db

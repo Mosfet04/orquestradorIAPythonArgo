@@ -30,9 +30,11 @@ class AgentCacheEntry:
         self.last_access = self.created_at
 
     def is_expired(self) -> bool:
+        """Diz se o TTL da entrada venceu."""
         return datetime.now(UTC) > (self.created_at + self.ttl)
 
     def access(self) -> list[AgentHandle]:
+        """Conta o acesso e devolve os agentes em cache."""
         self.hit_count += 1
         self.last_access = datetime.now(UTC)
         return self.agents
@@ -49,9 +51,11 @@ class TeamCacheEntry:
         self.last_access = self.created_at
 
     def is_expired(self) -> bool:
+        """Diz se o TTL da entrada venceu."""
         return datetime.now(UTC) > (self.created_at + self.ttl)
 
     def access(self) -> list[TeamHandle]:
+        """Conta o acesso e devolve os teams em cache."""
         self.hit_count += 1
         self.last_access = datetime.now(UTC)
         return self.teams
@@ -128,6 +132,7 @@ class OrquestradorController:
         self._logger.info("Cache de agentes e teams atualizado")
 
     def get_cache_stats(self) -> dict[str, Any]:
+        """Estatísticas dos caches de agentes e teams (sem conteúdo das entidades)."""
         stats: dict[str, Any] = {}
         if not self._cache:
             stats["agents"] = {"status": "empty"}

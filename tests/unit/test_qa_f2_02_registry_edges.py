@@ -29,7 +29,7 @@ from src.infrastructure.runtime.agno.llm_summary_generator import LLMSummaryGene
 from tests.fakes import FakeChatModel, FakeModelFactory, RecordingLogger
 from tests.fakes.providers import CHAT_PATH, EMBEDDER_PATH
 
-SECRET = "valor-secreto-QA-F202-nao-pode-vazar"  # noqa: S105 - marcador de vazamento, não é segredo
+LEAK_MARKER = "valor-secreto-QA-F202-nao-pode-vazar"  # marcador de vazamento, não é segredo
 GATEWAY = "gw.qa.invalid"
 
 
@@ -211,16 +211,16 @@ def test_embedder_de_provider_so_de_chat_lista_os_suportados_de_embedder():
 
 
 def test_ollama_chat_com_api_key_ref_recebe_a_chave_e_o_embedder_recusa(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("OLLAMA_CLOUD_API_KEY", SECRET)
+    monkeypatch.setenv("OLLAMA_CLOUD_API_KEY", LEAK_MARKER)
     registry = _builtin_registry()
     config = ModelConfig("ollama", "m", api_key_ref="env:OLLAMA_CLOUD_API_KEY")
 
     model = registry.create_model(config)
 
-    assert model.api_key == SECRET  # type: ignore[attr-defined]
+    assert model.api_key == LEAK_MARKER  # type: ignore[attr-defined]
     with pytest.raises(InvalidModelConfigError, match="não aceita api_key_ref") as caught:
         registry.create_embedder(config)
-    assert SECRET not in str(caught.value)
+    assert LEAK_MARKER not in str(caught.value)
 
 
 # ── segredo por arquivo: confinamento via registry ──────────────────────────────────────────────
@@ -231,7 +231,7 @@ def test_api_key_ref_file_fora_do_secrets_dir_ou_por_symlink_e_recusado_sem_ecoa
     outside = tmp_path / "fora"
     secrets.mkdir()
     outside.mkdir()
-    (outside / "chave").write_text(SECRET, encoding="utf-8")
+    (outside / "chave").write_text(LEAK_MARKER, encoding="utf-8")
     (secrets / "atalho").symlink_to(outside / "chave")
     registry = ProviderRegistry(
         BUILTIN_PROVIDERS, secrets_dir=str(secrets), policy=DestinationPolicy(allowlist=(GATEWAY,), resolver=_dns)
@@ -242,7 +242,7 @@ def test_api_key_ref_file_fora_do_secrets_dir_ou_por_symlink_e_recusado_sem_ecoa
             registry.create_model(
                 ModelConfig("openai_compatible", "m", base_url=f"https://{GATEWAY}/v1", api_key_ref=ref)
             )
-        assert SECRET not in str(caught.value) and caught.value.__cause__ is None
+        assert LEAK_MARKER not in str(caught.value) and caught.value.__cause__ is None
 
 
 # ── OPENAI_BASE_URL do operador x base_url da config ────────────────────────────────────────────
@@ -290,7 +290,7 @@ def _generator(factory: FakeModelFactory, logger: RecordingLogger) -> LLMSummary
 
 async def test_criacao_recusada_cai_no_fallback_sem_vazar_e_a_proxima_chamada_tenta_de_novo():
     logger = RecordingLogger()
-    reason = f"modelo do provider 'openai': host {GATEWAY} fora da allowlist, chave {SECRET}"
+    reason = f"modelo do provider 'openai': host {GATEWAY} fora da allowlist, chave {LEAK_MARKER}"
     generator = _generator(_FlakyFactory(refusals=1, reason=reason), logger)
 
     first = await generator.generate_summary(TEXTO)
@@ -300,7 +300,7 @@ async def test_criacao_recusada_cai_no_fallback_sem_vazar_e_a_proxima_chamada_te
     assert second == "resumo do modelo"
     [warning] = [r for r in logger.records if r.level == "warning"]
     assert warning.context["error_type"] == "InvalidModelConfigError"
-    assert SECRET not in repr(logger.records) and GATEWAY not in repr(logger.records)
+    assert LEAK_MARKER not in repr(logger.records) and GATEWAY not in repr(logger.records)
 
 
 async def test_sumarios_concorrentes_com_criacao_recusada_nao_travam_nem_criam_duas_vezes_depois_do_sucesso():

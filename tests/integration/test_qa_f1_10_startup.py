@@ -43,7 +43,7 @@ from tests.fakes.session_db import fake_session_db
 
 _ENV_NAMES = ("ENVIRONMENT", "ENABLE_DOCS", "CORS_ALLOWED_ORIGINS", "APP_HOST", "API_KEY_RUN", "API_KEY_ADMIN")
 CONN = "mongodb://mongo.invalid:27017"
-SECRET = "sentinela-segredo-f110-9f3a1c"  # noqa: S105 - sentinela de teste, não é credencial
+LEAK_MARKER = "sentinela-segredo-f110-9f3a1c"  # sentinela de teste, não é credencial
 
 
 class TeeLogger(RecordingLogger):
@@ -337,7 +337,7 @@ def test_refresh_cache_com_falha_do_banco_responde_erro_sem_texto_de_excecao(mon
     _, app = env.app(monkeypatch)
 
     def broken_find(query: dict) -> Any:
-        raise RuntimeError(f"connection refused mongodb://user:{SECRET}@host")
+        raise RuntimeError(f"connection refused mongodb://user:{LEAK_MARKER}@host")
 
     with loopback_client(app, raise_server_exceptions=False) as client:
         env.agents.find = broken_find  # type: ignore[method-assign]
@@ -348,7 +348,7 @@ def test_refresh_cache_com_falha_do_banco_responde_erro_sem_texto_de_excecao(mon
     assert livez.status_code == 200
     assert agents.status_code == 200 and _ids(agents) == ["valido-1"]  # AgentOS do startup segue
     assert refresh.status_code == 500
-    assert SECRET not in refresh.text
+    assert LEAK_MARKER not in refresh.text
 
 
 # ── formato legado de team ───────────────────────────────────────────
@@ -396,18 +396,23 @@ def test_logs_de_documento_invalido_nao_trazem_conteudo_do_documento(
 ):
     caplog.set_level("DEBUG")
     hostile_agents = [
-        _agent("a-estrategia", prompt=SECRET, descricao=SECRET, rag_config={"active": True, "search_strategy": SECRET}),
-        _agent("a-factory", prompt=SECRET, factoryIaModel=SECRET),  # factory desconhecida: falha na criação
-        _agent("a-modelo", prompt=SECRET, model="modelo-invalido"),
-        _agent({"k": SECRET}, prompt=SECRET),
-        _agent(SECRET, nome=None, prompt=SECRET),  # id é texto: pode ser logado, mas o segredo é o prompt
-        {"id": "a-sem-modelo", "nome": SECRET, "model": "", "prompt": SECRET, "active": True},
+        _agent(
+            "a-estrategia",
+            prompt=LEAK_MARKER,
+            descricao=LEAK_MARKER,
+            rag_config={"active": True, "search_strategy": LEAK_MARKER},
+        ),
+        _agent("a-factory", prompt=LEAK_MARKER, factoryIaModel=LEAK_MARKER),  # factory desconhecida: falha na criação
+        _agent("a-modelo", prompt=LEAK_MARKER, model="modelo-invalido"),
+        _agent({"k": LEAK_MARKER}, prompt=LEAK_MARKER),
+        _agent(LEAK_MARKER, nome=None, prompt=LEAK_MARKER),  # id é texto: pode ser logado, mas o segredo é o prompt
+        {"id": "a-sem-modelo", "nome": LEAK_MARKER, "model": "", "prompt": LEAK_MARKER, "active": True},
     ]
     hostile_teams = [
-        _team("t-modo", ["valido-1"], mode=SECRET, prompt=SECRET),
-        _team({"k": SECRET}, ["valido-1"], prompt=SECRET),
-        _team("t-vazio", [], prompt=SECRET, descricao=SECRET),
-        _team("t-fantasma", ["membro-fantasma"], prompt=SECRET),
+        _team("t-modo", ["valido-1"], mode=LEAK_MARKER, prompt=LEAK_MARKER),
+        _team({"k": LEAK_MARKER}, ["valido-1"], prompt=LEAK_MARKER),
+        _team("t-vazio", [], prompt=LEAK_MARKER, descricao=LEAK_MARKER),
+        _team("t-fantasma", ["membro-fantasma"], prompt=LEAK_MARKER),
     ]
     env = _Env(monkeypatch, [_agent("valido-1"), *hostile_agents], [_team("time-ok", ["valido-1"]), *hostile_teams])
     _, app = env.app(monkeypatch)
@@ -417,9 +422,9 @@ def test_logs_de_documento_invalido_nao_trazem_conteudo_do_documento(
         client.post("/admin/refresh-cache")
 
     out = capfd.readouterr()
-    records = [repr(r) for r in env.logger.records if r.context.get("agent_id") != SECRET]
-    assert not any(SECRET in r for r in records), [r for r in records if SECRET in r]
-    leaked = [line for line in (out.out + out.err + caplog.text).splitlines() if SECRET in line]
+    records = [repr(r) for r in env.logger.records if r.context.get("agent_id") != LEAK_MARKER]
+    assert not any(LEAK_MARKER in r for r in records), [r for r in records if LEAK_MARKER in r]
+    leaked = [line for line in (out.out + out.err + caplog.text).splitlines() if LEAK_MARKER in line]
     # o único lugar onde o texto pode aparecer é o id textual do agente (campo ``agent_id``)
     assert all("agent_id" in line or "a-sem-modelo" in line for line in leaked), leaked
     assert env.logger.messages("error")  # houve erros logados: o teste não é vácuo

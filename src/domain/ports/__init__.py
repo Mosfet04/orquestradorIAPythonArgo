@@ -1,5 +1,4 @@
-"""
-Ports do domínio — interfaces para adaptadores externos.
+"""Ports do domínio — interfaces para adaptadores externos.
 
 Seguindo a Arquitetura Hexagonal (Ports & Adapters), estas interfaces
 definem contratos que a camada de infraestrutura deve implementar.

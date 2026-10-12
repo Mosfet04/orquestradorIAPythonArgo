@@ -18,6 +18,7 @@ from src.infrastructure.repositories import mongo_base
 from src.infrastructure.repositories.mongo_agent_config_repository import MongoAgentConfigRepository
 from src.infrastructure.repositories.mongo_team_config_repository import MongoTeamConfigRepository
 from tests.fakes import FakeMongoClient, FakeMongoCollection, RecordingLogger
+from tests.fakes.mongo import FakeAsyncCursor, SortSpec
 
 MARKER = "SEGREDO-QUE-NAO-PODE-IR-AO-LOG"
 
@@ -165,7 +166,9 @@ async def test_falha_do_banco_ao_listar_agentes_continua_subindo(monkeypatch: py
     logger = RecordingLogger()
 
     class _Broken(FakeMongoCollection):
-        def find(self, query: dict[str, Any]):
+        def find(
+            self, query: dict[str, Any], projection: dict[str, Any] | None = None, *, sort: SortSpec | None = None
+        ) -> FakeAsyncCursor:
             raise RuntimeError("conexão perdida")
 
     _install(monkeypatch, agents_config=_Broken())

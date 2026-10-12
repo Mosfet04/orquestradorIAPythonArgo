@@ -50,16 +50,22 @@ def test_importar_o_pacote_inteiro_num_interpretador_limpo_nao_carrega_o_agno(pa
     assert result.stdout.strip().splitlines()[-1] == "LEAKED:"
 
 
-def test_agent_runtime_e_abstrato_e_exige_os_dois_metodos() -> None:
-    with pytest.raises(TypeError):
-        AgentRuntime()  # type: ignore[abstract]
+class _OnlyAgents(AgentRuntime):
+    async def build_agent(self, config: AgentConfig) -> AgentHandle:
+        raise NotImplementedError
 
-    class OnlyAgents(AgentRuntime):
-        async def build_agent(self, config: AgentConfig) -> AgentHandle:
-            raise NotImplementedError
 
-    with pytest.raises(TypeError):
-        OnlyAgents()  # type: ignore[abstract]
+@pytest.mark.parametrize(
+    ("runtime_cls", "missing"),
+    [(AgentRuntime, {"build_agent", "build_team"}), (_OnlyAgents, {"build_team"})],
+    ids=["porta", "so-build_agent"],
+)
+def test_agent_runtime_e_abstrato_e_exige_os_dois_metodos(
+    runtime_cls: type[AgentRuntime], missing: set[str]
+) -> None:
+    assert runtime_cls.__abstractmethods__ == frozenset(missing)
+    with pytest.raises(TypeError, match="abstract"):
+        runtime_cls()
 
 
 def test_handles_expoem_so_o_id() -> None:

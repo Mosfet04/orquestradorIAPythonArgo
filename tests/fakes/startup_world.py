@@ -146,6 +146,66 @@ class _WorldSessionDb(SessionDb):
         self._events.add("db:provisioned")
 
 
+def _db_lifespan_spy(events: Events, original: Any) -> Any:
+    """``db_lifespan`` do agno que registra ``db:start``/``db:stop`` em volta do original."""
+
+    @asynccontextmanager
+    async def db_lifespan(app: FastAPI, agent_os: Any) -> AsyncIterator[None]:
+        events.add("db:start")
+        async with original(app, agent_os):
+            yield
+        events.add("db:stop")
+
+    return db_lifespan
+
+
+def _http_lifespan_spy(events: Events, original: Any, *, fail: bool) -> Any:
+    """``http_client_lifespan`` do agno que registra início/fim; com ``fail``, quebra ao entrar."""
+
+    @asynccontextmanager
+    async def http_lifespan(app: FastAPI) -> AsyncIterator[None]:
+        events.add("http:start")
+        if fail:
+            raise RuntimeError("falha injetada: start")
+        async with original(app):
+            yield
+        events.add("http:stop")
+
+    return http_lifespan
+
+
+def _close_spy(events: Events, original: Any) -> Any:
+    """``AgnoRuntime.close`` que registra ``runtime:close`` antes do original."""
+
+    async def close(self: AgnoRuntime) -> None:
+        events.add("runtime:close")
+        await original(self)
+
+    return close
+
+
+def _warm_up_spy(original: Any, *, delay: float, fail: bool) -> Any:
+    """Carga das entidades com espera opcional antes e, com ``fail``, falha no lugar da carga."""
+
+    async def warm_up(self: Any) -> None:
+        if delay:
+            await asyncio.sleep(delay)
+        if fail:
+            raise RuntimeError("falha injetada: entities")
+        await original(self)
+
+    return warm_up
+
+
+def _failing(step: str) -> Any:
+    """Substituto que levanta ``RuntimeError("falha injetada: <step>")`` ao ser chamado."""
+
+    def fail(*_: object, **__: object) -> None:
+        raise RuntimeError(f"falha injetada: {step}")
+
+    return fail
+
+
 @contextmanager
 def startup_world(
     events: Events,
@@ -179,47 +239,16 @@ def startup_world(
     def create_model(self: Any, config: Any) -> SlowChatModel:
         return SlowChatModel(id=config.model_id, responses=["resposta do modelo"] * 50, delay=run_delay, events=events)
 
-    original_db = agno_os_app.db_lifespan
-    original_http = agno_os_app.http_client_lifespan
-    original_close = AgnoRuntime.close
-    original_warm_up = di.OrquestradorController.warm_up_cache
-
-    @asynccontextmanager
-    async def db_lifespan(app: FastAPI, agent_os: Any) -> AsyncIterator[None]:
-        events.add("db:start")
-        async with original_db(app, agent_os):
-            yield
-        events.add("db:stop")
-
-    @asynccontextmanager
-    async def http_lifespan(app: FastAPI) -> AsyncIterator[None]:
-        events.add("http:start")
-        if fail_at == "start":
-            raise RuntimeError("falha injetada: start")
-        async with original_http(app):
-            yield
-        events.add("http:stop")
-
-    async def close(self: AgnoRuntime) -> None:
-        events.add("runtime:close")
-        await original_close(self)
-
-    async def warm_up(self: Any) -> None:
-        if startup_delay:
-            await asyncio.sleep(startup_delay)
-        if fail_at == "entities":
-            raise RuntimeError("falha injetada: entities")
-        await original_warm_up(self)
-
-    def broken_tool_repo(**_: object) -> None:
-        raise RuntimeError("falha injetada: container")
-
-    def broken_agui(*_: object, **__: object) -> None:
-        raise RuntimeError("falha injetada: mount")
-
     def new_session_db(db_url: str, db_name: str) -> _WorldSessionDb:
         events.add("db:created")
         return _WorldSessionDb(events, db_url, db_name)
+
+    db_lifespan = _db_lifespan_spy(events, agno_os_app.db_lifespan)
+    http_lifespan = _http_lifespan_spy(events, agno_os_app.http_client_lifespan, fail=fail_at == "start")
+    close = _close_spy(events, AgnoRuntime.close)
+    warm_up = _warm_up_spy(
+        di.OrquestradorController.warm_up_cache, delay=startup_delay, fail=fail_at == "entities"
+    )
 
     with ExitStack() as stack:
         enter = stack.enter_context
@@ -234,9 +263,9 @@ def startup_world(
         enter(patch.object(AgnoRuntime, "close", close))
         enter(patch.object(di.OrquestradorController, "warm_up_cache", warm_up))
         if fail_at == "container":
-            enter(patch.object(di, "MongoToolRepository", broken_tool_repo))
+            enter(patch.object(di, "MongoToolRepository", _failing("container")))
         if fail_at == "mount":
-            enter(patch.object(agno_runtime_module, "build_agui_router", broken_agui))
+            enter(patch.object(agno_runtime_module, "build_agui_router", _failing("mount")))
         yield motors
 
 

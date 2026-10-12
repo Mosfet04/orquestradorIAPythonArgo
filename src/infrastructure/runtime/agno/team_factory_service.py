@@ -36,8 +36,11 @@ class TeamFactoryService:
         logger: ILogger,
         model_factory: IModelFactory,
     ) -> None:
-        """``session_db``: db de sessões e memória, o mesmo das demais entidades (F2-08); ``None``
-        = team sem persistência."""
+        """Guarda as dependências da montagem.
+
+        ``session_db``: db de sessões e memória, o mesmo das demais entidades (F2-08); ``None``
+        = team sem persistência.
+        """
         self._session_db = session_db
         self._logger = logger
         self._model_factory = model_factory

@@ -29,7 +29,7 @@ RUN = {"Authorization": f"Bearer {RUN_KEY}"}
 ADMIN = {"Authorization": f"Bearer {ADMIN_KEY}"}
 ALL_INTERFACES = "0.0.0" + ".0"
 _ENV_NAMES = ("ENVIRONMENT", "ENABLE_DOCS", "CORS_ALLOWED_ORIGINS", "APP_HOST", "API_KEY_RUN", "API_KEY_ADMIN")
-SECRET_LIKE = "sk-" + "z" * 24
+SENSITIVE_TEXT = "sk-" + "z" * 24
 
 
 def _body(**overrides: Any) -> dict[str, Any]:
@@ -128,7 +128,7 @@ def test_corpo_invalido_responde_422_sem_stack_e_sem_rodar_o_agente(
 
 def test_corpo_invalido_com_id_inexistente_prefere_404_sem_ecoar_o_segredo_do_corpo(client: TestClient):
 
-    response = client.post("/agui/nao-existe", json=_body(messages=SECRET_LIKE), headers=RUN)
+    response = client.post("/agui/nao-existe", json=_body(messages=SENSITIVE_TEXT), headers=RUN)
 
     # FastAPI valida o corpo antes de chamar a rota: 422 com o campo errado; o 404 vem só com corpo válido.
     assert response.status_code in (404, 422)
@@ -295,12 +295,13 @@ class _ExplodingAgent(Agent):
     def __init__(self) -> None:
         super().__init__(id="explode", name="explode", model=FakeChatModel(responses=[]), telemetry=False)
 
-    def arun(self, input: Any, **kwargs: Any):  # type: ignore[no-untyped-def,override]
+    # ``input`` é o nome do parâmetro do ``Agent.arun`` do agno, que o router passa por keyword.
+    def arun(self, input: Any, **kwargs: Any):  # type: ignore[no-untyped-def,override]  # pylint: disable=redefined-builtin
         from agno.run.agent import RunContentEvent
 
         async def events():  # type: ignore[no-untyped-def]
             yield RunContentEvent(content="parcial")
-            raise RuntimeError(f"falha com {SECRET_LIKE} em http://10.0.0.5/interno")
+            raise RuntimeError(f"falha com {SENSITIVE_TEXT} em http://10.0.0.5/interno")
 
         return events()
 
@@ -316,4 +317,4 @@ def test_excecao_no_meio_do_stream_vira_um_unico_run_error_generico_sem_segredo(
     assert isinstance(events[-1], RunErrorEvent) and events[-1].code == "run_error"
     assert sum(e.type.value in ("RUN_FINISHED", "RUN_ERROR") for e in events) == 1
     assert "parcial" in text_of(events)
-    assert SECRET_LIKE not in response.text and "10.0.0.5" not in response.text
+    assert SENSITIVE_TEXT not in response.text and "10.0.0.5" not in response.text

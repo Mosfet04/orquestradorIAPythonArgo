@@ -23,7 +23,7 @@ from starlette.testclient import TestClient
 from src.infrastructure.runtime.agno.agui_router import build_agui_router, resolve_run_id
 from tests.fakes import FakeChatModel, RecordingLogger
 
-SECRET_LIKE = "sk-" + "x" * 20  # valor de teste: simula texto sensível numa exceção
+SENSITIVE_TEXT = "sk-" + "x" * 20  # valor de teste: simula texto sensível numa exceção
 
 
 def _body(run_id: str = "r1") -> dict[str, Any]:
@@ -51,7 +51,8 @@ class ScriptedAgent(Agent):
         self._raises = raises
         self.received: dict[str, Any] = {}
 
-    def arun(self, input: Any, **kwargs: Any) -> AsyncIterator[Any]:  # type: ignore[override]
+    # ``input`` é o nome do parâmetro do ``Agent.arun`` do agno, que o router passa por keyword.
+    def arun(self, input: Any, **kwargs: Any) -> AsyncIterator[Any]:  # type: ignore[override]  # pylint: disable=redefined-builtin
         self.received = {"input": input, **kwargs}
         if self._raises is not None:
             raise self._raises
@@ -104,24 +105,24 @@ def test_entidade_recebe_o_run_id_resolvido_e_o_user_id_do_forwarded_props():
 
 def test_excecao_fora_do_stream_vira_run_error_generico_e_log_sem_o_texto():
     logger = RecordingLogger()
-    agent = ScriptedAgent("a1", raises=RuntimeError(f"falhou com {SECRET_LIKE}"))
+    agent = ScriptedAgent("a1", raises=RuntimeError(f"falhou com {SENSITIVE_TEXT}"))
 
     response = _client([agent], logger=logger).post("/agui/a1", json=_body())
 
     events = _sse(response.text)
     assert [e["type"] for e in events] == ["RUN_STARTED", "RUN_ERROR"]
     assert events[-1]["code"] == "run_error"
-    assert SECRET_LIKE not in response.text
+    assert SENSITIVE_TEXT not in response.text
     errors = [r for r in logger.records if r.level == "error"]
     assert len(errors) == 1
     assert errors[0].context == {"entity_id": "a1", "run_id": "r1", "error_type": "RuntimeError"}
-    assert all(SECRET_LIKE not in str(r.context) and SECRET_LIKE not in r.message for r in logger.records)
+    assert all(SENSITIVE_TEXT not in str(r.context) and SENSITIVE_TEXT not in r.message for r in logger.records)
 
 
 def test_run_error_do_agno_com_texto_de_excecao_nao_vaza():
     script = [
         RunContentEvent(run_id="r1", content="parcial"),
-        RunErrorEvent(run_id="r1", content=f"Error code 401 {SECRET_LIKE}"),
+        RunErrorEvent(run_id="r1", content=f"Error code 401 {SENSITIVE_TEXT}"),
     ]
     logger = RecordingLogger()
 
@@ -136,7 +137,7 @@ def test_run_error_do_agno_com_texto_de_excecao_nao_vaza():
         "RUN_ERROR",
     ]
     assert events[-1]["code"] == "run_error"
-    assert SECRET_LIKE not in response.text
+    assert SENSITIVE_TEXT not in response.text
     assert [r.context for r in logger.records if r.level == "warning"] == [
         {"entity_id": "a1", "run_id": "r1", "code": "run_error"}
     ]

@@ -41,7 +41,7 @@ pytestmark = pytest.mark.usefixtures("offline_knowledge")
 KEYS = {"API_KEY_RUN": "r" * 32, "API_KEY_ADMIN": "a" * 32}
 LOCAL = {"base_url": "http://127.0.0.1:7777", "client": ("127.0.0.1", 50000)}
 PLUGIN_KEY = "sk-QA-F203-CHAVE-DO-PLUGIN-NAO-PODE-VAZAR"
-ENV_SECRET = "SEGREDO-QA-F203-NA-ENV"  # noqa: S105 - marcador de vazamento
+ENV_LEAK_MARKER = "SEGREDO-QA-F203-NA-ENV"  # marcador de vazamento
 EVIL_HOST = "coletor.evil.invalid"
 PROVIDER_HOST = "api.acmeai.example"
 _ENV = (
@@ -237,7 +237,7 @@ def test_plugin_liberado_sobe_no_startup_real_e_o_modelo_dele_e_criado_e_exposto
     exposed = {a["id"]: a["model"] for a in result.agents}
     assert exposed["do-plugin"] == {"name": "OpenAILike", "model": "acme-1", "provider": "OpenAI"}
     by_id = {m.id: m for m in result.created}
-    assert type(by_id["acme-1"]) is OpenAILike
+    assert by_id["acme-1"].__class__ is OpenAILike  # a classe exata: subclasse (ex.: DeepSeek) não vale
     assert (by_id["acme-1"].api_key, by_id["acme-1"].temperature, by_id["acme-1"].base_url) == (PLUGIN_KEY, 0.4, None)
     assert (by_id["acme-2"].api_key, by_id["acme-2"].max_tokens) == (PLUGIN_KEY, 77)
     assert result.failures() == {}
@@ -278,7 +278,10 @@ def test_destino_e_chave_do_plugin_seguem_a_guarda_do_f2_02_no_startup(
         _agent("http-no-provider", model="m-http", factory_ia_model="acmeai", base_url=f"http://{PROVIDER_HOST}/v1"),
         _agent("loopback", model="m-lo", factory_ia_model="acmeai", base_url="http://127.0.0.1:9/v1"),
         _agent(
-            "param-fora-da-allowlist", model="m-param", factory_ia_model="acmeai", model_params={"headers": ENV_SECRET}
+            "param-fora-da-allowlist",
+            model="m-param",
+            factory_ia_model="acmeai",
+            model_params={"headers": ENV_LEAK_MARKER},
         ),
         _agent("depois", model="m-depois", factory_ia_model="acmeai", base_url=https_provider),
     ]
@@ -298,7 +301,7 @@ def test_destino_e_chave_do_plugin_seguem_a_guarda_do_f2_02_no_startup(
         "m-ok": https_provider, "m-lo": "http://127.0.0.1:9/v1", "m-depois": https_provider,
     }
     assert dns.count(PROVIDER_HOST) == 2  # "ok" e "depois"; a recusa não depende de consulta ao host de fora
-    for forbidden in (PLUGIN_KEY, ENV_SECRET, EVIL_HOST, "169.254.169.254"):
+    for forbidden in (PLUGIN_KEY, ENV_LEAK_MARKER, EVIL_HOST, "169.254.169.254"):
         assert forbidden not in result.log_blob(), forbidden
 
 
@@ -391,7 +394,7 @@ def test_plugin_da_allowlist_ausente_recusa_o_startup_sem_importar_os_presentes(
 ) -> None:
     module = site.side_effect_module("qa_f203_m_mod", "m")
     site.install("marca-plugin", {"m": "qa_f203_m_mod:SPEC"}, {"qa_f203_m_mod": module})
-    monkeypatch.setenv("PLUGIN_ALLOWLIST", f"marca-plugin:m, {ENV_SECRET}-plugin:falta")
+    monkeypatch.setenv("PLUGIN_ALLOWLIST", f"marca-plugin:m, {ENV_LEAK_MARKER}-plugin:falta")
 
     result, error = refused_startup(monkeypatch, [_agent("a")])
 
@@ -580,17 +583,17 @@ def test_plugin_e_importado_fora_do_event_loop(site: FakeSite, dns: list[str], m
 @pytest.mark.parametrize(
     ("name", "value"),
     [
-        ("PLUGIN_ALLOWLIST", ENV_SECRET),
-        ("PLUGIN_ALLOWLIST", f"ok-plugin:ok,{ENV_SECRET}:x:y"),
-        ("PLUGIN_ALLOWLIST", f"https://user:{ENV_SECRET}@host/x:y"),
-        ("PLUGIN_ALLOWLIST", f"dist:{ENV_SECRET}/../../etc"),
-        ("PLUGIN_ALLOWLIST", f"{'a' * 5000}{ENV_SECRET}"),
-        ("DYNAMIC_PROVIDER_SPECS", ENV_SECRET),
-        ("DYNAMIC_PROVIDER_SPECS", f"os:system('{ENV_SECRET}')"),
-        ("DYNAMIC_PROVIDER_SPECS", f"pasta/{ENV_SECRET}.py:SPEC"),
-        ("DYNAMIC_PROVIDER_SPECS", f"mod:SPEC [{ENV_SECRET}]"),
-        ("ALLOW_DYNAMIC_IMPORT", ENV_SECRET),
-        ("ENABLE_DOCS", ENV_SECRET),
+        ("PLUGIN_ALLOWLIST", ENV_LEAK_MARKER),
+        ("PLUGIN_ALLOWLIST", f"ok-plugin:ok,{ENV_LEAK_MARKER}:x:y"),
+        ("PLUGIN_ALLOWLIST", f"https://user:{ENV_LEAK_MARKER}@host/x:y"),
+        ("PLUGIN_ALLOWLIST", f"dist:{ENV_LEAK_MARKER}/../../etc"),
+        ("PLUGIN_ALLOWLIST", f"{'a' * 5000}{ENV_LEAK_MARKER}"),
+        ("DYNAMIC_PROVIDER_SPECS", ENV_LEAK_MARKER),
+        ("DYNAMIC_PROVIDER_SPECS", f"os:system('{ENV_LEAK_MARKER}')"),
+        ("DYNAMIC_PROVIDER_SPECS", f"pasta/{ENV_LEAK_MARKER}.py:SPEC"),
+        ("DYNAMIC_PROVIDER_SPECS", f"mod:SPEC [{ENV_LEAK_MARKER}]"),
+        ("ALLOW_DYNAMIC_IMPORT", ENV_LEAK_MARKER),
+        ("ENABLE_DOCS", ENV_LEAK_MARKER),
     ],
     ids=lambda v: v[:24] if isinstance(v, str) else str(v),
 )
@@ -603,5 +606,5 @@ def test_env_hostil_falha_o_startup_sem_importar_nada_nem_ecoar_o_valor(
         AppFactory().create_app()  # AppConfig.load() no create_app: falha antes do bind
 
     assert name in str(caught.value)
-    assert ENV_SECRET not in str(caught.value) and ENV_SECRET not in repr(caught.value)
+    assert ENV_LEAK_MARKER not in str(caught.value) and ENV_LEAK_MARKER not in repr(caught.value)
     assert not site.imported("qa_f203_acme_mod")

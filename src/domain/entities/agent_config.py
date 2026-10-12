@@ -1,3 +1,5 @@
+"""Entidade de configuração de um agente (documento ``agents_config``)."""
+
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import List, Optional

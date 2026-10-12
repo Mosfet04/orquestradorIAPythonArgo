@@ -43,6 +43,13 @@ def parse_agui_sse(text: str) -> list[BaseEvent]:
 def assert_valid_run(events: list[BaseEvent]) -> None:
     """Regras de ciclo de vida do AG-UI: RUN_STARTED primeiro, um só terminal, no fim;
     mensagens de texto e tool calls abertas e fechadas, na ordem."""
+    _assert_run_envelope(events)
+    _assert_text_messages(events[1:-1])
+    _assert_tool_calls(events[1:-1])
+
+
+def _assert_run_envelope(events: list[BaseEvent]) -> None:
+    """RUN_STARTED primeiro e único; um só terminal, no fim, do mesmo run (ou erro com mensagem)."""
     assert events, "stream vazio"
     assert isinstance(events[0], RunStartedEvent), f"primeiro evento: {events[0].type}"
     terminals = [e for e in events if e.type in TERMINALS]
@@ -58,10 +65,12 @@ def assert_valid_run(events: list[BaseEvent]) -> None:
     else:
         assert isinstance(last, RunErrorEvent) and last.message
 
+
+def _assert_text_messages(body: list[BaseEvent]) -> None:
+    """Mensagens de texto: START, CONTENT não vazio dentro da aberta, END; ``message_id`` sem reúso."""
     open_messages: set[str] = set()
     closed_messages: set[str] = set()
-    tool_state: dict[str, str] = {}  # tool_call_id -> started | args | ended | result
-    for event in events[1:-1]:
+    for event in body:
         if isinstance(event, TextMessageStartEvent):
             assert event.message_id not in open_messages | closed_messages, "message_id reaproveitado"
             open_messages.add(event.message_id)
@@ -72,7 +81,14 @@ def assert_valid_run(events: list[BaseEvent]) -> None:
             assert event.message_id in open_messages, "TEXT_MESSAGE_END sem START"
             open_messages.remove(event.message_id)
             closed_messages.add(event.message_id)
-        elif isinstance(event, ToolCallStartEvent):
+    assert not open_messages, f"mensagens sem TEXT_MESSAGE_END: {open_messages}"
+
+
+def _assert_tool_calls(body: list[BaseEvent]) -> None:
+    """Tool calls: START, ARGS, END e RESULT na ordem; ``tool_call_id`` sem repetição; todas fechadas."""
+    tool_state: dict[str, str] = {}  # tool_call_id -> started | args | ended | result
+    for event in body:
+        if isinstance(event, ToolCallStartEvent):
             assert event.tool_call_id not in tool_state, "tool_call_id repetido"
             tool_state[event.tool_call_id] = "started"
         elif isinstance(event, ToolCallArgsEvent):
@@ -84,7 +100,6 @@ def assert_valid_run(events: list[BaseEvent]) -> None:
         elif isinstance(event, ToolCallResultEvent):
             assert tool_state.get(event.tool_call_id) == "ended", "RESULT antes do END da tool call"
             tool_state[event.tool_call_id] = "result"
-    assert not open_messages, f"mensagens sem TEXT_MESSAGE_END: {open_messages}"
     assert all(s in ("ended", "result") for s in tool_state.values()), f"tool calls abertas: {tool_state}"
 
 

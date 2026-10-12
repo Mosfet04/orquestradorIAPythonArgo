@@ -33,7 +33,12 @@ class _RecordingAgentOS(AgentOS):
 
 def test_agent_os_montado_sem_telemetria(monkeypatch: pytest.MonkeyPatch):
     launches: list[object] = []
-    monkeypatch.setattr(agno_api_os, "log_os_telemetry", lambda launch: launches.append(launch))
+
+    def record_launch(launch: object) -> None:
+        # O agno chama com keyword (``log_os_telemetry(launch=...)``): ``launches.append`` não serve.
+        launches.append(launch)
+
+    monkeypatch.setattr(agno_api_os, "log_os_telemetry", record_launch)
     monkeypatch.setattr("src.infrastructure.runtime.agno.runtime.AgentOS", _RecordingAgentOS)
     monkeypatch.setattr(_RecordingAgentOS, "created", [])
     agent = Agent(id="agente-1", name="Agente 1", model=FakeChatModel(responses=[]), telemetry=False)

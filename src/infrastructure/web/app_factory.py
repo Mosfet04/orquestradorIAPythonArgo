@@ -337,9 +337,11 @@ class AppFactory:
         agents: Sequence[AgentHandle],
         teams: Sequence[TeamHandle],
     ) -> None:
-        """Monta o runtime no app se houver agentes ou teams; falha deixa a borda, o admin e o que a
-        montagem já tiver posto (falha depois do ``get_app()`` deixa as rotas do AgentOS sem os
-        lifespans dele)."""
+        """Monta o runtime no app se houver agentes ou teams.
+
+        Falha deixa a borda, o admin e o que a montagem já tiver posto (falha depois do
+        ``get_app()`` deixa as rotas do AgentOS sem os lifespans dele).
+        """
         if not agents and not teams:
             self._logger.info(
                 "Nenhum agente ou team ativo — rodando só endpoints admin"
@@ -374,5 +376,5 @@ _factory = AppFactory()
 
 
 def create_app() -> FastAPI:
-    """Factory **síncrona** global — segura para ``app = create_app()``."""
+    """Factory **síncrona** global — segura para atribuir o ``app`` no nível do módulo."""
     return _factory.create_app()

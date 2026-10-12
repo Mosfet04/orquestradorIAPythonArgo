@@ -1,5 +1,5 @@
-"""
-Sistema de logging seguro usando structlog para o Orquestrador IA.
+"""Sistema de logging seguro usando structlog para o Orquestrador IA.
+
 Otimizado para ambientes cloud (AWS CloudWatch, ELK Stack, etc.).
 """
 
@@ -20,6 +20,7 @@ import structlog
 
 class LogLevel(Enum):
     """Níveis de log personalizados."""
+
     DEBUG = "debug"
     INFO = "info"
     WARNING = "warning"
@@ -33,6 +34,7 @@ class LogLevel(Enum):
 @dataclass
 class LogContext:
     """Contexto estruturado para logs."""
+
     request_id: Optional[str] = None
     user_id: Optional[str] = None
     agent_id: Optional[str] = None
@@ -71,8 +73,8 @@ class DataSanitizer:
 
     @classmethod
     def sanitize_data(cls, data: Any, max_depth: int = 5) -> Any:
-        """
-        Sanitiza dados removendo informações sensíveis.
+        """Sanitiza dados removendo informações sensíveis.
+
         Otimizado para logs estruturados em cloud.
 
         Args:
@@ -254,7 +256,6 @@ def sanitize_log_data(logger, method_name, event_dict):
 
 def setup_structlog():
     """Configura structlog para ambiente cloud-ready."""
-
     # Criar diretório de logs se não existir
     log_dir = Path("logs")
     log_dir.mkdir(exist_ok=True)

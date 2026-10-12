@@ -89,8 +89,11 @@ class AppConfig:
     config_yaml_path: str | None = None
 
     def __post_init__(self) -> None:
-        """``config_store`` só ``mongo`` ou ``yaml``; ``yaml`` exige caminho (vale também para ``AppConfig``
-        montado à mão ou por ``dataclasses.replace``, que não passam por ``load``)."""
+        """``config_store`` só ``mongo`` ou ``yaml``; ``yaml`` exige caminho.
+
+        Vale também para ``AppConfig`` montado à mão ou por ``dataclasses.replace``, que não passam
+        por ``load``.
+        """
         if self.config_store not in CONFIG_STORES:
             raise ValueError("CONFIG_STORE inválido. Use mongo ou yaml")
         if self.config_store == "yaml" and not self.config_yaml_path:
@@ -214,8 +217,10 @@ def _model_base_url_allowlist() -> tuple[str, ...]:
 
 
 def _allowlisted_host(entry: str, position: int) -> str:
-    """Host normalizado; inválido = ``ValueError`` com a posição, nunca a entrada (pode ser uma
-    URL com credencial colada por engano)."""
+    """Host normalizado; inválido = ``ValueError`` com a posição, nunca a entrada.
+
+    A entrada pode ser uma URL com credencial colada por engano.
+    """
     name = normalize_host(entry)
     try:
         ipaddress.ip_address(name)

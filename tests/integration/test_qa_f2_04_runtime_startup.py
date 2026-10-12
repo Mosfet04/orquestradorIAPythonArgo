@@ -46,10 +46,11 @@ from tests.fakes import (
     running_on_event_loop,
 )
 from tests.fakes.knowledge import cut_agno_io
+from tests.fakes.mongo import FakeAsyncCursor, SortSpec
 from tests.fakes.session_db import use_fake_session_db
 
 LOCAL = {"base_url": "http://127.0.0.1:7777", "client": ("127.0.0.1", 50000)}
-SECRET = "SEGREDO-QA-F204-DA-EXCECAO"  # noqa: S105 - marcador de vazamento, não é credencial
+LEAK_MARKER = "SEGREDO-QA-F204-DA-EXCECAO"  # marcador de vazamento, não é credencial
 _ENV_CLEAR = (
     "API_KEY_RUN", "API_KEY_ADMIN", "APP_HOST", "ENVIRONMENT", "ENABLE_DOCS", "CORS_ALLOWED_ORIGINS",
     "PLUGIN_ALLOWLIST", "ALLOW_DYNAMIC_IMPORT", "DYNAMIC_PROVIDER_SPECS", "MODEL_BASE_URL_ALLOWLIST", "SECRETS_DIR",
@@ -73,12 +74,15 @@ class _Collection(FakeMongoCollection):
     async def create_index(self, *_: object, **__: object) -> str:
         return "idx"
 
-    def find(self, query: dict[str, Any]) -> Any:
+    def find(
+        self, query: dict[str, Any], projection: dict[str, Any] | None = None, *, sort: SortSpec | None = None
+    ) -> FakeAsyncCursor:
         wanted = query.get("id")
         if isinstance(wanted, dict) and "$in" in wanted:
             rest = {k: v for k, v in query.items() if k != "id"}
-            return FakeMongoCollection([d for d in self.docs if d.get("id") in wanted["$in"]]).find(rest)
-        return super().find(query)
+            matching = FakeMongoCollection([d for d in self.docs if d.get("id") in wanted["$in"]])
+            return FakeMongoCollection.find(matching, rest, projection, sort=sort)
+        return super().find(query, projection, sort=sort)
 
 
 class _Tree(InMemoryDocumentTreeRepository):
@@ -179,86 +183,108 @@ class Booted:
 def _boot(root: Path, *, search_fails: bool) -> Booted:
     result = Booted()
     with pytest.MonkeyPatch.context() as mp:
-        (root / "docs").mkdir()
-        (root / "docs" / "fin.md").write_text("# Fin\n\nreembolso e fatura.\n", encoding="utf-8")
-        (root / "docs" / "hier.md").write_text(
-            "# Fin\n\nIntro.\n\n## Reembolso\n\nenvie a nota.\n\n## Fatura\n\nvence dia 5.\n", encoding="utf-8"
-        )
+        _write_docs(root)
         mp.chdir(root)
         for name in _ENV_CLEAR:
             mp.delenv(name, raising=False)
         mp.setenv("AGNO_TELEMETRY", "false")
         mp.setenv("OTEL_ENABLED", "false")
-        collections: defaultdict[str, FakeMongoCollection] = defaultdict(_Collection)
-        collections["agents_config"] = _Collection(copy.deepcopy(AGENT_DOCS))
-        collections["teams_config"] = _Collection(copy.deepcopy(TEAM_DOCS))
-        collections["tools"] = _Collection([copy.deepcopy(TOOL_DOC)])
-        client = FakeMongoClient(collections)
-        mp.setattr(mongo_base.MongoClientFactory, "get_client", classmethod(lambda cls, _conn: client))
-        mp.setattr(di, "AsyncIOMotorClient", _Motor)
-        mp.setattr(di, "StructlogLoggerAdapter", lambda _name: result.logger)
-        mp.setattr(di, "MongoDocumentTreeRepository", lambda **_: _Tree())
-        use_fake_session_db(mp)
-        mp.setattr(app_factory, "setup_telemetry", lambda config: None)
-        mp.setattr(app_factory, "shutdown_telemetry", lambda: None)
-
-        def create_model(self: Any, config: Any) -> FakeChatModel:
-            result.created_on_loop[config.model_id] = running_on_event_loop()
-            if config.model_id == "modelo-invalido":
-                raise InvalidModelConfigError("modelo recusado pela validação (texto nosso)")
-            if config.model_id == "modelo-boom":
-                raise RuntimeError(SECRET)
-            responses: list[str | ModelResponse] = ["resposta-A", "resposta-B"]
-            if config.model_id == "m-hier":
-                responses = [HIER_CALL, "final-hier"]
-            model = FakeChatModel(id=config.model_id, provider=config.provider, responses=responses)
-            result.models.setdefault(config.model_id, []).append(model)
-            return model
-
-        def create_embedder(self: Any, config: Any) -> FakeEmbedder:
-            return FakeEmbedder(id=config.model_id, provider=config.provider)
-
-        mp.setattr(di.ProviderRegistry, "create_model", create_model)
-        mp.setattr(di.ProviderRegistry, "create_embedder", create_embedder)
+        _patch_infrastructure(mp, result)
+        _patch_providers(mp, result)
         if search_fails:
             from src.application.services.search_strategies.hierarchical_search_strategy import (
                 HierarchicalSearchStrategy,
             )
 
             async def failing(self: Any, *args: Any, **kwargs: Any) -> Any:
-                raise RuntimeError(SECRET)
+                raise RuntimeError(LEAK_MARKER)
 
             mp.setattr(HierarchicalSearchStrategy, "search", failing)
-
-        real_agent_os = agno_runtime_module.AgentOS
-
-        class SpyAgentOS(real_agent_os):  # type: ignore[valid-type, misc]
-            """Registra o que o AgentOS recebe do runtime."""
-
-            def __init__(self, *args: Any, **kwargs: Any) -> None:
-                result.handles = (list(kwargs.get("agents") or []), list(kwargs.get("teams") or []))
-                super().__init__(*args, **kwargs)
-
-        mp.setattr(agno_runtime_module, "AgentOS", SpyAgentOS)
+        _spy_agent_os(mp, result)
 
         with cut_agno_io(mp, on_insert=lambda *_: None):
             app = AppFactory().create_app()
             with TestClient(app, **LOCAL) as http:  # type: ignore[arg-type]
-                result.agents = http.get("/agents").json()
-                result.teams = http.get("/teams").json()
-                result.agent_details = {a["id"]: http.get(f"/agents/{a['id']}").json() for a in result.agents}
-                result.team_details = {t["id"]: http.get(f"/teams/{t['id']}").json() for t in result.teams}
-                result.cache_boot = http.get("/metrics/cache").json()
-                for kind, entities in (("agents", result.agents), ("teams", result.teams)):
-                    for entity in entities:
-                        for user in (None, "ana"):
-                            data = {"message": "oi", "stream": "false"} | ({"user_id": user} if user else {})
-                            response = http.post(f"/{kind}/{entity['id']}/runs", data=data)
-                            result.runs[f"{kind}:{entity['id']}:{user}"] = (response.status_code, response.json())
-                response = http.post("/admin/refresh-cache")
-                result.refresh = (response.status_code, response.json())
-                result.cache_after = http.get("/metrics/cache").json()
+                _exercise(http, result)
     return result
+
+
+def _write_docs(root: Path) -> None:
+    (root / "docs").mkdir()
+    (root / "docs" / "fin.md").write_text("# Fin\n\nreembolso e fatura.\n", encoding="utf-8")
+    (root / "docs" / "hier.md").write_text(
+        "# Fin\n\nIntro.\n\n## Reembolso\n\nenvie a nota.\n\n## Fatura\n\nvence dia 5.\n", encoding="utf-8"
+    )
+
+
+def _patch_infrastructure(mp: pytest.MonkeyPatch, result: Booted) -> None:
+    """Coleções de config fake, motor/árvore/db de sessões falsos, logger gravado e sem telemetria."""
+    collections: defaultdict[str, FakeMongoCollection] = defaultdict(_Collection)
+    collections["agents_config"] = _Collection(copy.deepcopy(AGENT_DOCS))
+    collections["teams_config"] = _Collection(copy.deepcopy(TEAM_DOCS))
+    collections["tools"] = _Collection([copy.deepcopy(TOOL_DOC)])
+    client = FakeMongoClient(collections)
+    mp.setattr(mongo_base.MongoClientFactory, "get_client", classmethod(lambda cls, _conn: client))
+    mp.setattr(di, "AsyncIOMotorClient", _Motor)
+    mp.setattr(di, "StructlogLoggerAdapter", lambda _name: result.logger)
+    mp.setattr(di, "MongoDocumentTreeRepository", lambda **_: _Tree())
+    use_fake_session_db(mp)
+    mp.setattr(app_factory, "setup_telemetry", lambda config: None)
+    mp.setattr(app_factory, "shutdown_telemetry", lambda: None)
+
+
+def _patch_providers(mp: pytest.MonkeyPatch, result: Booted) -> None:
+    """Modelos fake por id (com as recusas e a falha com marcador) e embedder fake."""
+
+    def create_model(self: Any, config: Any) -> FakeChatModel:
+        result.created_on_loop[config.model_id] = running_on_event_loop()
+        if config.model_id == "modelo-invalido":
+            raise InvalidModelConfigError("modelo recusado pela validação (texto nosso)")
+        if config.model_id == "modelo-boom":
+            raise RuntimeError(LEAK_MARKER)
+        responses: list[str | ModelResponse] = ["resposta-A", "resposta-B"]
+        if config.model_id == "m-hier":
+            responses = [HIER_CALL, "final-hier"]
+        model = FakeChatModel(id=config.model_id, provider=config.provider, responses=responses)
+        result.models.setdefault(config.model_id, []).append(model)
+        return model
+
+    def create_embedder(self: Any, config: Any) -> FakeEmbedder:
+        return FakeEmbedder(id=config.model_id, provider=config.provider)
+
+    mp.setattr(di.ProviderRegistry, "create_model", create_model)
+    mp.setattr(di.ProviderRegistry, "create_embedder", create_embedder)
+
+
+def _spy_agent_os(mp: pytest.MonkeyPatch, result: Booted) -> None:
+    real_agent_os = agno_runtime_module.AgentOS
+
+    class SpyAgentOS(real_agent_os):  # type: ignore[valid-type, misc]
+        """Registra o que o AgentOS recebe do runtime."""
+
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            result.handles = (list(kwargs.get("agents") or []), list(kwargs.get("teams") or []))
+            super().__init__(*args, **kwargs)
+
+    mp.setattr(agno_runtime_module, "AgentOS", SpyAgentOS)
+
+
+def _exercise(http: TestClient, result: Booted) -> None:
+    """Lista, detalha, roda cada entidade (sem e com ``user_id``) e recarrega o cache."""
+    result.agents = http.get("/agents").json()
+    result.teams = http.get("/teams").json()
+    result.agent_details = {a["id"]: http.get(f"/agents/{a['id']}").json() for a in result.agents}
+    result.team_details = {t["id"]: http.get(f"/teams/{t['id']}").json() for t in result.teams}
+    result.cache_boot = http.get("/metrics/cache").json()
+    for kind, entities in (("agents", result.agents), ("teams", result.teams)):
+        for entity in entities:
+            for user in (None, "ana"):
+                data = {"message": "oi", "stream": "false"} | ({"user_id": user} if user else {})
+                response = http.post(f"/{kind}/{entity['id']}/runs", data=data)
+                result.runs[f"{kind}:{entity['id']}:{user}"] = (response.status_code, response.json())
+    response = http.post("/admin/refresh-cache")
+    result.refresh = (response.status_code, response.json())
+    result.cache_after = http.get("/metrics/cache").json()
 
 
 @pytest.fixture(scope="module")
@@ -316,7 +342,7 @@ def test_sequencia_de_erros_logados_no_startup_e_a_mesma_do_commit_base(boot: Bo
 
 
 def test_texto_da_excecao_de_sdk_nunca_chega_ao_log(boot: Booted) -> None:
-    assert SECRET not in repr(boot.logger.records)
+    assert LEAK_MARKER not in repr(boot.logger.records)
 
 
 def test_modelos_de_agentes_e_teams_sao_criados_fora_do_event_loop(boot: Booted) -> None:
@@ -411,9 +437,9 @@ def test_falha_da_busca_hierarquica_vai_ao_log_so_com_o_tipo_e_ao_modelo_so_a_me
     warnings = [r for r in boot_search_fails.logger.records if r.message.startswith("Erro na busca hierárquica")]
 
     assert tool_messages == ["Erro ao buscar no knowledge base; a busca não está disponível agora."]
-    assert all(SECRET not in str(message) for call in first.calls for message in call.messages)
+    assert all(LEAK_MARKER not in str(message) for call in first.calls for message in call.messages)
     assert [(w.level, w.context) for w in warnings] == [("warning", {"error_type": "RuntimeError"})]
-    assert SECRET not in repr(boot_search_fails.logger.records)
+    assert LEAK_MARKER not in repr(boot_search_fails.logger.records)
 
 
 def test_doc_name_hostil_desativa_o_rag_so_do_agente_dele(boot: Booted) -> None:

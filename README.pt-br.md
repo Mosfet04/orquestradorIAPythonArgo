@@ -573,6 +573,7 @@ Após o AgentOS montar as rotas, a aplicação expõe ~75 endpoints. Os principa
 | `POST` | `/agui` | **Deprecated** (sai no próximo release): alias da primeira entidade carregada (agentes antes de teams); a resposta traz `Deprecation: true` e `Link: </agui/{id}>; rel="successor-version"`. Use `/agui/{id}` |
 
 Detalhes do AG-UI (F1-08):
+
 - A resposta SSE não carrega header CORS próprio: vale o `CORS_ALLOWED_ORIGINS` do app (origem fora da lista não recebe `Access-Control-Allow-Origin`).
 - Falha do run (erro do modelo/SDK, run recusado por guardrail, ex.: falta de `user_id`, ou run cancelado) termina com o evento `RUN_ERROR` no lugar do `RUN_FINISHED`. `code`: `input_check_error`/`output_check_error` (a `message` é a do guardrail, até 300 caracteres), `run_cancelled` ou `run_error` (mensagem genérica; o texto da exceção só vai para o log, pelo tipo).
 - `runId` do cliente só é aceito com 1 a 64 caracteres em `[A-Za-z0-9_-]` (cabe um UUID). Vazio ou fora disso, o servidor gera um UUID4 e devolve no `RUN_STARTED`/`RUN_FINISHED`: use o `runId` dos eventos, não o enviado. `runId` ausente do corpo segue sendo 422 (o campo é obrigatório no protocolo).
@@ -847,6 +848,7 @@ O RAG permite que agentes consultem uma base de conhecimento antes de responder.
 Utiliza o knowledge base nativo do agno com busca vetorial direta.
 
 **Como funciona:**
+
 1. Coloque um arquivo de texto na pasta `docs/` (ex: `docs/basic-prog.txt`)
 2. No `agents_config`, configure `rag_config` com `active: true` e `doc_name: "basic-prog.txt"`
 3. Na inicialização, o documento é embedado e persistido na collection do próprio agente no MongoDB, `rag_<agent_id>` (um agente nunca busca nos documentos de outro, e embedders de dimensões diferentes nunca dividem um índice). `id` em `[a-z0-9-]` (até 64 caracteres) é usado como está (`rag_suporte-n1`); qualquer outro `id` vira `rag_<slug>_<12 hex do sha256(id)>`, então ids diferentes nunca dividem collection
@@ -859,12 +861,14 @@ Utiliza o knowledge base nativo do agno com busca vetorial direta.
 Constrói uma árvore de documentos (Document → Section → Chunk) e realiza busca em múltiplos níveis, retornando resultados com contexto hierárquico preservado.
 
 **Como funciona:**
+
 1. Coloque um arquivo de texto na pasta `docs/`
 2. Configure `rag_config` com `search_strategy: "hierarchical"`
 3. Na inicialização, o documento é parseado em nós hierárquicos (Document → Section → Chunk), cada nó é embedado e persistido na collection `document_tree`. Cada nó interno (documento/seção) recebe um sumário gerado pelo modelo de sumário (padrão `ollama` / `llama3.2:latest`, ligado em `dependency_injection.py`), uma chamada por nó com timeout de 60 s; em erro, timeout ou resposta vazia o sumário cai para os primeiros 200 caracteres do nó (warning no log só com o tipo do erro); depois do primeiro timeout, os demais nós daquele documento nem chamam o modelo. A árvore é indexada uma vez por `doc_name`, mesmo quando vários agentes com o mesmo arquivo sobem ao mesmo tempo
 4. O agente recebe uma tool `search_knowledge` que faz busca vetorial nos chunks e retorna os resultados com o contexto da seção pai; resultados com similaridade cosseno abaixo de 0.3 são descartados (um log `debug` registra quantos foram descartados, o melhor score e o limiar)
 
 **Vantagens:**
+
 - Preserva a estrutura do documento (seções, subseções)
 - Resultados incluem o caminho hierárquico (ex: `Document > Introdução > Chunk 3`)
 - Melhor relevância para documentos longos e estruturados
@@ -1148,6 +1152,7 @@ O projeto inclui configuração de debug em `.vscode/launch.json`. Pressione **F
 ### Problemas Comuns
 
 #### Porta 7777 ocupada
+
 ```powershell
 # Windows — encontrar e matar processo na porta
 Get-NetTCPConnection -LocalPort 7777 | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
@@ -1158,6 +1163,7 @@ lsof -ti:7777 | xargs kill -9
 ```
 
 #### MongoDB não conecta
+
 ```bash
 # Verificar se o MongoDB está rodando
 mongosh --eval "db.adminCommand('ping')"
@@ -1171,17 +1177,20 @@ print(client.admin.command('ping'))
 ```
 
 #### Provider de modelo não funciona
+
 - Verifique se a API key está no `.env` com o nome correto (`{PROVIDER}_API_KEY`)
 - Para Ollama, verifique se o servidor está rodando: `curl http://localhost:11434/api/tags`
 - Verifique os logs em `logs/` ou no terminal para mensagens de erro detalhadas
 
 #### os.agno.com mostra "AgentOS not active"
+
 - Verifique se o servidor está rodando: `curl http://localhost:7777/health`
 - A resposta deve ser: `{"status":"ok","instantiated_at":"..."}`
 - Verifique se `GET /status` retorna: `{"status":"available"}`
 - Confira se o Endpoint URL no os.agno.com está correto (`http://localhost:7777`)
 
 #### Erro 429 (Rate Limit)
+
 - Providers como Gemini/OpenAI têm limites de requisições por minuto
 - Aguarde alguns minutos e tente novamente
 - Considere usar um modelo local (Ollama) para desenvolvimento

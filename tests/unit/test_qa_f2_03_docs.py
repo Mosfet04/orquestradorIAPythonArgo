@@ -6,9 +6,11 @@ points mudarem, a documentação quebra o teste antes de enganar quem escreve um
 
 from __future__ import annotations
 
+import importlib.util
 import re
 import tomllib
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 import yaml
@@ -32,6 +34,16 @@ def _blocks(readme: Path, language: str) -> list[str]:
     return re.findall(rf"```{language}\n(.*?)```", section, flags=re.DOTALL)
 
 
+def _import_snippet(snippet: str, path: Path) -> ModuleType:
+    """Importa o trecho do README como módulo (arquivo próprio, fora de ``sys.modules``)."""
+    path.write_text(snippet, encoding="utf-8")
+    module_spec = importlib.util.spec_from_file_location(path.stem, path)
+    assert module_spec is not None and module_spec.loader is not None
+    module = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(module)
+    return module
+
+
 @pytest.mark.parametrize("readme", READMES, ids=lambda p: p.name)
 def test_toml_do_readme_declara_o_mesmo_entry_point_do_exemplo(readme: Path) -> None:
     [snippet] = _blocks(readme, "toml")
@@ -45,12 +57,10 @@ def test_toml_do_readme_declara_o_mesmo_entry_point_do_exemplo(readme: Path) -> 
 
 @pytest.mark.parametrize("readme", READMES, ids=lambda p: p.name)
 def test_codigo_do_readme_e_uma_spec_valida_que_cria_o_modelo_real(
-    readme: Path, monkeypatch: pytest.MonkeyPatch
+    readme: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     [snippet] = _blocks(readme, "python")
-    namespace: dict[str, object] = {}
-    exec(compile(snippet, str(readme), "exec"), namespace)  # noqa: S102 - trecho de documentação do repositório
-    spec = namespace["SPEC"]
+    spec = _import_snippet(snippet, tmp_path / "readme_plugin_snippet.py").SPEC
     assert isinstance(spec, ProviderSpec)
     registry = ProviderRegistry(BUILTIN_PROVIDERS)
     registry.register(spec)

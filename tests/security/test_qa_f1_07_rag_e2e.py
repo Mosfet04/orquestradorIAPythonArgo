@@ -425,22 +425,42 @@ async def test_doc_name_hostil_num_agente_nao_derruba_os_outros_nem_o_startup(
 
     agents = await use_case.execute()  # gather: um create_agent que levantasse sumiria da lista
 
+    by_id = _assert_only_hostile_doc_names_lose_rag(agents, configs, asm.logger)
+    brains = {agent_id: _attach(agent) for agent_id, agent in by_id.items() if agent_id}
+    client = client_for(agents)  # o app sobe com todos
+    _assert_all_listed_and_completed(client, configs, brains)
+    _assert_nothing_read_outside_docs(brains, vector_store, asm)
+
+
+def _assert_only_hostile_doc_names_lose_rag(
+    agents: list[Agent], configs: list[AgentConfig], logger: RecordingLogger
+) -> dict[str | None, Agent]:
+    """Todos os agentes montam; só os de ``doc_name`` hostil ficam sem RAG, com um log de erro cada."""
     assert sorted(a.id or "" for a in agents) == sorted(c.id for c in configs)
     by_id = {a.id: a for a in agents}
     assert by_id["ruim-sem"].knowledge is None and by_id["abs-sem"].knowledge is None
     assert by_id["bom-sem"].knowledge is not None
-    rejected = [r for r in asm.logger.records if r.message == "doc_name do RAG rejeitado; RAG do agente desativado"]
+    rejected = [r for r in logger.records if r.message == "doc_name do RAG rejeitado; RAG do agente desativado"]
     assert sorted(r.context["agent_id"] for r in rejected) == ["abs-sem", "ruim-hier", "ruim-sem", "tipo-ruim"]
     assert all(r.level == "error" for r in rejected)
+    return by_id
 
-    brains = {agent_id: _attach(agent) for agent_id, agent in by_id.items() if agent_id}
-    client = client_for(agents)  # o app sobe com todos
+
+def _assert_all_listed_and_completed(
+    client: TestClient, configs: list[AgentConfig], brains: dict[str | None, SearchBrain]
+) -> None:
+    """O app lista todos os agentes e cada um completa um run."""
     listed = client.get("/agents", headers=RUN)
     assert listed.status_code == 200
     assert sorted(a["id"] for a in listed.json()) == sorted(c.id for c in configs)
     for agent_id in brains:
         assert _run(client, agent_id)["status"] == "COMPLETED"
 
+
+def _assert_nothing_read_outside_docs(
+    brains: dict[str | None, SearchBrain], vector_store: FakeVectorStore, asm: Assembly
+) -> None:
+    """Os bons acham o próprio documento; nada de fora de ``docs/`` chega ao modelo, ao vetor ou à árvore."""
     assert FINANCEIRO in _tool_results(brains["bom-sem"])
     assert HIER_A in _tool_results(brains["bom-hier"])
     everything = "".join(_tool_results(b) for b in brains.values())

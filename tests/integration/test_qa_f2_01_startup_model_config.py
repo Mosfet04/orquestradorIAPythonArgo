@@ -31,8 +31,8 @@ from tests.fakes.app_boot import Boot, agent_doc, boot, team_doc
 
 pytestmark = pytest.mark.usefixtures("offline_knowledge")
 
-SECRET_REF_VALUE = "sk-QA-F201-COLADO-NO-LUGAR-DA-REF"  # noqa: S105 - marcador de vazamento, não é segredo
-URL_PASSWORD = "senha-QA-F201-NA-URL"  # noqa: S105 - marcador de vazamento, não é segredo
+PASTED_KEY_MARKER = "sk-QA-F201-COLADO-NO-LUGAR-DA-REF"  # marcador de vazamento, não é segredo
+URL_USERINFO_MARKER = "senha-QA-F201-NA-URL"  # marcador de vazamento, não é segredo
 
 NEW_FIELDS = {
     "model_params": {"temperature": 0.2, "max_tokens": 256, "stream": False},
@@ -174,20 +174,20 @@ def test_campos_novos_nao_aparecem_em_resposta_http_nem_em_log(monkeypatch: pyte
 
 
 HOSTILE_AGENT_FIELDS = [
-    {"api_key_ref": SECRET_REF_VALUE},
-    {"api_key_ref": f"env:{SECRET_REF_VALUE}"},
+    {"api_key_ref": PASTED_KEY_MARKER},
+    {"api_key_ref": f"env:{PASTED_KEY_MARKER}"},
     {"api_key_ref": ""},
     {"api_key_ref": 7},
-    {"base_url": f"http://admin:{URL_PASSWORD}@gw.example.invalid"},
-    {"base_url": f"javascript:alert('{URL_PASSWORD}')"},
-    {"base_url": f"file:///etc/{URL_PASSWORD}"},
-    {"base_url": f"http://gw.example.invalid:99999/{URL_PASSWORD}"},
-    {"base_url": f"http://gw.example.invalid/ {URL_PASSWORD}"},
-    {"base_url": f"http://gw.example.invalid/?k={URL_PASSWORD}"},
-    {"model_params": {"headers": {"Authorization": SECRET_REF_VALUE}}},
-    {"model_params": [SECRET_REF_VALUE]},
-    {"model_params": {"k": [SECRET_REF_VALUE]}},
-    {"rag_config": {"active": True, "model": "e", "api_key_ref": SECRET_REF_VALUE}},
+    {"base_url": f"http://admin:{URL_USERINFO_MARKER}@gw.example.invalid"},
+    {"base_url": f"javascript:alert('{URL_USERINFO_MARKER}')"},
+    {"base_url": f"file:///etc/{URL_USERINFO_MARKER}"},
+    {"base_url": f"http://gw.example.invalid:99999/{URL_USERINFO_MARKER}"},
+    {"base_url": f"http://gw.example.invalid/ {URL_USERINFO_MARKER}"},
+    {"base_url": f"http://gw.example.invalid/?k={URL_USERINFO_MARKER}"},
+    {"model_params": {"headers": {"Authorization": PASTED_KEY_MARKER}}},
+    {"model_params": [PASTED_KEY_MARKER]},
+    {"model_params": {"k": [PASTED_KEY_MARKER]}},
+    {"rag_config": {"active": True, "model": "e", "api_key_ref": PASTED_KEY_MARKER}},
     {"rag_config": {"active": True, "model": None, "base_url": "http://emb.invalid"}},
 ]
 
@@ -213,7 +213,7 @@ def test_agente_com_campo_novo_hostil_e_isolado_e_o_app_sobe_com_os_demais(
     ignored = [c for m, c in result.errors() if m.endswith("inválido ignorado")]
     assert {c.get("agent_id") for c in ignored if "agent_id" in c} == {"ruim"}
     assert all(c["error_type"] == "ValueError" for c in ignored)
-    assert SECRET_REF_VALUE not in result.everything() and URL_PASSWORD not in result.everything()
+    assert PASTED_KEY_MARKER not in result.everything() and URL_USERINFO_MARKER not in result.everything()
 
 
 def test_rag_com_tipo_hostil_no_modelo_nao_derruba_o_startup(monkeypatch: pytest.MonkeyPatch):
@@ -232,7 +232,7 @@ def test_rag_com_tipo_hostil_no_modelo_nao_derruba_o_startup(monkeypatch: pytest
     assert result.embedders.created == [] and result.errors() == []
     warnings = [r.message for r in result.logger.records if r.level == "warning"]
     assert warnings.count("RAG ativo sem factory_ia_model ou model — ignorando") == 3
-    assert SECRET_REF_VALUE not in result.everything()
+    assert PASTED_KEY_MARKER not in result.everything()
 
 
 def test_documento_invalido_nao_muda_a_ordem_nem_o_conjunto_dos_validos(monkeypatch: pytest.MonkeyPatch):
@@ -242,7 +242,7 @@ def test_documento_invalido_nao_muda_a_ordem_nem_o_conjunto_dos_validos(monkeypa
         agent_doc("x1", base_url="ftp://x"),
         valid[1],
         valid[2],
-        agent_doc("x2", api_key_ref=SECRET_REF_VALUE),
+        agent_doc("x2", api_key_ref=PASTED_KEY_MARKER),
         valid[3],
         valid[4],
     ]
@@ -301,7 +301,7 @@ async def test_indexacao_hierarquica_mantem_o_fallback_de_embedder(rag: RagConfi
 def test_registry_real_isola_agente_com_base_url_fora_da_allowlist_sem_vazar(monkeypatch: pytest.MonkeyPatch):
     """Documento hostil (endpoint de coleta + chave por referência): o agente cai, os outros sobem,
     o motivo vai ao log sem o host nem a chave, e nada disso chega à resposta HTTP."""
-    monkeypatch.setenv("QA_F202_API_KEY", SECRET_REF_VALUE)
+    monkeypatch.setenv("QA_F202_API_KEY", PASTED_KEY_MARKER)
     registry = ProviderRegistry(
         BUILTIN_PROVIDERS,
         policy=DestinationPolicy(allowlist=("gw.permitido.invalid",), resolver=lambda host: ["10.0.0.9"]),
@@ -325,5 +325,5 @@ def test_registry_real_isola_agente_com_base_url_fora_da_allowlist_sem_vazar(mon
     assert "MODEL_BASE_URL_ALLOWLIST" in failures["fora"]["reason"]
     assert "metadata" in failures["metadata"]["reason"]
     blob = result.everything()
-    for forbidden in (SECRET_REF_VALUE, "coletor.evil", "169.254.169.254", "QA_F202_API_KEY"):
+    for forbidden in (PASTED_KEY_MARKER, "coletor.evil", "169.254.169.254", "QA_F202_API_KEY"):
         assert forbidden not in blob, forbidden

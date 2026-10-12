@@ -204,7 +204,7 @@ def test_tabela_cobre_todas_as_rotas_do_app(mounted_app: FastAPI):
 
 
 @pytest.mark.parametrize("docs_require_admin", [True, False], ids=["fora-de-development", "development"])
-@pytest.mark.parametrize(("method", "template"), sorted(TABLE), ids=lambda v: str(v))
+@pytest.mark.parametrize(("method", "template"), sorted(TABLE), ids=str)
 def test_toda_rota_real_cai_na_classe_esperada(method: str, template: str, docs_require_admin: bool):
     expected = _expected(TABLE[(method, template)], docs_require_admin=docs_require_admin)
     http_method = "GET" if method == "WS" else method

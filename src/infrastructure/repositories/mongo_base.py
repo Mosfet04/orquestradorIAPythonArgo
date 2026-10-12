@@ -26,6 +26,7 @@ class MongoClientFactory:
 
     @classmethod
     def get_client(cls, connection_string: str) -> AsyncIOMotorClient[MongoDocument]:
+        """Devolve o cliente compartilhado da connection string, criando-o na primeira chamada."""
         if connection_string not in cls._instances:
             use_tls = "mongodb.net" in connection_string or (
                 os.getenv("USE_TLS", "false").lower() == "true"

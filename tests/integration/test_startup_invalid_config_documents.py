@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from httpx import Response
 from starlette.testclient import TestClient
 
 from src.application.use_cases.get_active_agents_use_case import GetActiveAgentsUseCase
@@ -171,6 +172,14 @@ def test_startup_com_documentos_invalidos_sobe_e_expoe_so_os_validos(monkeypatch
         run = client.post("/agents/valido-2/runs", data={"message": "oi", "stream": "false"})
         missing = client.post("/agents/modelo-recusado/runs", data={"message": "oi", "stream": "false"})
 
+    _assert_only_valid_entities_exposed(agents, teams, config, run, missing)
+    _assert_one_log_per_failure(logger)
+
+
+def _assert_only_valid_entities_exposed(
+    agents: Response, teams: Response, config: Response, run: Response, missing: Response
+) -> None:
+    """O HTTP expõe só os documentos válidos; o agente recusado não existe para o run."""
     assert agents.status_code == 200
     assert sorted(a["id"] for a in agents.json()) == ["valido-1", "valido-2"]
     assert teams.status_code == 200
@@ -182,26 +191,33 @@ def test_startup_com_documentos_invalidos_sobe_e_expoe_so_os_validos(monkeypatch
     assert run.status_code == 200 and run.json()["content"] == "oi"
     assert missing.status_code == 404
 
+
+# Documento inválido: um log por documento, só com ids e o tipo do erro, na ordem da carga.
+EXPECTED_IGNORED = [
+    ("Documento de agente inválido ignorado", {"agent_id": None, "mongo_id": None, "error_type": "ValueError"}),
+    ("Documento de agente inválido ignorado", {"agent_id": None, "mongo_id": None, "error_type": "ValueError"}),
+    (
+        "Documento de agente inválido ignorado",
+        {"agent_id": "rag-quebrado", "mongo_id": None, "error_type": "AttributeError"},
+    ),
+    (
+        "Documento de agente inválido ignorado",
+        {"agent_id": "descricao-objeto", "mongo_id": None, "error_type": "ValueError"},
+    ),
+    ("Documento de team inválido ignorado", {"team_id": "time-modo", "mongo_id": None, "error_type": "ValueError"}),
+    ("Documento de team inválido ignorado", {"team_id": None, "mongo_id": None, "error_type": "ValueError"}),
+    (
+        "Documento de team inválido ignorado",
+        {"team_id": "time-descricao", "mongo_id": None, "error_type": "ValueError"},
+    ),
+]
+
+
+def _assert_one_log_per_failure(logger: RecordingLogger) -> None:
+    """Cada documento ou entidade recusada gera um log de erro, sem texto de exceção nem marcador."""
     errors = [(r.message, r.context) for r in logger.records if r.level == "error"]
     ignored = [(m, c) for m, c in errors if m.endswith("inválido ignorado")]
-    assert ignored == [
-        ("Documento de agente inválido ignorado", {"agent_id": None, "mongo_id": None, "error_type": "ValueError"}),
-        ("Documento de agente inválido ignorado", {"agent_id": None, "mongo_id": None, "error_type": "ValueError"}),
-        (
-            "Documento de agente inválido ignorado",
-            {"agent_id": "rag-quebrado", "mongo_id": None, "error_type": "AttributeError"},
-        ),
-        (
-            "Documento de agente inválido ignorado",
-            {"agent_id": "descricao-objeto", "mongo_id": None, "error_type": "ValueError"},
-        ),
-        ("Documento de team inválido ignorado", {"team_id": "time-modo", "mongo_id": None, "error_type": "ValueError"}),
-        ("Documento de team inválido ignorado", {"team_id": None, "mongo_id": None, "error_type": "ValueError"}),
-        (
-            "Documento de team inválido ignorado",
-            {"team_id": "time-descricao", "mongo_id": None, "error_type": "ValueError"},
-        ),
-    ]
+    assert ignored == EXPECTED_IGNORED
     assert ("Agente com id repetido ignorado", {"agent_id": "valido-1"}) in errors
     assert ("Team com id repetido ignorado", {"team_id": "time-ok"}) in errors
     # uma falha de criação = um log (só o tipo; o texto da exceção pode ter segredo de SDK)

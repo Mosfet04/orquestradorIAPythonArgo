@@ -1,3 +1,5 @@
+"""Porta do repositório de configurações de agentes."""
+
 from abc import ABC, abstractmethod
 from typing import List
 

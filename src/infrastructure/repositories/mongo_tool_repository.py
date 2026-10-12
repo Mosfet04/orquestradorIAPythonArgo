@@ -34,6 +34,7 @@ class MongoToolRepository(AsyncMongoRepository, IToolRepository):
         )
 
     async def get_tools_by_ids(self, tool_ids: list[str]) -> list[Tool]:
+        """Devolve as tools ativas com os ids pedidos."""
         if not tool_ids:
             return []
         try:
@@ -45,6 +46,7 @@ class MongoToolRepository(AsyncMongoRepository, IToolRepository):
             raise
 
     async def get_tool_by_id(self, tool_id: str) -> Tool:
+        """Devolve a tool pelo id; ``ValueError`` se não existir."""
         try:
             doc = await self._collection.find_one({"id": tool_id}, sort=self._STABLE_ORDER)
             if not doc:
@@ -57,6 +59,7 @@ class MongoToolRepository(AsyncMongoRepository, IToolRepository):
             raise
 
     async def get_all_active_tools(self) -> list[Tool]:
+        """Lista as tools ativas."""
         try:
             return await self._active_tools({"active": True})
         except Exception as exc:

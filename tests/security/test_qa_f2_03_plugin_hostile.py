@@ -19,7 +19,7 @@ from src.infrastructure.providers.plugins import PluginLoadError, load_provider_
 from tests.fakes import RecordingLogger
 from tests.fakes.plugins import FakeSite, spec_module
 
-SECRET = "SEGREDO-QA-F203-NO-TEXTO-DO-PLUGIN"  # noqa: S105 - marcador de vazamento
+LEAK_MARKER = "SEGREDO-QA-F203-NO-TEXTO-DO-PLUGIN"  # marcador de vazamento
 ALLOW = ("acme-plugin:acme",)
 
 
@@ -188,7 +188,7 @@ def test_import_do_plugin_que_levanta_com_texto_sensivel_nao_vaza_na_mensagem(
     plugin_site: FakeSite, exception: str
 ) -> None:
     plugin_site.install(
-        "acme-plugin", {"acme": "acme_boom_mod:SPEC"}, {"acme_boom_mod": f"raise {exception}({SECRET!r})\n"}
+        "acme-plugin", {"acme": "acme_boom_mod:SPEC"}, {"acme_boom_mod": f"raise {exception}({LEAK_MARKER!r})\n"}
     )
 
     if exception in ("SystemExit", "KeyboardInterrupt"):
@@ -200,13 +200,13 @@ def test_import_do_plugin_que_levanta_com_texto_sensivel_nao_vaza_na_mensagem(
     with pytest.raises(PluginLoadError) as caught:
         _load()
     assert str(caught.value) == f"plugin 'acme-plugin:acme': falha ao carregar ({exception})"
-    assert SECRET not in str(caught.value)
+    assert LEAK_MARKER not in str(caught.value)
 
 
 def test_import_dinamico_de_objeto_que_carrega_env_nao_vaza_o_valor(
     plugin_site: FakeSite, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("QA_F203_VAR_API_KEY", SECRET)
+    monkeypatch.setenv("QA_F203_VAR_API_KEY", LEAK_MARKER)
 
     with pytest.raises(PluginLoadError) as caught:
         _load((), dynamic_specs=("os:environ",), dynamic_import_allowed=True)
@@ -214,7 +214,7 @@ def test_import_dinamico_de_objeto_que_carrega_env_nao_vaza_o_valor(
     assert str(caught.value) == (
         "DYNAMIC_PROVIDER_SPECS (entrada 1): o entry point deve apontar para uma ProviderSpec (recebido: _Environ)"
     )
-    assert SECRET not in str(caught.value)
+    assert LEAK_MARKER not in str(caught.value)
 
 
 # ── plugin sob a guarda de destino do F2-02 ──────────────────────────────────────────────────────

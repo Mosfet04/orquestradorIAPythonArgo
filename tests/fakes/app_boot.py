@@ -107,9 +107,22 @@ def boot(
     for name in _ENV_NAMES:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("AGNO_TELEMETRY", "false")
-    logger = result.logger
+    runtime = _runtime(result.logger, models, embedders)
+    controller = _controller(runtime, result.logger)
+    factory = AppFactory()
+    app = factory.create_app()
+    _serve_with(monkeypatch, factory, controller, runtime)
+    with TestClient(app, **LOCAL) as http:  # type: ignore[arg-type]
+        agents, teams, config = http.get("/agents"), http.get("/teams"), http.get("/config")
+        result.status = (agents.status_code, teams.status_code, config.status_code)
+        result.agents, result.teams, result.config = agents.json(), teams.json(), config.json()
+    return result
+
+
+def _runtime(logger: RecordingLogger, models: IModelFactory, embedders: IEmbedderFactory) -> AgnoRuntime:
+    """``AgnoRuntime`` com as fábricas reais de agente e team e um db de sessões fake."""
     session_db = fake_session_db()
-    runtime = AgnoRuntime(
+    return AgnoRuntime(
         agent_factory=AgentFactoryService(
             db_url=CONN,
             session_db=session_db,
@@ -122,6 +135,10 @@ def boot(
         team_factory=TeamFactoryService(session_db=session_db, logger=logger, model_factory=models),
         session_db=session_db,
     )
+
+
+def _controller(runtime: AgnoRuntime, logger: RecordingLogger) -> OrquestradorController:
+    """Controller com os casos de uso reais sobre os repositórios Mongo (coleções fake)."""
     agents_uc = GetActiveAgentsUseCase(
         runtime,
         MongoAgentConfigRepository(connection_string=CONN, logger=logger),
@@ -132,11 +149,15 @@ def boot(
         MongoTeamConfigRepository(connection_string=CONN, logger=logger),
         logger,
     )
-    controller = OrquestradorController(
+    return OrquestradorController(
         get_active_agents_use_case=agents_uc, get_active_teams_use_case=teams_uc, logger=logger
     )
-    factory = AppFactory()
-    app = factory.create_app()
+
+
+def _serve_with(
+    monkeypatch: pytest.MonkeyPatch, factory: AppFactory, controller: OrquestradorController, runtime: AgnoRuntime
+) -> None:
+    """Troca o container do app por um que serve ``controller`` e ``runtime``; telemetria desligada."""
 
     async def ensure_container() -> Any:
         async def cleanup() -> None:
@@ -154,8 +175,3 @@ def boot(
     monkeypatch.setattr(factory, "_ensure_container", ensure_container)
     monkeypatch.setattr(app_factory, "setup_telemetry", lambda config: None)
     monkeypatch.setattr(app_factory, "shutdown_telemetry", lambda: None)
-    with TestClient(app, **LOCAL) as http:  # type: ignore[arg-type]
-        agents, teams, config = http.get("/agents"), http.get("/teams"), http.get("/config")
-        result.status = (agents.status_code, teams.status_code, config.status_code)
-        result.agents, result.teams, result.config = agents.json(), teams.json(), config.json()
-    return result

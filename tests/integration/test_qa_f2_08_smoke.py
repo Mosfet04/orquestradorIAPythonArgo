@@ -17,6 +17,7 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+from httpx import Response
 from starlette.testclient import TestClient
 
 from src.infrastructure import dependency_injection as di
@@ -115,34 +116,46 @@ def test_startup_run_com_user_e_sessao_historico_no_segundo_run_sessions_memorie
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     with smoke_app(monkeypatch, tmp_path) as world:
-        http = world.http
-        listed = http.get("/agents", headers=RUN)
-        first = http.post(
-            "/agents/ag/runs", data={"message": FIRST, "stream": "false", "user_id": "ana", "session_id": "s1"},
-            headers=RUN,
-        )
-        second = http.post(
-            "/agents/ag/runs", data={"message": SECOND, "stream": "false", "user_id": "ana", "session_id": "s1"},
-            headers=RUN,
-        )
-        other_user = http.post(
-            "/agents/ag/runs", data={"message": SECOND, "stream": "false", "user_id": "bruno", "session_id": "s1"},
-            headers=RUN,
-        )
-        team = http.post(
-            "/teams/tm/runs", data={"message": "oi", "stream": "false", "user_id": "ana", "session_id": "s-team"},
-            headers=RUN,
-        )
-        sessions = http.get("/sessions", params={"type": "agent", "user_id": "ana"}, headers=ADMIN)
-        team_sessions = http.get("/sessions", params={"type": "team", "user_id": "ana"}, headers=ADMIN)
-        session_runs = http.get("/sessions/s1/runs", params={"type": "agent", "user_id": "ana"}, headers=ADMIN)
-        created = http.post("/memories", json={"memory": "Ana prefere espanhol", "user_id": "ana"}, headers=ADMIN)
-        memories = http.get("/memories", params={"user_id": "ana"}, headers=ADMIN)
-        bruno_memories = http.get("/memories", params={"user_id": "bruno"}, headers=ADMIN)
+        responses = _runs_sessions_and_memories(world.http)
         db = world.session_dbs[0]
         during_closes = list(session_db_client(db).closes)
 
-    assert sorted(a["id"] for a in listed.json()) == ["ag"]
+    _assert_history_per_user(world, responses)
+    _assert_sessions_and_memories_per_user(responses, db)
+
+    # Um db de sessões para o app inteiro; fechado no shutdown, uma vez e numa thread.
+    assert len(world.session_dbs) == 1 and during_closes == []
+    assert session_db_client(db).closes == [False]
+    assert world.events.count("db:created") == 1 and world.events.count("db:close") == 1
+    assert not [e for e in world.events.names if e.endswith(":on-loop") or e == "db:use-after-close"]
+
+
+def _runs_sessions_and_memories(http: TestClient) -> dict[str, Response]:
+    """Dois runs da Ana na mesma sessão, um do Bruno com o mesmo ``session_id``, um de team e as leituras admin."""
+
+    def run(path: str, message: str, user_id: str, session_id: str) -> Response:
+        data = {"message": message, "stream": "false", "user_id": user_id, "session_id": session_id}
+        return http.post(path, data=data, headers=RUN)
+
+    return {
+        "listed": http.get("/agents", headers=RUN),
+        "first": run("/agents/ag/runs", FIRST, "ana", "s1"),
+        "second": run("/agents/ag/runs", SECOND, "ana", "s1"),
+        "other_user": run("/agents/ag/runs", SECOND, "bruno", "s1"),
+        "team": run("/teams/tm/runs", "oi", "ana", "s-team"),
+        "sessions": http.get("/sessions", params={"type": "agent", "user_id": "ana"}, headers=ADMIN),
+        "team_sessions": http.get("/sessions", params={"type": "team", "user_id": "ana"}, headers=ADMIN),
+        "session_runs": http.get("/sessions/s1/runs", params={"type": "agent", "user_id": "ana"}, headers=ADMIN),
+        "created": http.post("/memories", json={"memory": "Ana prefere espanhol", "user_id": "ana"}, headers=ADMIN),
+        "memories": http.get("/memories", params={"user_id": "ana"}, headers=ADMIN),
+        "bruno_memories": http.get("/memories", params={"user_id": "bruno"}, headers=ADMIN),
+    }
+
+
+def _assert_history_per_user(world: _World, responses: dict[str, Response]) -> None:
+    """O segundo run da Ana vê o histórico do primeiro; o Bruno, no mesmo ``session_id``, não."""
+    first, second, team = responses["first"], responses["second"], responses["team"]
+    assert sorted(a["id"] for a in responses["listed"].json()) == ["ag"]
     assert (first.status_code, second.status_code, team.status_code) == (200, 200, 200)
     assert (first.json()["content"], second.json()["content"]) == ("r1", "r2")
     prompts = [call.messages for call in world.models["m-ag"].calls]
@@ -150,21 +163,20 @@ def test_startup_run_com_user_e_sessao_historico_no_segundo_run_sessions_memorie
     assert texts[0].count(FIRST) == 1  # o primeiro run só tem a própria mensagem
     assert texts[1].count(FIRST) == 1 and "r1" in texts[1]  # o segundo run viu o histórico (pergunta e resposta)
     # Bruno usou o mesmo session_id e não viu o histórico da Ana (a sessão dela segue dela).
-    assert other_user.status_code == 200
+    assert responses["other_user"].status_code == 200
     assert FIRST not in texts[2] and "r1" not in texts[2]
-    assert [s["session_id"] for s in sessions.json()["data"]] == ["s1"]
-    assert [s["session_id"] for s in team_sessions.json()["data"]] == ["s-team"]
-    assert len(session_runs.json()) == 2
-    assert created.status_code == 200, created.text
-    assert [m["memory"] for m in memories.json()["data"]] == ["Ana prefere espanhol"]
-    assert bruno_memories.json()["data"] == []
-    assert sorted((d["session_id"], d["user_id"]) for d in session_docs(db)) == [("s-team", "ana"), ("s1", "ana")]
 
-    # Um db de sessões para o app inteiro; fechado no shutdown, uma vez e numa thread.
-    assert len(world.session_dbs) == 1 and during_closes == []
-    assert session_db_client(db).closes == [False]
-    assert world.events.count("db:created") == 1 and world.events.count("db:close") == 1
-    assert not [e for e in world.events.names if e.endswith(":on-loop") or e == "db:use-after-close"]
+
+def _assert_sessions_and_memories_per_user(responses: dict[str, Response], db: SessionDb) -> None:
+    """Rotas admin de sessões e memórias por ``user_id``; os documentos gravados são os da Ana."""
+    assert [s["session_id"] for s in responses["sessions"].json()["data"]] == ["s1"]
+    assert [s["session_id"] for s in responses["team_sessions"].json()["data"]] == ["s-team"]
+    assert len(responses["session_runs"].json()) == 2
+    created = responses["created"]
+    assert created.status_code == 200, created.text
+    assert [m["memory"] for m in responses["memories"].json()["data"]] == ["Ana prefere espanhol"]
+    assert responses["bruno_memories"].json()["data"] == []
+    assert sorted((d["session_id"], d["user_id"]) for d in session_docs(db)) == [("s-team", "ana"), ("s1", "ana")]
 
 
 @pytest.mark.parametrize(

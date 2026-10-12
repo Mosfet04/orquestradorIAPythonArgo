@@ -64,22 +64,30 @@ def _literal_env_reads() -> set[str]:
     for path in CODE_FILES:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
-            arg: ast.expr | None = None
-            if isinstance(node, ast.Call) and node.args:
-                func = node.func
-                is_getenv = (isinstance(func, ast.Attribute) and func.attr == "getenv") or (
-                    isinstance(func, ast.Name) and func.id == "getenv"
-                )
-                is_environ_get = (
-                    isinstance(func, ast.Attribute) and func.attr in ("get", "setdefault") and _is_environ(func.value)
-                )
-                if is_getenv or is_environ_get:
-                    arg = node.args[0]
-            elif isinstance(node, ast.Subscript) and _is_environ(node.value):
-                arg = node.slice
+            arg = _env_name_arg(node)
             if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                 names.add(arg.value)
     return names
+
+
+def _env_name_arg(node: ast.AST) -> ast.expr | None:
+    """Expressão do nome da variável numa leitura de ambiente; ``None`` se o nó não é uma."""
+    if isinstance(node, ast.Call) and node.args and _is_env_read_call(node.func):
+        return node.args[0]
+    if isinstance(node, ast.Subscript) and _is_environ(node.value):
+        return node.slice
+    return None
+
+
+def _is_env_read_call(func: ast.expr) -> bool:
+    """``getenv``/``os.getenv`` ou ``os.environ.get``/``os.environ.setdefault``."""
+    is_getenv = (isinstance(func, ast.Attribute) and func.attr == "getenv") or (
+        isinstance(func, ast.Name) and func.id == "getenv"
+    )
+    is_environ_get = (
+        isinstance(func, ast.Attribute) and func.attr in ("get", "setdefault") and _is_environ(func.value)
+    )
+    return is_getenv or is_environ_get
 
 
 def _compose_vars() -> dict[str, str]:

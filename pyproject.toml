@@ -77,14 +77,33 @@ select = [
     "T20",      # print
     "PIE",      # pequenos anti-padrões
     "RUF",      # regras próprias do ruff
+    "D",        # pydocstyle (convenção pep257; só src/, ver per-file-ignores) — F2-09
+    "D212",     # resumo na 1ª linha da docstring (fora da pep257, ligado explicitamente)
 ]
+ignore = [
+    # D104: os __init__.py de pacote vazios são vazios por desenho (namespace
+    # simples); quando o pacote tem API, o __init__ já traz docstring.
+    "D104",
+    # D105/D107: a docstring da classe documenta o objeto; docstring em
+    # __eq__/__repr__/__init__ repetiria a da classe sem informação nova.
+    "D105", "D107",
+    # D401: o modo imperativo é verificado contra vocabulário inglês; com
+    # docstring em português ("Persiste ...") só gera falso positivo.
+    "D401",
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"
 
 [tool.ruff.lint.isort]
 known-first-party = ["src", "tests"]
 
 [tool.ruff.lint.per-file-ignores]
-# --- Permanente: assert é o mecanismo de asserção do pytest. ---
-"tests/**" = ["S101"]
+# --- Permanente: assert é o mecanismo de asserção do pytest; docstring (D) só
+# é exigida em src/ (decisão do F2-09: teste se documenta pelo nome). ---
+"tests/**" = ["S101", "D"]
+# --- Permanente: plugin de exemplo, fora do pacote do app; docstring só em src/. ---
+"examples/**" = ["D"]
 # --- Permanente: em app.py, load_dotenv() precisa rodar antes dos imports de src.
 # O gate é `ruff check src tests app.py`. ---
 "app.py" = ["E402"]
@@ -120,7 +139,7 @@ known-first-party = ["src", "tests"]
 "tests/unit/test_app_factory_extended.py" = ["E501"]
 "tests/unit/test_dependency_injection.py" = ["E501"]
 "tests/unit/test_document_indexing_service.py" = ["RUF015"]
-"tests/unit/test_http_tool_factory_extended.py" = ["E501", "RUF059"]
+"tests/unit/test_http_tool_factory_extended.py" = ["E501"]
 "tests/unit/test_logging_decorators_extended.py" = ["S106"]
 "tests/unit/test_orquestrador_controller_extended.py" = ["UP017"]
 "tests/unit/test_structlog_logger.py" = ["E402"]

@@ -100,8 +100,10 @@ def _check_events(text: str) -> None:
 
 
 def _check_duplicate_keys(root: yaml.Node) -> None:
-    """Segunda passada (grafo do ``compose``, iterativa): chave escalar repetida num mapeamento é erro
-    (o PyYAML ficaria com a última em silêncio, ex.: duas seções ``agents``)."""
+    """Segunda passada (grafo do ``compose``, iterativa): chave escalar repetida num mapeamento é erro.
+
+    O PyYAML ficaria com a última em silêncio (ex.: duas seções ``agents``).
+    """
     stack = [root]
     while stack:
         node = stack.pop()
@@ -167,6 +169,7 @@ class YamlConfigFile:
 
     @property
     def path(self) -> str:
+        """Caminho do arquivo YAML de configuração."""
         return self._path
 
     async def section(self, name: str) -> list[tuple[int, Document]]:
@@ -268,9 +271,11 @@ class YamlAgentConfigRepository(_YamlRepository, IAgentConfigRepository):
     _section = "agents"
 
     async def get_active_agents(self) -> list[AgentConfig]:
+        """Lista os agentes ativos da seção ``agents``, na ordem do arquivo."""
         return await self._active(lambda doc: map_agent_document(doc, self._logger))
 
     async def get_agent_by_id(self, agent_id: str) -> AgentConfig:
+        """Devolve o agente pelo id; ``ValueError`` se não existir."""
         found = await self._first(agent_id)
         if found is None:
             raise ValueError(f"Agente {agent_id} não encontrado")
@@ -285,9 +290,11 @@ class YamlTeamConfigRepository(_YamlRepository, ITeamConfigRepository):
     _section = "teams"
 
     async def get_active_teams(self) -> list[TeamConfig]:
+        """Lista os teams ativos da seção ``teams``, na ordem do arquivo."""
         return await self._active(lambda doc: map_team_document(doc, self._logger))
 
     async def get_team_by_id(self, team_id: str) -> TeamConfig | None:
+        """Devolve o team pelo id, ou ``None`` se não existir."""
         found = await self._first(team_id)
         if found is None:
             return None
@@ -303,6 +310,7 @@ class YamlToolRepository(_YamlRepository, IToolRepository):
     _warns_camel_case = False
 
     async def get_tools_by_ids(self, tool_ids: list[str]) -> list[Tool]:
+        """Devolve as tools ativas com os ids pedidos."""
         if not tool_ids:
             return []
         wanted = set(tool_ids)
@@ -310,10 +318,12 @@ class YamlToolRepository(_YamlRepository, IToolRepository):
         return first_tool_per_id(tools, self._logger)
 
     async def get_tool_by_id(self, tool_id: str) -> Tool:
+        """Devolve a tool pelo id; ``ValueError`` se não existir."""
         found = await self._first(tool_id)
         if found is None:
             raise ValueError(f"Tool {tool_id} não encontrada")
         return map_tool_document(found[1])
 
     async def get_all_active_tools(self) -> list[Tool]:
+        """Lista as tools ativas (a primeira de cada id)."""
         return first_tool_per_id(await self._active(map_tool_document), self._logger)

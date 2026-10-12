@@ -142,8 +142,11 @@ def resolve_api_keys(config: AppConfig) -> ApiKeys | None:
 
 
 def _route_path(scope: Scope) -> str:
-    """Path que o roteador vai casar: sem ``root_path`` (como ``starlette._utils.get_route_path``)
-    e sem barra final (como o ``TrailingSlashMiddleware`` do AgentOS)."""
+    """Path que o roteador vai casar.
+
+    Sem ``root_path`` (como ``starlette._utils.get_route_path``) e sem barra final (como o
+    ``TrailingSlashMiddleware`` do AgentOS).
+    """
     path: str = scope["path"]
     root_path: str = scope.get("root_path", "")
     if root_path and path.startswith(root_path):
@@ -241,6 +244,7 @@ class ApiKeyAuthMiddleware:
         self._allowed_origins = frozenset(allowed_origins)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Autentica a requisição HTTP/WebSocket antes de repassá-la ao app."""
         if scope["type"] not in ("http", "websocket"):
             await self.app(scope, receive, send)
             return

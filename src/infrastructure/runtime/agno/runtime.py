@@ -1,5 +1,7 @@
-"""``AgnoRuntime``: implementação da porta ``AgentRuntime`` com o agno 2.5 (F2-04), ciclo de vida
-do AgentOS no app (F2-05) e db de sessões compartilhado com o AgentOS (F2-08)."""
+"""``AgnoRuntime``: implementação da porta ``AgentRuntime`` com o agno 2.5 (F2-04).
+
+Inclui o ciclo de vida do AgentOS no app (F2-05) e o db de sessões compartilhado com o AgentOS (F2-08).
+"""
 
 from __future__ import annotations
 
@@ -71,9 +73,11 @@ class AgnoRuntime(AgentRuntime):
         self._open_lifespans: AsyncExitStack | None = None
 
     async def build_agent(self, config: AgentConfig) -> AgentHandle:
+        """Monta o agente pela fábrica do agno."""
         return cast(AgentHandle, await self._agent_factory.create_agent(config))
 
     def build_team(self, config: TeamConfig, agents: Sequence[AgentHandle]) -> TeamHandle:
+        """Monta o team com os agentes já montados por este runtime."""
         # Os handles de agente deste runtime são ``agno.Agent`` (criados por ``build_agent``).
         members = cast(list[Agent], list(agents))
         return cast(TeamHandle, self._team_factory.create_team(config, members))
@@ -104,22 +108,7 @@ class AgnoRuntime(AgentRuntime):
             raise RuntimeError("AgentOS já montado por este runtime")
         agno_agents = cast(list[Agent], list(agents))
         agno_teams = cast(list[Team], list(teams))
-        agent_os = AgentOS(
-            # O db das entidades: habilita /schedules e /approvals (admin na auth da borda);
-            # /components segue stub 503 e nada é carregado do banco, porque o db é assíncrono.
-            db=self._session_db,
-            agents=list(agno_agents),  # cópia: o AgentOS tipa list[Agent | RemoteAgent] (invariante)
-            teams=list(agno_teams) or None,
-            cors_allowed_origins=list(cors_allowed_origins),
-            base_app=app,
-            on_route_conflict="preserve_base_app",
-            tracing=False,
-            telemetry=False,
-            # Sem provisionar coleções no startup: o db_lifespan aguardaria _create_all_tables
-            # (com o Mongo fora, cada coleção espera a seleção de servidor e o startup atrasa
-            # minutos). O agno cria a coleção e os índices na 1ª operação, como sempre foi.
-            auto_provision_dbs=False,
-        )
+        agent_os = self._build_agent_os(app, agno_agents, agno_teams, cors_allowed_origins)
         # Cancel só de run registrado (F1-10): gerenciador antes de qualquer run e as rotas
         # de cancel antes do get_app(), que pula as do agno (preserve_base_app). Depois do
         # construtor (que valida ids): falha ali não deixa rota parcial.
@@ -141,6 +130,31 @@ class AgnoRuntime(AgentRuntime):
         app.openapi_schema = None
         self._app = app
         self._agent_os_lifespan = agent_os_lifespan
+
+    def _build_agent_os(
+        self,
+        app: FastAPI,
+        agno_agents: list[Agent],
+        agno_teams: list[Team],
+        cors_allowed_origins: Sequence[str],
+    ) -> AgentOS:
+        """AgentOS sobre o ``app``, sem telemetria nem tracing e com o db de sessões compartilhado."""
+        return AgentOS(
+            # O db das entidades: habilita /schedules e /approvals (admin na auth da borda);
+            # /components segue stub 503 e nada é carregado do banco, porque o db é assíncrono.
+            db=self._session_db,
+            agents=list(agno_agents),  # cópia: o AgentOS tipa list[Agent | RemoteAgent] (invariante)
+            teams=list(agno_teams) or None,
+            cors_allowed_origins=list(cors_allowed_origins),
+            base_app=app,
+            on_route_conflict="preserve_base_app",
+            tracing=False,
+            telemetry=False,
+            # Sem provisionar coleções no startup: o db_lifespan aguardaria _create_all_tables
+            # (com o Mongo fora, cada coleção espera a seleção de servidor e o startup atrasa
+            # minutos). O agno cria a coleção e os índices na 1ª operação, como sempre foi.
+            auto_provision_dbs=False,
+        )
 
     async def start(self) -> None:
         """Abre os lifespans do AgentOS montado (nada a fazer sem ``mount``).

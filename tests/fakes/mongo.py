@@ -113,22 +113,24 @@ def _matches(doc: dict[str, Any], query: dict[str, Any]) -> bool:
             continue
         if key.startswith("$"):
             raise NotImplementedError(f"FakeMongoCollection: operador não suportado: {key!r}")
-        actual = doc.get(key)
         if isinstance(expected, dict) and any(k.startswith("$") for k in expected):
-            if set(expected) == {"$in"}:
-                if not any(_field_equal(actual, option) for option in expected["$in"]):
-                    return False
-            elif set(expected) == {"$exists"}:
-                if (key in doc) is not bool(expected["$exists"]):
-                    return False
-            elif set(expected) == {"$ne"}:
-                if _field_equal(actual, expected["$ne"]):
-                    return False
-            else:
-                raise NotImplementedError(f"FakeMongoCollection: operador não suportado em {key!r}")
-        elif not _field_equal(actual, expected):
+            if not _operator_matches(doc, key, expected):
+                return False
+        elif not _field_equal(doc.get(key), expected):
             return False
     return True
+
+
+def _operator_matches(doc: dict[str, Any], key: str, expected: dict[str, Any]) -> bool:
+    """Condição de operador num campo: ``$in``, ``$exists`` ou ``$ne``; outro falha alto."""
+    actual = doc.get(key)
+    if set(expected) == {"$in"}:
+        return any(_field_equal(actual, option) for option in expected["$in"])
+    if set(expected) == {"$exists"}:
+        return (key in doc) is bool(expected["$exists"])
+    if set(expected) == {"$ne"}:
+        return not _field_equal(actual, expected["$ne"])
+    raise NotImplementedError(f"FakeMongoCollection: operador não suportado em {key!r}")
 
 
 def _projected(doc: dict[str, Any], projection: dict[str, Any] | None) -> dict[str, Any]:
@@ -149,24 +151,7 @@ def _aggregate(docs: list[dict[str, Any]], pipeline: list[dict[str, Any]]) -> li
         if name == "$match":
             rows = [row for row in rows if _matches(row, spec)]
         elif name == "$group":
-            groups: dict[Any, dict[str, Any]] = {}
-            for row in rows:
-                key = row.get(spec["_id"].removeprefix("$"))
-                group = groups.setdefault(key, {"_id": key})
-                for field_name, accumulator in spec.items():
-                    if field_name == "_id":
-                        continue
-                    ((operator, operand),) = accumulator.items()
-                    if operator == "$sum" and operand == 1:
-                        group[field_name] = group.get(field_name, 0) + 1
-                    elif operator == "$max" and isinstance(operand, str):
-                        value = row.get(operand.removeprefix("$"))
-                        current = group.get(field_name)
-                        if current is None or (value is not None and value > current):
-                            group[field_name] = value
-                    else:
-                        raise NotImplementedError(f"FakeMongoCollection.aggregate: acumulador fora do fake: {operator}")
-            rows = list(groups.values())
+            rows = _group(rows, spec)
         elif name == "$sort":
             rows = _sorted(rows, list(spec.items()))
         elif name == "$skip":
@@ -178,6 +163,32 @@ def _aggregate(docs: list[dict[str, Any]], pipeline: list[dict[str, Any]]) -> li
         else:
             raise NotImplementedError(f"FakeMongoCollection.aggregate: estágio não suportado: {name}")
     return rows
+
+
+def _group(rows: list[dict[str, Any]], spec: dict[str, Any]) -> list[dict[str, Any]]:
+    """Estágio ``$group``: um grupo por valor de ``_id: "$campo"``, na ordem de aparição."""
+    groups: dict[Any, dict[str, Any]] = {}
+    for row in rows:
+        key = row.get(spec["_id"].removeprefix("$"))
+        group = groups.setdefault(key, {"_id": key})
+        for field_name, accumulator in spec.items():
+            if field_name != "_id":
+                _accumulate(group, field_name, accumulator, row)
+    return list(groups.values())
+
+
+def _accumulate(group: dict[str, Any], field_name: str, accumulator: dict[str, Any], row: dict[str, Any]) -> None:
+    """Aplica ``$sum: 1`` ou ``$max: "$campo"`` de uma linha ao grupo; outro acumulador falha alto."""
+    ((operator, operand),) = accumulator.items()
+    if operator == "$sum" and operand == 1:
+        group[field_name] = group.get(field_name, 0) + 1
+    elif operator == "$max" and isinstance(operand, str):
+        value = row.get(operand.removeprefix("$"))
+        current = group.get(field_name)
+        if current is None or (value is not None and value > current):
+            group[field_name] = value
+    else:
+        raise NotImplementedError(f"FakeMongoCollection.aggregate: acumulador fora do fake: {operator}")
 
 
 class FakeWriteResult:
@@ -269,7 +280,7 @@ class FakeMongoCollection:
 
     async def find_one_and_replace(
         self,
-        filter: dict[str, Any],  # nome do parâmetro no pymongo (o agno passa por nome)
+        filter: dict[str, Any],  # pylint: disable=redefined-builtin  # nome do parâmetro no pymongo (o agno passa por nome)
         replacement: dict[str, Any],
         *,
         upsert: bool = False,

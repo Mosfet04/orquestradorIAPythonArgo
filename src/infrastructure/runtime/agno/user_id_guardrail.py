@@ -58,6 +58,7 @@ class UserIdRequiredGuardrail(BaseGuardrail):
         run_input: RunInput | TeamRunInput,
         user_id: object = None,
     ) -> None:
+        """Levanta ``InputCheckError`` se o ``user_id`` do run não for válido."""
         if not is_valid_user_id(user_id):
             raise InputCheckError(
                 f"user_id obrigatório: '{self.entity_id}' guarda memória por usuário. "
@@ -72,6 +73,7 @@ class UserIdRequiredGuardrail(BaseGuardrail):
         run_input: RunInput | TeamRunInput,
         user_id: object = None,
     ) -> None:
+        """Versão assíncrona de ``check`` (sem I/O)."""
         self.check(run_input, user_id)
 
 

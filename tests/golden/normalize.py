@@ -12,6 +12,7 @@ moram) e URLs de conexão saem sem ``user:senha@``.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from enum import Enum
 from inspect import iscoroutinefunction
 from typing import Any
@@ -78,58 +79,89 @@ def normalize(value: Any) -> JsonValue:
         return {str(k): normalize(v) for k, v in value.items()}
     if isinstance(value, list | tuple):
         return [normalize(v) for v in value]
-    if isinstance(value, Agent | Team):
-        # membro de Team: identidade basta; os kwargs do membro têm snapshot próprio
-        return {"__type__": _type_name(value), "id": value.id, "name": value.name}
-    if isinstance(value, Model):
-        return {"__type__": _type_name(value), "id": value.id, "provider": value.provider}
-    if isinstance(value, Embedder):
-        return {
-            "__type__": _type_name(value),
-            "id": getattr(value, "id", None),
-            "provider": getattr(value, "provider", None),
-            "dimensions": value.dimensions,
-        }
-    if isinstance(value, BaseDb | AsyncBaseDb):
-        return {
-            "__type__": _type_name(value),
-            "db_url": mask_url_userinfo(getattr(value, "db_url", None)),
-            "db_name": getattr(value, "db_name", None),
-            "session_table_name": value.session_table_name,
-            "memory_table_name": value.memory_table_name,
-        }
-    if isinstance(value, VectorDb):
-        return {
-            "__type__": _type_name(value),
-            "collection_name": getattr(value, "collection_name", None),
-            "database": normalize(getattr(value, "database", None)),
-            "connection_string": mask_url_userinfo(getattr(value, "connection_string", None)),
-            "search_index_name": getattr(value, "search_index_name", None),
-            "search_type": normalize(getattr(value, "search_type", None)),
-            "distance_metric": normalize(getattr(value, "distance_metric", None)),
-            "embedder": normalize(getattr(value, "embedder", None)),
-        }
-    if isinstance(value, Knowledge):
-        return {
-            "__type__": _type_name(value),
-            "name": value.name,
-            "max_results": value.max_results,
-            "isolate_vector_search": value.isolate_vector_search,
-            "contents_db": normalize(value.contents_db),
-            "vector_db": normalize(value.vector_db),
-        }
-    if isinstance(value, Toolkit):
-        return _toolkit(value)
-    if isinstance(value, Function):
-        # tool solta (ex.: HTTP, F1-05): instruções entram no system message se add_instructions
-        return {
-            "__type__": _type_name(value),
-            **_function(value, is_async=iscoroutinefunction(value.entrypoint)),
-            "instructions": value.instructions,
-            "add_instructions": value.add_instructions,
-        }
-    if isinstance(value, BaseGuardrail):
-        # só o nome da classe: a montagem muda de módulo na F2 e o snapshot não deve mudar
-        attrs = {k: normalize(v) for k, v in sorted(vars(value).items()) if not k.startswith("_")}
-        return {"__type__": f"guardrail:{type(value).__qualname__}", **attrs}
+    for kind, convert in _AGNO_NORMALIZERS:
+        if isinstance(value, kind):
+            return convert(value)
     raise TypeError(f"golden: sem normalização para {_type_name(value)}; trate o tipo em tests/golden/normalize.py")
+
+
+def _entity(value: Agent | Team) -> JsonValue:
+    # membro de Team: identidade basta; os kwargs do membro têm snapshot próprio
+    return {"__type__": _type_name(value), "id": value.id, "name": value.name}
+
+
+def _model(value: Model) -> JsonValue:
+    return {"__type__": _type_name(value), "id": value.id, "provider": value.provider}
+
+
+def _embedder(value: Embedder) -> JsonValue:
+    return {
+        "__type__": _type_name(value),
+        "id": getattr(value, "id", None),
+        "provider": getattr(value, "provider", None),
+        "dimensions": value.dimensions,
+    }
+
+
+def _db(value: BaseDb | AsyncBaseDb) -> JsonValue:
+    return {
+        "__type__": _type_name(value),
+        "db_url": mask_url_userinfo(getattr(value, "db_url", None)),
+        "db_name": getattr(value, "db_name", None),
+        "session_table_name": value.session_table_name,
+        "memory_table_name": value.memory_table_name,
+    }
+
+
+def _vector_db(value: VectorDb) -> JsonValue:
+    return {
+        "__type__": _type_name(value),
+        "collection_name": getattr(value, "collection_name", None),
+        "database": normalize(getattr(value, "database", None)),
+        "connection_string": mask_url_userinfo(getattr(value, "connection_string", None)),
+        "search_index_name": getattr(value, "search_index_name", None),
+        "search_type": normalize(getattr(value, "search_type", None)),
+        "distance_metric": normalize(getattr(value, "distance_metric", None)),
+        "embedder": normalize(getattr(value, "embedder", None)),
+    }
+
+
+def _knowledge(value: Knowledge) -> JsonValue:
+    return {
+        "__type__": _type_name(value),
+        "name": value.name,
+        "max_results": value.max_results,
+        "isolate_vector_search": value.isolate_vector_search,
+        "contents_db": normalize(value.contents_db),
+        "vector_db": normalize(value.vector_db),
+    }
+
+
+def _loose_function(value: Function) -> JsonValue:
+    # tool solta (ex.: HTTP, F1-05): instruções entram no system message se add_instructions
+    return {
+        "__type__": _type_name(value),
+        **_function(value, is_async=iscoroutinefunction(value.entrypoint)),
+        "instructions": value.instructions,
+        "add_instructions": value.add_instructions,
+    }
+
+
+def _guardrail(value: BaseGuardrail) -> JsonValue:
+    # só o nome da classe: a montagem muda de módulo na F2 e o snapshot não deve mudar
+    attrs = {k: normalize(v) for k, v in sorted(vars(value).items()) if not k.startswith("_")}
+    return {"__type__": f"guardrail:{type(value).__qualname__}", **attrs}
+
+
+# Ordem das checagens de ``isinstance`` (a primeira que casar vale), igual à de antes da divisão.
+_AGNO_NORMALIZERS: tuple[tuple[Any, Callable[[Any], JsonValue]], ...] = (
+    (Agent | Team, _entity),
+    (Model, _model),
+    (Embedder, _embedder),
+    (BaseDb | AsyncBaseDb, _db),
+    (VectorDb, _vector_db),
+    (Knowledge, _knowledge),
+    (Toolkit, _toolkit),
+    (Function, _loose_function),
+    (BaseGuardrail, _guardrail),
+)

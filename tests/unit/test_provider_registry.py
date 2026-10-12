@@ -22,7 +22,7 @@ from src.infrastructure.providers import (
 )
 from tests.fakes.providers import CHAT_PATH, EMBEDDER_PATH, FAILING_PATH, RecordingChatModel, RecordingEmbedder
 
-SECRET = "valor-secreto-F202-nao-pode-vazar"  # noqa: S105 - marcador de vazamento, não é segredo
+LEAK_MARKER = "valor-secreto-F202-nao-pode-vazar"  # marcador de vazamento, não é segredo
 
 
 def _resolver(*addresses: str):
@@ -295,21 +295,21 @@ def test_provider_que_exige_base_url_recusa_sem_ela():
 
 
 def test_api_key_ref_env_tem_precedencia_sobre_a_chave_do_ambiente(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("ACME_TENANT_API_KEY", SECRET)
+    monkeypatch.setenv("ACME_TENANT_API_KEY", LEAK_MARKER)
 
     model = _registry().create_model(ModelConfig("acme", "m", api_key_ref="env:ACME_TENANT_API_KEY"))
 
-    assert model.kwargs["api_key"] == SECRET
+    assert model.kwargs["api_key"] == LEAK_MARKER
 
 
 def test_api_key_ref_file_le_de_secrets_dir(tmp_path: Path):
-    (tmp_path / "acme").write_text(SECRET + "\n", encoding="utf-8")
+    (tmp_path / "acme").write_text(LEAK_MARKER + "\n", encoding="utf-8")
 
     model = _registry(secrets_dir=str(tmp_path)).create_model(
         ModelConfig("acme", "m", api_key_ref=f"file:{tmp_path}/acme")
     )
 
-    assert model.kwargs["api_key"] == SECRET
+    assert model.kwargs["api_key"] == LEAK_MARKER
 
 
 def test_api_key_ref_que_nao_resolve_e_erro_sem_valor(monkeypatch: pytest.MonkeyPatch):
@@ -348,7 +348,7 @@ def test_chave_do_ambiente_obrigatoria_ausente_cita_so_o_nome(monkeypatch: pytes
 
 
 def test_provider_sem_chave_do_ambiente_nao_recebe_api_key(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("OPENAI_API_KEY", SECRET)
+    monkeypatch.setenv("OPENAI_API_KEY", LEAK_MARKER)
 
     model = _registry(_spec(api_key_env=None)).create_model(ModelConfig("acme", "m"))
 
@@ -426,14 +426,14 @@ def test_classe_inexistente_no_modulo_e_erro_claro():
 
 
 def test_falha_do_construtor_vira_erro_nosso_sem_a_chave_e_sem_encadear(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("ACME_API_KEY", SECRET)
+    monkeypatch.setenv("ACME_API_KEY", LEAK_MARKER)
     spec = _spec(chat=ClassSpec(class_path=FAILING_PATH))
 
     with pytest.raises(InvalidModelConfigError) as caught:
         _registry(spec).create_model(ModelConfig("acme", "m"))
 
     assert "RuntimeError" in str(caught.value)
-    assert SECRET not in str(caught.value)
+    assert LEAK_MARKER not in str(caught.value)
     assert caught.value.__cause__ is None and caught.value.__context__ is None
 
 

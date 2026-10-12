@@ -46,6 +46,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d   # + local
 Details: [README.en.md](README.en.md#with-docker-compose).
 
 **Access** (every route except `/livez` needs an API key in `Authorization: Bearer <key>`: run, or admin for admin routes; without keys the app only starts on loopback in development/test and only answers local requests: [Authentication](README.en.md#-authentication)):
+
 - 🌐 API Docs: http://localhost:7777/docs (`ENVIRONMENT=development` or `ENABLE_DOCS=true`)
 - 🤖 Agents: http://localhost:7777/agents
 - ❤️ Health: http://localhost:7777/health
@@ -105,6 +106,7 @@ graph TB
 - 🌐 **AgentOS + AG-UI** — Web UI via [os.agno.com](https://os.agno.com) with SSE streaming
 - 🧪 **Tests** — Unit, contract and golden tests (~93% branch coverage)
 - 🏗️ **Onion Architecture** — Clean separation with SOLID principles
+
 ## 📊 Observability (Grafana LGTM)
 
 All observability (traces, metrics, logs) is now handled by the Grafana LGTM stack:
@@ -127,12 +129,15 @@ Failures loading agents/teams from the config store go to the log, not to these 
 ---
 
 ## 📚 Documentation
+
 Choose your language for the complete guide (architecture, configuration, database schemas, developer guide, troubleshooting):
 
 ### 🇧🇷 Português
+
 **[README Completo em Português](README.pt-br.md)** — Documentação detalhada incluindo arquitetura, configuração MongoDB, guia de desenvolvimento, troubleshooting e diagramas Mermaid.
 
 ### 🇺🇸 English
+
 **[Complete English README](README.en.md)** — Full documentation including architecture, MongoDB setup, developer guide, troubleshooting, and Mermaid diagrams.
 
 ## 🤝 Contributing

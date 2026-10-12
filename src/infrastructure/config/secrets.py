@@ -79,7 +79,7 @@ def _from_file(path: str, root: str) -> str:
 
 
 def _escaped_root(fd: int, real_root: str, path: str) -> bool:
-    """O fd aberto caiu fora da raiz? (diretório do caminho trocado por symlink na corrida)
+    """Diz se o fd aberto caiu fora da raiz (diretório do caminho trocado por symlink na corrida).
 
     Destino real do fd em ``/proc/self/fd``. Sem ele, falha fechado: comparar inode só
     estreitaria a janela (troca logo depois do ``realpath`` passaria).

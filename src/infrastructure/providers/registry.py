@@ -191,9 +191,11 @@ class ProviderRegistry(IModelFactory, IEmbedderFactory):
         return sorted(name for name, spec in self._specs.items() if self._class_spec(spec, kind) is not None)
 
     def create_model(self, config: ModelConfig) -> ChatModel:
+        """Cria o modelo de chat do provider indicado na configuração."""
         return cast(ChatModel, self._build("chat", config))
 
     def create_embedder(self, config: ModelConfig) -> TextEmbedder:
+        """Cria o embedder do provider indicado na configuração."""
         return cast(TextEmbedder, self._build("embedder", config))
 
     # ── build ───────────────────────────────────────────────────────

@@ -1,5 +1,4 @@
-"""
-Métricas de negócio e sistema do Orquestrador IA.
+"""Métricas de negócio e sistema do Orquestrador IA.
 
 Instrumentos registrados via OpenTelemetry Meter e exportados
 automaticamente via OTLP push para Grafana Mimir.
