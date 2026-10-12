@@ -130,13 +130,13 @@ Notes:
 
 ### Using Docker
 
-Credentials come only from `.env` (see `.env.example`); required variables use `${VAR:?}` and compose refuses to start without them. The base file needs only `MONGO_CONNECTION_STRING` (still required with the dev override); the dev override also needs `MONGO_ROOT_*`/`MONGO_EXPRESS_*` (URL-safe values).
+Credentials come only from `.env` (see `.env.example`); required variables use `${VAR:?}` and compose refuses to start without them. The base file needs `MONGO_CONNECTION_STRING`, `API_KEY_RUN` and `API_KEY_ADMIN` (still required with the dev override); the dev override also needs `MONGO_ROOT_*`/`MONGO_EXPRESS_*` (URL-safe values).
 
 ```bash
 # App only (MongoDB/Ollama external, from .env)
 docker compose up -d
 
-# Development: app + local MongoDB, Ollama and mongo-express (ports bound to 127.0.0.1)
+# Development: app + local MongoDB Atlas Local, Ollama and mongo-express (ports bound to 127.0.0.1)
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 
 # View logs
@@ -373,9 +373,11 @@ pytest
 # Default CI run (everything but `live`), in parallel (8 workers: ~30 s; serial ~95 s)
 pytest -m "not live" -n auto
 
-# Live tests against a disposable MongoDB (skipped without MONGO_LIVE_URL; never in CI),
-# e.g. `docker run --rm -p 27017:27017 mongo:7.0.43-jammy` (the image of docker-compose.dev.yml) in another terminal
-MONGO_LIVE_URL='mongodb://localhost:27017/?directConnection=true' pytest -m live -rs
+# Live tests against a disposable MongoDB (skipped without MONGO_LIVE_URL; never in CI), e.g. the
+# MongoDB Atlas Local of docker-compose.dev.yml (README, "Run locally"; it also has vector search):
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d mongodb
+read -rs MONGO_PW   # MONGO_ROOT_PASSWORD, read without echo (never on the command line)
+MONGO_LIVE_URL="mongodb://<user>:${MONGO_PW}@localhost:27017/?directConnection=true" pytest -m live -rs
 
 # One layer only
 pytest -m unit

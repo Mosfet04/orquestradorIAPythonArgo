@@ -119,7 +119,8 @@ function Initialize-Database {
         if (!$mongoProcess) {
             Write-Error "MongoDB is not running. Please start MongoDB:"
             Write-Information "  - Using Windows Service: net start MongoDB"
-            Write-Information "  - Using Docker: docker run -d -p 27017:27017 mongo:7-jammy"
+            Write-Information "  - Using Docker: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d mongodb"
+            Write-Information "    (MongoDB Atlas Local; see `"Run locally`" in README.en.md)"
             Write-Information "  - Manual start: mongod --dbpath=C:\data\db"
             exit 1
         }

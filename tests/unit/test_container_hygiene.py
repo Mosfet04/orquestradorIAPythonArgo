@@ -310,9 +310,94 @@ def test_compose_dev_tem_os_servicos_de_apoio_com_portas_no_loopback(compose_dev
 
 def test_compose_dev_liga_o_app_aos_servicos_locais(compose_dev):
     app = compose_dev["services"]["app"]
-    depends_on = app.get("depends_on") or []
+    depends_on = app.get("depends_on") or {}
     assert {"mongodb", "ollama"} <= set(depends_on)
-    assert "@mongodb:27017" in _environment(app)["MONGO_CONNECTION_STRING"]
+    # Atlas Local leva alguns segundos (mongod + mongot) até aceitar conexão: o app espera o healthcheck.
+    assert depends_on["mongodb"] == {"condition": "service_healthy"}
+    url = _environment(app)["MONGO_CONNECTION_STRING"]
+    assert "@mongodb:27017/" in url
+    # Réplica de um nó só: sem directConnection o driver tenta o host anunciado pelo replica set.
+    assert "directConnection=true" in url
+
+
+# ── MongoDB Atlas Local (F2-10) ────────────────────────────────────
+
+ATLAS_LOCAL_IMAGE = re.compile(r"mongodb/mongodb-atlas-local:\d+\.\d+\.\d+-\d{8}T\d{6}Z")
+ATLAS_LOCAL_DATA_DIRS = {"/data/db", "/data/configdb", "/data/mongot"}
+INIT_DIR = "/docker-entrypoint-initdb.d"
+
+
+def _mounts(service: dict[str, Any]) -> list[tuple[str, str, str]]:
+    """(origem, destino, modo) de cada volume na sintaxe curta ``origem:destino[:modo]``."""
+    mounts = []
+    for entry in service.get("volumes") or []:
+        assert isinstance(entry, str), f"use a sintaxe curta de volume: {entry}"
+        source, target, *mode = entry.split(":")
+        mounts.append((source, target, mode[0] if mode else ""))
+    return mounts
+
+
+def _is_named_volume(source: str) -> bool:
+    return not source.startswith((".", "/", "~"))
+
+
+def test_compose_dev_mongodb_e_o_atlas_local_com_vector_search(compose_dev):
+    """O RAG semântico (MongoDb do agno) cria índice vectorSearch e consulta com $vectorSearch."""
+    mongodb = compose_dev["services"]["mongodb"]
+    assert ATLAS_LOCAL_IMAGE.fullmatch(mongodb["image"]), "tag datada da imagem do Atlas Local"
+    env = _environment(mongodb)
+    assert env["MONGODB_INITDB_ROOT_USERNAME"].startswith("${MONGO_ROOT_USERNAME:?")
+    assert env["MONGODB_INITDB_ROOT_PASSWORD"].startswith("${MONGO_ROOT_PASSWORD:?")
+    assert env["MONGODB_INITDB_DATABASE"] == "${MONGO_DATABASE_NAME:-agno}"
+    assert env["DO_NOT_TRACK"] == "1", "sem telemetria da imagem"
+    # As variáveis da imagem mongo oficial (MONGO_INITDB_*) são ignoradas pelo Atlas Local:
+    # com elas o banco subiria sem usuário root.
+    assert not [key for key in env if key.startswith("MONGO_INITDB_")]
+    assert "healthcheck" not in mongodb, "o healthcheck embutido na imagem (runner healthcheck) basta"
+
+
+def test_compose_dev_mongodb_com_hostname_fixo(compose_dev):
+    """O replica set do Atlas Local guarda o hostname em /data/db.
+
+    Sem hostname fixo, recriar o container (down/up, troca de imagem) muda o hostname e o nó
+    não se acha na config salva: fica sem primário e nunca sai de "starting" (reproduzido no F2-10).
+    """
+    assert compose_dev["services"]["mongodb"].get("hostname") == "mongodb"
+
+
+def test_compose_dev_mongodb_com_volumes_proprios_e_seed_somente_leitura(compose_dev):
+    mounts = _mounts(compose_dev["services"]["mongodb"])
+    named = {target: source for source, target, _mode in mounts if _is_named_volume(source)}
+    assert set(named) == ATLAS_LOCAL_DATA_DIRS
+    # O volume do mongo:7 não é reaproveitado: migração por mongodump/mongorestore (README).
+    assert "mongodb_data" not in named.values()
+    assert len(set(named.values())) == len(named), "um volume por diretório de dados"
+    assert [m for m in mounts if m[1] == INIT_DIR] == [("./mongo-init", INIT_DIR, "ro")]
+
+
+def test_compose_dev_sem_volume_orfao(compose_dev):
+    used = {
+        source
+        for service in compose_dev["services"].values()
+        for source, _target, _mode in _mounts(service)
+        if _is_named_volume(source)
+    }
+    assert set(compose_dev.get("volumes") or {}) == used
+
+
+def test_compose_dev_mongo_express_exige_basic_auth(compose_dev):
+    """O mongo-express dá acesso root ao banco: login obrigatório, nunca desligado."""
+    env = _environment(compose_dev["services"]["mongo-express"])
+    assert env["ME_CONFIG_BASICAUTH_USERNAME"].startswith("${MONGO_EXPRESS_USERNAME:?")
+    assert env["ME_CONFIG_BASICAUTH_PASSWORD"].startswith("${MONGO_EXPRESS_PASSWORD:?")
+    # ausente (default da imagem: ligado) ou exatamente "true"; qualquer outro valor pode desligar o login
+    assert env.get("ME_CONFIG_BASICAUTH", "true").strip().lower() == "true"
+
+
+def test_compose_dev_mongo_express_conecta_direto_e_espera_o_mongodb(compose_dev):
+    mongo_express = compose_dev["services"]["mongo-express"]
+    assert "directConnection=true" in _environment(mongo_express)["ME_CONFIG_MONGODB_URL"]
+    assert (mongo_express.get("depends_on") or {}).get("mongodb") == {"condition": "service_healthy"}
 
 
 @pytest.mark.parametrize("path", [COMPOSE, COMPOSE_DEV], ids=lambda p: p.name)

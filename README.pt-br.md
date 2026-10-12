@@ -64,7 +64,7 @@ O **Orquestrador de Agentes IA** é uma aplicação que gerencia e orquestra mú
 ### Pré-requisitos
 
 - **Python 3.11+** (recomendado; 3.9+ com limitações)
-- **MongoDB 4.4+** (local ou Atlas)
+- **MongoDB 4.4+** (local ou Atlas); o RAG semântico exige Atlas Vector Search: MongoDB Atlas ou o Atlas Local do `docker-compose.dev.yml` (ver [Rodar localmente](#rodar-localmente-passo-a-passo))
 - **Git**
 
 ### Instalação Local
@@ -122,17 +122,158 @@ cp .env.example .env   # preencha MONGO_CONNECTION_STRING, API_KEY_RUN e API_KEY
 # Exige MONGO_CONNECTION_STRING, API_KEY_RUN e API_KEY_ADMIN (o container faz bind em 0.0.0.0).
 docker compose up -d
 
-# Desenvolvimento: aplicação + MongoDB + Ollama + mongo-express locais
+# Desenvolvimento: aplicação + MongoDB Atlas Local + Ollama + mongo-express locais
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 ```
 
 - O app no container recebe do `.env` as chaves de provider, `ENVIRONMENT`, `USE_TLS` etc. (repasse puro: variável ausente no `.env` fica ausente no container); `APP_HOST`/`APP_PORT` ficam com o Dockerfile.
 - `docker-compose.yml` só tem o app, endurecido (`no-new-privileges`, `cap_drop: ALL`, `read_only` com `/tmp` em tmpfs, sem bind mount) e sem porta de banco.
-- `docker-compose.dev.yml` acrescenta MongoDB (27017), Ollama (11434) e mongo-express (8081), com porta publicada só em `127.0.0.1`, e aponta o app do container para eles (`mongodb://...@mongodb:27017`, `OLLAMA_BASE_URL=http://ollama:11434`), independente do que o `.env` usa para rodar o app no host. `MONGO_ROOT_USERNAME`/`MONGO_ROOT_PASSWORD` entram numa URL: use valores URL-safe.
+- `docker-compose.dev.yml` acrescenta MongoDB Atlas Local (27017; com vector search), Ollama (11434) e mongo-express (8081), com porta publicada só em `127.0.0.1`, e aponta o app do container para eles (`mongodb://...@mongodb:27017/...&directConnection=true`, `OLLAMA_BASE_URL=http://ollama:11434`), independente do que o `.env` usa para rodar o app no host. `MONGO_ROOT_USERNAME`/`MONGO_ROOT_PASSWORD` entram numa URL: use valores URL-safe. Passo a passo em [Rodar localmente](#rodar-localmente-passo-a-passo).
 - `OLLAMA_BASE_URL` vazio deixa o cliente ollama/agno decidir (`OLLAMA_HOST`, `http://localhost:11434` ou Ollama Cloud com só a `OLLAMA_API_KEY`).
 - A imagem (Python 3.12) instala só pelo `requirements.lock` com hash, roda como UID/GID 10001 sem privilégios, faz bind em `0.0.0.0` (`APP_HOST` do Dockerfile) e tem HEALTHCHECK em `/livez` (público, sem dependências). Fora do container o default de `APP_HOST` é `127.0.0.1`.
 - O `.dockerignore` é uma allowlist: só `app.py`, `src/`, `docs/` (sem `docs/roadmap` e `docs/qa`) e `requirements.lock` entram no contexto de build (sem `.env*`, `*.env`, `.envrc`, `*.log` e `__pycache__`, inclusive em subpastas). Arquivo novo que a imagem precise tem de ser reincluído lá.
 - O Grafana LGTM não faz parte deste compose: aponte `OTEL_EXPORTER_OTLP_ENDPOINT` para o seu coletor (ou `OTEL_ENABLED=false`).
+
+### Rodar localmente (passo a passo)
+
+O `docker-compose.dev.yml` sobe o MongoDB como **MongoDB Atlas Local** (`mongodb/mongodb-atlas-local`, tag datada): MongoDB 8.0 num replica set de um nó com o `mongot`, o processo do Atlas Search/Vector Search. O RAG semântico precisa dele: o vector store `MongoDb` do agno cria um índice `vectorSearch` (`vector_index_1`, `numDimensions` = `dimensions` do embedder) na collection `rag_<agent_id>` e consulta com `$vectorSearch`, que o `mongod` comum não tem (nele o agente sobe sem RAG).
+
+**Pré-requisitos:** Docker ≥ 27 com Compose v2, ~2 GB de RAM livres para a infra (o Atlas Local ocupa ~650 MB parado; modelos do Ollama são à parte) e, para o modo (a), Python 3.11+.
+
+**1. `.env`** (nunca versionado):
+
+```bash
+cp .env.example .env
+python -c "import secrets; print(secrets.token_urlsafe(32))"   # rode duas vezes: API_KEY_RUN e API_KEY_ADMIN
+```
+
+Preencha no `.env`:
+
+| Variável | Valor |
+|---|---|
+| `MONGO_ROOT_USERNAME`, `MONGO_ROOT_PASSWORD` | usuário root criado no primeiro start do Atlas Local; só letras, dígitos, `-`, `_`, `.` (entram numa URL) |
+| `MONGO_EXPRESS_USERNAME`, `MONGO_EXPRESS_PASSWORD` | login do mongo-express |
+| `API_KEY_RUN`, `API_KEY_ADMIN` | as duas chaves geradas acima (diferentes entre si) |
+| `MONGO_CONNECTION_STRING` | modo (a): `mongodb://<MONGO_ROOT_USERNAME>:<MONGO_ROOT_PASSWORD>@localhost:27017/?directConnection=true`. Modo (b): qualquer valor não vazio (o arquivo base exige; o override monta a URL do container) |
+| `OTEL_ENABLED` | `false` se não houver coletor OTLP rodando |
+
+- `directConnection=true` é obrigatório: o replica set anuncia o host interno do container, e sem ele o driver tenta esse host e dá `ServerSelectionTimeoutError`. Sem `/<banco>` no caminho a autenticação já é no `admin`; com `/<banco>` (como na URL do container), acrescente `authSource=admin`.
+- O compose exige todas essas variáveis mesmo quando você sobe só parte dos serviços.
+- Mantenha `MONGO_DATABASE_NAME=agno` para usar o seed: o `mongo-init/init-db.js` grava no banco `agno`.
+
+**2. Infra no Docker.** No primeiro start (volumes vazios) o Atlas Local cria o usuário root e roda `mongo-init/init-db.js` (agentes, tools e team de exemplo no banco `agno`); nas próximas subidas, o init não roda de novo. Fica `healthy` em ~15 s.
+
+```bash
+COMPOSE="docker compose -f docker-compose.yml -f docker-compose.dev.yml"
+$COMPOSE up -d mongodb mongo-express   # + ollama, se não houver Ollama instalado no host
+$COMPOSE ps                            # mongodb: (healthy)
+```
+
+**3a. Modo (a): infra no Docker, app no host** (debug, reload rápido):
+
+```bash
+python -m venv .venv
+source .venv/bin/activate                       # Windows: .\.venv\Scripts\Activate.ps1
+pip install --require-hashes -r requirements.lock
+python app.py                                   # lê o .env; http://127.0.0.1:7777
+```
+
+`OLLAMA_BASE_URL` vazio usa o Ollama em `http://localhost:11434` (o do host ou o serviço `ollama` do compose, publicado em `127.0.0.1:11434`; não suba os dois). Config em arquivo em vez das coleções: `CONFIG_STORE=yaml` e `CONFIG_YAML_PATH=config.example.yaml` (mesmo conteúdo do seed; o Mongo continua obrigatório).
+
+**3b. Modo (b): tudo no Docker:**
+
+```bash
+$COMPOSE up -d --build    # app (build da imagem), mongodb, ollama, mongo-express
+$COMPOSE logs -f app
+```
+
+O app espera o `mongodb` ficar `healthy` (`depends_on: service_healthy`) e roda com `ENVIRONMENT=development`, mas exige as chaves da API (o container faz bind em `0.0.0.0`).
+
+**4. Ollama: modelos para rodar sem chave de provider.** Os agentes do seed usam `factoryIaModel: "ollama"` e `model: "qwen3"`; para RAG, um modelo de embedding:
+
+```bash
+ollama pull qwen3 && ollama pull nomic-embed-text                       # Ollama no host
+$COMPOSE exec ollama ollama pull qwen3 && $COMPOSE exec ollama ollama pull nomic-embed-text   # serviço do compose
+```
+
+O seed não tem agente com RAG. Crie um (no mongo-express ou no `mongosh`) e reinicie o app (os agentes são montados no startup):
+
+```javascript
+// $COMPOSE exec mongodb mongosh -u <MONGO_ROOT_USERNAME> -p --authenticationDatabase admin agno
+// (o -p pede a senha no terminal; depois cole o comando abaixo no prompt do mongosh)
+db.agents_config.insertOne({
+  "id": "rag-assistant",
+  "nome": "RAG Assistant",
+  "factoryIaModel": "ollama",
+  "model": "qwen3",
+  "descricao": "Responde com base em docs/basic-prog.txt",
+  "prompt": ["Responda usando a base de conhecimento."],
+  "tools_ids": [],
+  "rag_config": {
+    "active": true,
+    "doc_name": "basic-prog.txt",
+    "factoryIaModel": "ollama",
+    "model": "nomic-embed-text",
+    "model_params": {"dimensions": 768}
+  },
+  "user_memory_active": false,
+  "summary_active": false,
+  "active": true
+});
+```
+
+- O embedder é referenciado no `rag_config` (`factoryIaModel` + `model`) e o servidor é o `OLLAMA_BASE_URL` do processo.
+- `model_params.dimensions` precisa ser a dimensão real do modelo (768 no `nomic-embed-text`): o `OllamaEmbedder` do agno 2.5.8 assume 4096, cria o índice com esse tamanho e descarta vetor de outro tamanho.
+- **Puxe o modelo de embedding antes do primeiro start do agente.** Sem ele, os chunks são gravados em `rag_<agent_id>` com embedding vazio (warning `model "..." not found` no log) e, como o documento é indexado uma vez só (`skip_if_exists`), continuam vazios depois. Para reindexar: `db.getCollection("rag_rag-assistant").drop()` e reinicie o app.
+
+**5. Fumaça** (as chaves são lidas sem eco, para não irem ao histórico do shell):
+
+```bash
+read -rs API_KEY_RUN; export API_KEY_RUN         # cole a API_KEY_RUN do .env
+read -rs API_KEY_ADMIN; export API_KEY_ADMIN     # cole a API_KEY_ADMIN do .env
+curl -s http://localhost:7777/livez                                             # {"status":"ok"}
+curl -s -H "Authorization: Bearer $API_KEY_ADMIN" http://localhost:7777/admin/health   # mongodb healthy
+curl -s -H "Authorization: Bearer $API_KEY_RUN" http://localhost:7777/agents      # ids do seed (+ rag-assistant)
+curl -s -H "Authorization: Bearer $API_KEY_RUN" -X POST http://localhost:7777/agents/rag-assistant/runs \
+  -F message="Segundo a base de conhecimento, o que é uma variável?" -F stream=false
+```
+
+No startup do `rag-assistant` o log mostra `Search index 'vector_index_1' created successfully` e `Documento RAG inserido`; no Mongo, `rag_rag-assistant` tem os chunks com `embedding` de 768 posições.
+
+**6. mongo-express:** http://127.0.0.1:8081, com `MONGO_EXPRESS_USERNAME`/`MONGO_EXPRESS_PASSWORD`.
+
+**7. Testes live** contra o Atlas Local (cada teste cria e apaga um banco `orq_live_<id>`; não toca no `agno`):
+
+```bash
+pip install --require-hashes -r requirements.lock -r requirements-dev.lock   # pytest vem do lock de dev
+read -r MONGO_USER                               # MONGO_ROOT_USERNAME do .env
+read -rs MONGO_PW                                # MONGO_ROOT_PASSWORD do .env (sem eco)
+MONGO_LIVE_URL="mongodb://${MONGO_USER}:${MONGO_PW}@localhost:27017/?directConnection=true" pytest -m live -rs
+```
+
+**8. Parar e limpar:** `$COMPOSE down` mantém os dados (volumes `mongodb_atlas_db`, `mongodb_atlas_configdb`, `mongodb_atlas_mongot`); `$COMPOSE down -v` apaga todos os volumes do projeto, inclusive o `ollama_data` (modelos baixados). Para zerar só o Mongo (o próximo start roda o init de novo): `$COMPOSE down` e `docker volume rm <projeto>_mongodb_atlas_db <projeto>_mongodb_atlas_configdb <projeto>_mongodb_atlas_mongot` (`<projeto>` = nome do diretório em minúsculas; confira com `docker volume ls --filter name=mongodb_atlas`). O `hostname: mongodb` fixo do serviço é necessário: o replica set guarda o hostname em `/data/db`, e com outro hostname o nó não volta a ser primário.
+
+#### Migrar os dados do MongoDB 7 antigo
+
+Até o F2-10 o `docker-compose.dev.yml` usava `mongo:7` com o volume `mongodb_data`. O Atlas Local usa volumes novos (o volume antigo não é tocado nem apagado). Para levar sessões, memórias e configs:
+
+```bash
+docker volume ls --filter name=mongodb_data      # ex.: orquestradoriapythonargo_mongodb_data
+$COMPOSE up -d mongodb                           # Atlas Local healthy (volumes novos)
+
+# mongo:7 sobre o volume antigo, sem rede (o dump sai pelo docker exec)
+docker run -d --name orq-mongo7-migracao --network none -v <volume antigo>:/data/db mongo:7.0.43-jammy
+docker exec orq-mongo7-migracao mongodump --archive --db agno \
+  | $COMPOSE exec -T mongodb sh -c 'mongorestore --archive --drop --nsInclude "agno.*" \
+      --username "$MONGODB_INITDB_ROOT_USERNAME" --password "$MONGODB_INITDB_ROOT_PASSWORD" \
+      --authenticationDatabase admin'
+docker rm -f -v orq-mongo7-migracao
+```
+
+- Nenhum segredo passa pelo seu shell nem pelo argv do `docker compose`: o `mongorestore` roda dentro do container do Atlas Local e lê usuário e senha das `MONGODB_INITDB_ROOT_*` que o compose já passou a ele. A senha aparece, sim, no argv do `mongorestore` dentro do container enquanto o restore roda (no Docker Engine nativo do Linux, visível no `ps` do host); rode a migração numa máquina sem outros usuários. Se `MONGO_DATABASE_NAME` não for `agno`, ajuste `--db` e `--nsInclude`.
+- `--drop` troca cada coleção do dump pela versão antiga (inclusive as do seed); coleções que só existem no Atlas Local ficam.
+- O dump não leva índices de busca vetorial (o `mongod` 7 não tem); o agno os recria em `rag_<agent_id>` no próximo startup do agente.
+- Confira os dados antes de apagar o volume antigo (`docker volume rm <volume antigo>`).
 
 ### Verificação
 
@@ -460,7 +601,7 @@ Crie um arquivo `.env` na raiz do projeto:
 
 ```bash
 # ═══ Obrigatório ═══
-MONGO_CONNECTION_STRING=mongodb://localhost:27017/?directConnection=true
+MONGO_CONNECTION_STRING=mongodb://<usuário>:<senha>@localhost:27017/?directConnection=true   # sem usuário/senha só num Mongo sem auth
 MONGO_DATABASE_NAME=agno
 
 # ═══ Aplicação ═══
@@ -708,7 +849,7 @@ Modelo recusado vira `Agente não carregado`/`Team não carregado` com `reason` 
 | `model` | Modelo de embedding (ex: `gemini-embedding-001`, `text-embedding-3-small`) |
 | `factoryIaModel` | Provider do embedder: `gemini`, `openai`, `ollama`, `azure`, `openai_compatible` |
 | `search_strategy` | Estratégia de busca: `semantic` (padrão, agno nativo) ou `hierarchical` (árvore de documentos) |
-| `model_params`, `base_url`, `api_key_ref` | Opcionais do embedder, como no agente. Com algum deles, `model` e `factoryIaModel` precisam estar no documento, não vazios (os defaults `ollama`/`nomic-embed-text:latest` valem só para `rag_config` sem campos novos) |
+| `model_params`, `base_url`, `api_key_ref` | Opcionais do embedder, como no agente. Com algum deles, `model` e `factoryIaModel` precisam estar no documento, não vazios (os defaults `ollama`/`nomic-embed-text:latest` valem só para `rag_config` sem campos novos; no agno 2.5.8 esse default grava embedding vazio, porque sem `model_params.dimensions: 768` o embedder espera 4096 posições: correção no F2-11) |
 
 ### Collection: `tools`
 
@@ -845,7 +986,7 @@ O RAG permite que agentes consultem uma base de conhecimento antes de responder.
 
 #### Estratégia Semântica (padrão)
 
-Utiliza o knowledge base nativo do agno com busca vetorial direta.
+Utiliza o knowledge base nativo do agno com busca vetorial direta. Requer Atlas Vector Search (índice `vectorSearch` + `$vectorSearch`): MongoDB Atlas ou o Atlas Local do `docker-compose.dev.yml` ([Rodar localmente](#rodar-localmente-passo-a-passo)).
 
 **Como funciona:**
 
@@ -957,7 +1098,9 @@ pytest -m "not live" -n auto
 
 # Testes live contra um MongoDB real (nunca na CI; sem MONGO_LIVE_URL são pulados).
 # Use um Mongo descartável: cada teste cria um banco orq_live_<id> e o apaga no fim.
-MONGO_LIVE_URL='mongodb://localhost:27017/?directConnection=true' pytest -m live
+# Ex.: o Atlas Local do docker-compose.dev.yml (ver "Rodar localmente", passo 7). Senha lida sem eco:
+read -rs MONGO_PW
+MONGO_LIVE_URL="mongodb://<usuário>:${MONGO_PW}@localhost:27017/?directConnection=true" pytest -m live
 
 # Com output verboso
 pytest -v
@@ -1163,6 +1306,9 @@ lsof -ti:7777 | xargs kill -9
 ```
 
 #### MongoDB não conecta
+
+- Atlas Local: a URL precisa de `directConnection=true` (sem ele: `ServerSelectionTimeoutError`); com `/<banco>` no caminho, também `authSource=admin`.
+- `mongodb` preso em `starting` depois de recriar o container: o serviço precisa do `hostname: mongodb` fixo (o replica set guarda o hostname no volume). Veja `docker compose ... logs mongodb` (`NodeNotFound`).
 
 ```bash
 # Verificar se o MongoDB está rodando

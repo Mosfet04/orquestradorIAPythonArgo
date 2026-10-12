@@ -1,5 +1,6 @@
-# Override de DESENVOLVIMENTO: MongoDB, Ollama e mongo-express locais.
+# Override de DESENVOLVIMENTO: MongoDB Atlas Local (com vector search), Ollama e mongo-express.
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+# Só a infra (app no host): ... up -d mongodb  (passo a passo no README, "Rodar localmente")
 # Portas publicadas só no loopback do host (127.0.0.1). Credenciais só do .env, via
 # ${VAR:?}. MONGO_ROOT_PASSWORD entra numa URL mongodb://: use senha URL-safe.
 # Teste: tests/unit/test_container_hygiene.py
@@ -9,29 +10,42 @@ services:
   # do compose, independentemente do que o .env usa para rodar o app no host.
   app:
     environment:
-      MONGO_CONNECTION_STRING: mongodb://${MONGO_ROOT_USERNAME:?defina MONGO_ROOT_USERNAME no .env}:${MONGO_ROOT_PASSWORD:?defina MONGO_ROOT_PASSWORD no .env}@mongodb:27017/${MONGO_DATABASE_NAME:-agno}?authSource=admin
+      MONGO_CONNECTION_STRING: mongodb://${MONGO_ROOT_USERNAME:?defina MONGO_ROOT_USERNAME no .env}:${MONGO_ROOT_PASSWORD:?defina MONGO_ROOT_PASSWORD no .env}@mongodb:27017/${MONGO_DATABASE_NAME:-agno}?authSource=admin&directConnection=true
       OLLAMA_BASE_URL: http://ollama:11434
       # A imagem assume production (docs desligados); no dev, development.
       # API_KEY_RUN/API_KEY_ADMIN continuam obrigatórias (vêm do docker-compose.yml): o
       # bind do container é 0.0.0.0, e o modo sem chaves só vale em loopback.
       ENVIRONMENT: development
     depends_on:
-      - mongodb
-      - ollama
+      mongodb:
+        condition: service_healthy
+      ollama:
+        condition: service_started
 
+  # MongoDB Atlas Local: Mongo 8.0 em replica set de um nó com o mongot (Atlas Search /
+  # Vector Search), que o RAG semântico exige (índice vectorSearch + $vectorSearch; o
+  # mongo:7 não tem). Healthcheck embutido na imagem (runner healthcheck). Conexão de fora
+  # do replica set sempre com directConnection=true. O init (mongo-init/*.js) roda só com
+  # /data/db vazio. Dados do antigo mongo:7 (volume mongodb_data): migração no README.
   mongodb:
-    image: mongo:7.0.43-jammy
+    image: mongodb/mongodb-atlas-local:8.0.32-20260928T091948Z
     container_name: orquestrador-mongodb
+    # Obrigatório: o replica set guarda o hostname em /data/db; sem ele fixo, recriar o
+    # container muda o hostname e o nó fica sem primário (nunca fica healthy).
+    hostname: mongodb
     restart: unless-stopped
     ports:
       - "127.0.0.1:27017:27017"
     environment:
-      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:?defina MONGO_ROOT_USERNAME no .env}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?defina MONGO_ROOT_PASSWORD no .env}
-      MONGO_INITDB_DATABASE: ${MONGO_DATABASE_NAME:-agno}
+      MONGODB_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:?defina MONGO_ROOT_USERNAME no .env}
+      MONGODB_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?defina MONGO_ROOT_PASSWORD no .env}
+      MONGODB_INITDB_DATABASE: ${MONGO_DATABASE_NAME:-agno}
+      DO_NOT_TRACK: "1"
     volumes:
-      - mongodb_data:/data/db
-      - ./mongo-init:/docker-entrypoint-initdb.d
+      - mongodb_atlas_db:/data/db
+      - mongodb_atlas_configdb:/data/configdb
+      - mongodb_atlas_mongot:/data/mongot
+      - ./mongo-init:/docker-entrypoint-initdb.d:ro
     networks:
       - orquestrador-network
 
@@ -58,16 +72,21 @@ services:
     environment:
       ME_CONFIG_MONGODB_ADMINUSERNAME: ${MONGO_ROOT_USERNAME:?defina MONGO_ROOT_USERNAME no .env}
       ME_CONFIG_MONGODB_ADMINPASSWORD: ${MONGO_ROOT_PASSWORD:?defina MONGO_ROOT_PASSWORD no .env}
-      ME_CONFIG_MONGODB_URL: mongodb://${MONGO_ROOT_USERNAME:?defina MONGO_ROOT_USERNAME no .env}:${MONGO_ROOT_PASSWORD:?defina MONGO_ROOT_PASSWORD no .env}@mongodb:27017/
+      ME_CONFIG_MONGODB_URL: mongodb://${MONGO_ROOT_USERNAME:?defina MONGO_ROOT_USERNAME no .env}:${MONGO_ROOT_PASSWORD:?defina MONGO_ROOT_PASSWORD no .env}@mongodb:27017/?directConnection=true
       ME_CONFIG_BASICAUTH_USERNAME: ${MONGO_EXPRESS_USERNAME:?defina MONGO_EXPRESS_USERNAME no .env}
       ME_CONFIG_BASICAUTH_PASSWORD: ${MONGO_EXPRESS_PASSWORD:?defina MONGO_EXPRESS_PASSWORD no .env}
     depends_on:
-      - mongodb
+      mongodb:
+        condition: service_healthy
     networks:
       - orquestrador-network
 
 volumes:
-  mongodb_data:
+  mongodb_atlas_db:
+    driver: local
+  mongodb_atlas_configdb:
+    driver: local
+  mongodb_atlas_mongot:
     driver: local
   ollama_data:
     driver: local
