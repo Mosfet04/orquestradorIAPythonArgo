@@ -18,6 +18,7 @@ import pytest
 
 from src.infrastructure import dependency_injection as di
 from src.infrastructure.config.app_config import AppConfig
+from src.infrastructure.runtime.agno.embedder_dimensions import DimensionResolvingEmbedderFactory
 from tests.fakes.startup_world import CLEAN_ENV, Events, startup_world
 
 # Ordem do wiring na base (b8440e1): cliente motor, fábrica de tools, repositórios de config,
@@ -121,7 +122,10 @@ async def test_etapas_rodam_na_ordem_da_base_e_cada_uma_recebe_o_que_a_anterior_
             index_kwargs = spies.only("DocumentIndexingService").kwargs
             assert index_kwargs["tree_repository"] is tree_repo
             assert index_kwargs["summary_generator"] is summary
-            assert index_kwargs["embedder_factory"] is registry
+            # F2-11: o embedder sai do registry com a dimensão real (sonda), o mesmo para os dois RAGs
+            embedders = index_kwargs["embedder_factory"]
+            assert isinstance(embedders, DimensionResolvingEmbedderFactory)
+            assert embedders.inner is registry  # delega ao registry, que monta o embedder
             assert spies.only("KnowledgeSearchFactory").kwargs["tree_repository"] is tree_repo
 
             assert spies.only("create_session_db").args == (config.mongo_connection_string, config.mongo_database_name)
@@ -131,7 +135,7 @@ async def test_etapas_rodam_na_ordem_da_base_e_cada_uma_recebe_o_que_a_anterior_
             assert agent_kwargs["search_factory"] is search
             assert agent_kwargs["tool_repository"] is tool_repo
             assert agent_kwargs["tool_factory"] is spies.only("HttpToolFactory").result
-            assert agent_kwargs["model_factory"] is registry and agent_kwargs["embedder_factory"] is registry
+            assert agent_kwargs["model_factory"] is registry and agent_kwargs["embedder_factory"] is embedders
             assert (agent_kwargs["db_url"], agent_kwargs["db_name"]) == (
                 config.mongo_connection_string,
                 config.mongo_database_name,

@@ -41,3 +41,16 @@ class IDocumentTreeRepository(ABC):
     async def exists(self, doc_name: str) -> bool:
         """Verifica se já existem nós indexados para o documento."""
         ...
+
+    @abstractmethod
+    async def has_empty_embedding(self, doc_name: str) -> bool:
+        """``True`` se algum nó do documento tem ``embedding`` igual a lista vazia (F2-11).
+
+        ``None`` (nó sem texto) não conta: só o ``[]`` que a indexação de antes gravava.
+        """
+        ...
+
+    @abstractmethod
+    async def delete_document(self, doc_name: str) -> int:
+        """Apaga todos os nós do documento (para reindexar); devolve quantos apagou."""
+        ...

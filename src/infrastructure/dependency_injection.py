@@ -11,7 +11,7 @@ from src.application.services.document_indexing_service import DocumentIndexingS
 from src.application.services.knowledge_search_factory import KnowledgeSearchFactory
 from src.application.use_cases.get_active_agents_use_case import GetActiveAgentsUseCase
 from src.application.use_cases.get_active_teams_use_case import GetActiveTeamsUseCase
-from src.domain.ports import ILogger
+from src.domain.ports import IEmbedderFactory, ILogger
 from src.domain.repositories.agent_config_repository import IAgentConfigRepository
 from src.domain.repositories.team_config_repository import ITeamConfigRepository
 from src.domain.repositories.tool_repository import IToolRepository
@@ -40,6 +40,7 @@ from src.infrastructure.repositories.yaml_config_repository import (
 )
 from src.infrastructure.runtime.agno import AgnoRuntime
 from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService
+from src.infrastructure.runtime.agno.embedder_dimensions import DimensionResolvingEmbedderFactory
 from src.infrastructure.runtime.agno.http_tool_factory import HttpToolFactory
 from src.infrastructure.runtime.agno.llm_summary_generator import LLMSummaryGenerator
 from src.infrastructure.runtime.agno.session_db import SessionDb, create_session_db
@@ -194,6 +195,9 @@ class DependencyContainer:
         # thread: descobrir entry points lê metadados em disco e carregar plugin importa código.
         # Um registry atende modelos e embedders (portas IModelFactory e IEmbedderFactory).
         providers = await asyncio.to_thread(build_provider_registry, self.config, self._logger)
+        # Embedders com a dimensão real do modelo (sonda uma vez por config, F2-11): um só, para o
+        # RAG semântico e o hierárquico (indexação e busca) compartilharem o cache.
+        embedders = DimensionResolvingEmbedderFactory(providers, logger=self._logger)
 
         await self._connect_mongo()
 
@@ -202,10 +206,11 @@ class DependencyContainer:
 
         agent_config_repo, team_config_repo, tool_repo = self._build_config_repositories()
 
-        indexing_service, search_factory = await self._build_hierarchical_rag(providers)
+        indexing_service, search_factory = await self._build_hierarchical_rag(providers, embedders)
 
         runtime = self._build_runtime(
             providers,
+            embedders=embedders,
             tool_factory=tool_factory,
             tool_repo=tool_repo,
             indexing_service=indexing_service,
@@ -246,7 +251,7 @@ class DependencyContainer:
         self._health_service = HealthService(self._mongo_client, self._logger)
 
     async def _build_hierarchical_rag(
-        self, providers: ProviderRegistry
+        self, providers: ProviderRegistry, embedders: IEmbedderFactory
     ) -> tuple[DocumentIndexingService, KnowledgeSearchFactory]:
         """Parser, árvore de documentos (com índices), gerador de resumo e as fábricas do RAG hierárquico."""
         doc_parser = TextDocumentParser()
@@ -270,7 +275,7 @@ class DependencyContainer:
             parser=doc_parser,
             tree_repository=tree_repo,
             summary_generator=summary_generator,
-            embedder_factory=providers,
+            embedder_factory=embedders,
             logger=self._logger,
         )
         search_factory = KnowledgeSearchFactory(
@@ -282,6 +287,7 @@ class DependencyContainer:
         self,
         providers: ProviderRegistry,
         *,
+        embedders: IEmbedderFactory,
         tool_factory: HttpToolFactory,
         tool_repo: IToolRepository,
         indexing_service: DocumentIndexingService,
@@ -302,7 +308,7 @@ class DependencyContainer:
             session_db=session_db,
             logger=self._logger,
             model_factory=providers,
-            embedder_factory=providers,
+            embedder_factory=embedders,
             tool_factory=tool_factory,
             tool_repository=tool_repo,
             indexing_service=indexing_service,

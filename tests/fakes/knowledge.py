@@ -5,6 +5,9 @@
 - ``MongoClient`` do ``MongoDb`` de sessões com ``connect=False`` (nada abre socket);
 - ``MongoVectorDb.exists`` responde ``True`` (o ``Knowledge.__post_init__`` não cria
   coleção/índice) e ``MongoVectorDb.create`` falha alto se chamado;
+- ``MongoClient`` do vector db é o servidor em memória de ``tests/fakes/vector_mongo.py``, onde a
+  coleção que ``exists`` diz existir está de fato, vazia e com o índice da dimensão do embedder: a
+  correção da coleção no startup (F2-11, ``GuardedMongoVectorDb.repair``) roda e não acha nada;
 - ``Knowledge.insert`` só chama o gancho (sem ler arquivo, gerar embedding nem escrever).
 """
 
@@ -22,6 +25,7 @@ from agno.vectordb.mongodb import MongoDb as MongoVectorDb
 from pymongo import MongoClient
 
 from tests.fakes.models import running_on_event_loop
+from tests.fakes.vector_mongo import install_fake_vector_mongo
 
 InsertHook = Callable[[Knowledge, tuple[Any, ...], dict[str, Any]], None]
 """Recebe ``(knowledge, args, kwargs)`` de cada ``Knowledge.insert``."""
@@ -36,6 +40,7 @@ def cut_agno_io(
 ) -> Iterator[None]:
     """Corta o I/O do agno na borda enquanto o bloco roda; fecha os clientes criados no fim."""
     clients: list[MongoClient[Any]] = []
+    vector_server = install_fake_vector_mongo(monkeypatch)
 
     def lazy_client(*args: Any, **kwargs: Any) -> MongoClient[Any]:
         client: MongoClient[Any] = MongoClient(*args, connect=False, **kwargs)
@@ -45,6 +50,9 @@ def cut_agno_io(
     def exists(self: MongoVectorDb) -> bool:
         if on_exists is not None:
             on_exists()
+        if (self.database, self.collection_name) not in vector_server.created:
+            dimensions = getattr(self.embedder, "dimensions", None)
+            vector_server.seed(self.database, self.collection_name, [], index_dimensions=dimensions)
         return True
 
     def refuse_create(self: MongoVectorDb) -> None:

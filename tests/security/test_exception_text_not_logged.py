@@ -16,7 +16,7 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
-from src.application.services.document_indexing_service import DocumentIndexingService
+from src.application.services.document_indexing_service import DocumentIndexingService, EmbeddingRejectedError
 from src.application.services.search_strategies.hierarchical_search_strategy import HierarchicalSearchStrategy
 from src.application.use_cases.get_active_agents_use_case import GetActiveAgentsUseCase
 from src.application.use_cases.get_active_teams_use_case import GetActiveTeamsUseCase
@@ -106,9 +106,11 @@ async def test_indexacao_loga_so_o_tipo_quando_o_embedder_falha() -> None:
         logger=logger,
     )
 
-    nodes = await service.index_document("doc.txt", "conteúdo do documento", RagConfig(active=True, doc_name="doc.txt"))
+    # F2-11: o nó sem embedding recusa o documento (nada gravado); o log continua só com o tipo
+    with pytest.raises(EmbeddingRejectedError):
+        await service.index_document("doc.txt", "conteúdo do documento", RagConfig(active=True, doc_name="doc.txt"))
 
-    assert [node.embedding for node in nodes] == [None]  # indexa sem embedding, como antes
+    assert await tree.exists("doc.txt") is False
     _assert_only_the_error_type(logger, "Erro ao computar embedding", level="warning")
 
 

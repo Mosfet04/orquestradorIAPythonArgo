@@ -19,15 +19,20 @@ from src.domain.ports.summary_generator_port import (
 _SUMMARY_BATCH_SIZE = 5
 
 
+class EmbeddingRejectedError(RuntimeError):
+    """Nó com embedding vazio, de tamanho diferente ou que falhou: a árvore não é gravada (F2-11)."""
+
+
 class DocumentIndexingService:
     """Indexa documentos em árvore hierárquica para busca top-down.
 
     Fluxo:
-    1. Verifica idempotência (documento já indexado?).
+    1. Verifica idempotência (documento já indexado e sem ``embedding: []`` de antes do F2-11?).
     2. Parseia conteúdo em nós hierárquicos.
     3. Gera sumários para nós internos (paralelo em batches).
-    4. Computa embeddings de todos os nós.
-    5. Persiste no repositório.
+    4. Computa embeddings de todos os nós; qualquer um inválido (vazio, de tamanho diferente
+       dos demais ou com erro) recusa o documento inteiro (``EmbeddingRejectedError``).
+    5. Troca a árvore antiga (se havia) pela nova e persiste no repositório.
     """
 
     def __init__(
@@ -58,7 +63,8 @@ class DocumentIndexingService:
         """Indexa documento caso ainda não exista.
 
         Chamadas concorrentes para o mesmo ``doc_name`` são serializadas neste processo:
-        a segunda espera a primeira e encontra o documento já indexado.
+        a segunda espera a primeira e encontra o documento já indexado. Embedding inválido
+        levanta ``EmbeddingRejectedError`` sem gravar nada (a árvore antiga, se havia, fica).
 
         Returns
         -------
@@ -79,11 +85,18 @@ class DocumentIndexingService:
         content: str,
         rag_config: RagConfig,
     ) -> List[DocumentNode]:
+        stale = False
         if await self._tree_repo.exists(doc_name):
-            self._logger.info(
-                "Documento já indexado — skip", doc_name=doc_name
+            if not await self._tree_repo.has_empty_embedding(doc_name):
+                self._logger.info(
+                    "Documento já indexado — skip", doc_name=doc_name
+                )
+                return []
+            stale = True
+            self._logger.warning(
+                "Árvore do documento com embedding vazio (gravada antes do F2-11); reindexando",
+                doc_name=doc_name,
             )
-            return []
 
         self._logger.info("Iniciando indexação hierárquica", doc_name=doc_name)
 
@@ -99,8 +112,11 @@ class DocumentIndexingService:
 
         await self._generate_summaries(doc_name, nodes)
         # get_embedding é síncrono (rede no provider real): fora do event loop
-        await asyncio.to_thread(self._compute_embeddings, nodes, embedder)
+        await asyncio.to_thread(self._compute_embeddings, doc_name, nodes, embedder)
 
+        if stale:
+            deleted = await self._tree_repo.delete_document(doc_name)
+            self._logger.info("Árvore antiga do documento apagada", doc_name=doc_name, deleted=deleted)
         await self._tree_repo.save_nodes(nodes)
         self._logger.info(
             "Indexação concluída",
@@ -161,20 +177,48 @@ class DocumentIndexingService:
             node.summary = node.content[:200]
 
     def _compute_embeddings(
-        self, nodes: List[DocumentNode], embedder: TextEmbedder
+        self, doc_name: str, nodes: List[DocumentNode], embedder: TextEmbedder
     ) -> None:
-        """Computa embedding para cada nó usando o texto adequado."""
+        """Computa embedding para cada nó com texto; algum inválido levanta ``EmbeddingRejectedError``.
+
+        Inválido: não é lista, é vazio, tem tamanho diferente do primeiro válido ou o embedder
+        falhou. Nó sem texto fica com ``None``, como antes.
+        """
+        rejected = total = 0
+        size: int | None = None
         for node in nodes:
             text = node.searchable_text
             if not text:
                 continue
-            try:
-                embedding = embedder.get_embedding(text)
-                if isinstance(embedding, list):
-                    node.embedding = embedding
-            except Exception as exc:
-                self._logger.warning(
-                    "Erro ao computar embedding",
-                    node_id=node.id,
-                    error_type=type(exc).__name__,
-                )
+            total += 1
+            embedding = self._embedding_of(node, text, embedder)
+            if not embedding or (size is not None and len(embedding) != size):
+                rejected += 1
+                continue
+            size = len(embedding)
+            node.embedding = embedding
+        if rejected:
+            self._logger.error(
+                "Embedding vazio, de tamanho diferente ou com erro; documento não indexado",
+                doc_name=doc_name,
+                rejected=rejected,
+                total=total,
+                error_type=EmbeddingRejectedError.__name__,
+            )
+            raise EmbeddingRejectedError(
+                f"{rejected} de {total} nós sem embedding válido; documento não indexado"
+            )
+
+    def _embedding_of(
+        self, node: DocumentNode, text: str, embedder: TextEmbedder
+    ) -> List[float] | None:
+        try:
+            embedding = embedder.get_embedding(text)
+        except Exception as exc:
+            self._logger.warning(
+                "Erro ao computar embedding",
+                node_id=node.id,
+                error_type=type(exc).__name__,
+            )
+            return None
+        return embedding if isinstance(embedding, list) else None

@@ -9,13 +9,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-# Módulos de fixtures compartilhadas (offline_knowledge, live_mongo, optional_sdks_stubbed,
+# Módulos de fixtures compartilhadas (offline_knowledge, live_mongo, optional_sdks_stubbed, fake_vector_mongo,
 # plugin_site): registrados como plugin, sem import solto de fixture neste conftest.
 pytest_plugins = [
     "tests.fakes.knowledge",
     "tests.fakes.live_mongo",
     "tests.fakes.optional_sdks",
     "tests.fakes.plugins",
+    "tests.fakes.vector_mongo",
 ]
 
 TESTS_DIR = Path(__file__).resolve().parent

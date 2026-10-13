@@ -10,6 +10,9 @@ na ordem em que foram salvos. Semântica (pendência da F0-03, definida no F2-06
   repetido é ignorado (log de erro) e os demais nós do lote são gravados, sem levantar.
 O Mongo garante o id único pelo índice ``idx_node_id`` (``ensure_indexes``); a coleção fake o
 emula quando o índice é criado.
+
+F2-11: ``has_empty_embedding`` acha o ``embedding: []`` gravado antes (só lista vazia; ``None`` de nó
+sem texto não conta) e ``delete_document`` apaga só os nós do documento, para a reindexação.
 """
 
 from __future__ import annotations
@@ -144,3 +147,41 @@ async def test_tree_repo_id_repetido_entre_lotes_vence_o_primeiro_gravado(tree_r
 
     assert [(n.id, n.title) for n in roots] == [("r1", "primeiro"), ("r2", "r2")]
     assert (await tree_repo.get_node("r1")).title == "primeiro"
+
+
+# ── F2-11: embedding vazio legado e reindexação ──────────────────────
+
+
+async def test_tree_repo_has_empty_embedding_so_com_lista_vazia_no_documento(tree_repo):
+    nodes = _tree("manual")
+    nodes[0].embedding = [0.1, 0.2]  # o filho fica sem embedding (None): texto vazio não é defeito
+    other = _tree("legado")
+    other[1].embedding = []
+    await tree_repo.save_nodes(nodes + other)
+
+    assert await tree_repo.has_empty_embedding("manual") is False
+    assert await tree_repo.has_empty_embedding("legado") is True
+    assert await tree_repo.has_empty_embedding("inexistente") is False
+
+
+async def test_tree_repo_delete_document_apaga_so_os_nos_do_documento(tree_repo):
+    await tree_repo.save_nodes(_tree("manual") + _tree("outro"))
+
+    assert await tree_repo.delete_document("manual") == 2
+
+    assert await tree_repo.exists("manual") is False
+    assert await tree_repo.get_node("manual-1") is None
+    assert _ids(await tree_repo.get_root_nodes("outro")) == ["outro-0"]
+    assert await tree_repo.delete_document("manual") == 0
+
+
+async def test_tree_repo_documento_apagado_pode_ser_gravado_de_novo_com_os_mesmos_ids(tree_repo):
+    await tree_repo.save_nodes(_tree("manual"))
+    await tree_repo.delete_document("manual")
+    fresh = _tree("manual")
+    fresh[0].embedding = [0.5]
+
+    await tree_repo.save_nodes(fresh)
+
+    assert (await tree_repo.get_node("manual-0")).embedding == [0.5]
+    assert _ids(await tree_repo.get_children("manual-0")) == ["manual-1"]

@@ -121,10 +121,12 @@ class FakeVectorStore:
             text = Path(kwargs["path"]).read_text(encoding="utf-8")
             store.collections.setdefault(name, []).extend(p for p in text.split("\n\n") if p.strip())
 
+        offline_exists = MongoVectorDb.exists  # o do offline_knowledge: coleção existente com índice (F2-11)
+
         def exists(db: MongoVectorDb) -> bool:
             if store.on_blocking_call:
                 store.on_blocking_call()
-            return True
+            return offline_exists(db)
 
         def search(db: MongoVectorDb, query: str, limit: int = 5, *args: Any, **kwargs: Any) -> list[Document]:
             name = str(db.collection_name)

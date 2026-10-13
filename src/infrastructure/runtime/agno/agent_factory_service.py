@@ -7,12 +7,11 @@ import hashlib
 import re
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from agno.agent import Agent
 from agno.db.base import AsyncBaseDb
 from agno.knowledge import Knowledge
-from agno.vectordb.mongodb import MongoDb as MongoVectorDb
 
 from src.application.services.document_indexing_service import DocumentIndexingService
 from src.application.services.document_path import (
@@ -30,8 +29,18 @@ from src.domain.ports import (
     IToolFactory,
 )
 from src.domain.repositories.tool_repository import IToolRepository
+from src.infrastructure.runtime.agno.embedder_dimensions import (
+    DimensionResolvingEmbedderFactory,
+    EmbedderProbeError,
+    SizedEmbedder,
+    fit_request,
+)
 from src.infrastructure.runtime.agno.hierarchical_search_tool import (
     create_hierarchical_search_tool,
+)
+from src.infrastructure.runtime.agno.rag_vector_db import (
+    EmbeddingDimensionError,
+    GuardedMongoVectorDb,
 )
 from src.infrastructure.runtime.agno.user_id_guardrail import (
     UserIdRequiredGuardrail,
@@ -108,7 +117,12 @@ class AgentFactoryService:
         self._session_db = session_db
         self._logger = logger
         self._model_factory = model_factory
-        self._embedder_factory = embedder_factory
+        # Embedder com o tamanho real dos vetores (F2-11); a do composition root já vem embrulhada.
+        self._embedder_factory = (
+            embedder_factory
+            if isinstance(embedder_factory, DimensionResolvingEmbedderFactory)
+            else DimensionResolvingEmbedderFactory(embedder_factory, logger=logger)
+        )
         self._tool_factory = tool_factory
         self._tool_repository = tool_repository
         self._indexing_service = indexing_service
@@ -230,21 +244,108 @@ class AgentFactoryService:
                 return None
 
         try:
-            # Objeto do runtime (agno) criado pela fábrica do mesmo runtime; já fora do loop.
-            embedder: Any = self._embedder_factory.create_embedder(embedder_config)
-            knowledge = Knowledge(
-                vector_db=MongoVectorDb(
-                    collection_name=rag_collection_name(config.id),
-                    db_url=self._db_url,
-                    database=self._db_name,
-                    embedder=embedder,
-                ),
+            # Objeto do runtime (agno) criado pela fábrica do mesmo runtime; já fora do loop. A
+            # dimensão (model_params ou sonda, F2-11) é lida antes de o Knowledge criar a coleção.
+            sized = self._embedder_factory.create_sized(embedder_config)
+            vector_db = GuardedMongoVectorDb(
+                collection_name=rag_collection_name(config.id),
+                db_url=self._db_url,
+                database=self._db_name,
+                embedder=cast(Any, sized.embedder),
+                dimensions=sized.dimensions,
             )
+            if sized.dimensions is None:
+                return self._knowledge_from_existing_index(config.id, vector_db, sized)
+            # Coleção nova nasce aqui com o índice da dimensão resolvida; a existente é corrigida.
+            knowledge = Knowledge(vector_db=vector_db)
+            if not self._repair_collection(config.id, vector_db):
+                return None
             self._load_document(knowledge, doc_path)
+            if not self._accept_insert(config.id, vector_db):
+                return None
             return knowledge
         except Exception as exc:  # noqa: BLE001 - agente sobe sem RAG; logado
             self._logger.warning("Erro ao criar RAG", agent_id=config.id, **_failure(exc))
             return None
+
+    def _knowledge_from_existing_index(
+        self, agent_id: str, vector_db: GuardedMongoVectorDb, sized: SizedEmbedder
+    ) -> Knowledge | None:
+        """Sonda falhou: com índice vetorial existente, RAG com a dimensão dele (decisão do usuário).
+
+        A busca volta quando o provider voltar, como antes do F2-11. Nada é reindexado nem gravado
+        nesta subida (o provider está fora): sem reparo e sem inserir o documento.
+        """
+        dimensions = vector_db.existing_index_dimensions()
+        collection = vector_db.collection_name
+        if dimensions is None:
+            self._logger.error(
+                "Dimensão do embedder desconhecida (a sonda falhou) e a coleção não tem índice "
+                "vetorial; agente sobe sem RAG",
+                agent_id=agent_id,
+                collection=collection,
+                error_type=EmbedderProbeError.__name__,
+            )
+            return None
+        vector_db.dimensions = dimensions
+        fit_request(sized.embedder, dimensions)
+        self._logger.warning(
+            "Sonda do embedder falhou; RAG sobe com a dimensão do índice existente, sem "
+            "reindexar nem inserir o documento nesta subida",
+            agent_id=agent_id,
+            collection=collection,
+            dimensions=dimensions,
+            error_type=sized.error_type,
+        )
+        return Knowledge(vector_db=vector_db)
+
+    def _repair_collection(self, agent_id: str, vector_db: GuardedMongoVectorDb) -> bool:
+        """Corrige a coleção gravada antes do F2-11; ``False`` = sobra chunk inválido (sem RAG)."""
+        report = vector_db.repair()
+        collection = vector_db.collection_name
+        if report.index_rebuilt:
+            self._logger.warning(
+                "Índice vetorial do RAG ausente ou com dimensão diferente do embedder; recriado",
+                agent_id=agent_id,
+                collection=collection,
+                previous_dimensions=report.previous_dimensions,
+                dimensions=vector_db.dimensions,
+            )
+        if report.reembedded:
+            self._logger.warning(
+                "Chunks do RAG com embedding vazio ou de dimensão diferente reindexados",
+                agent_id=agent_id,
+                collection=collection,
+                reembedded=report.reembedded,
+            )
+        if report.failed:
+            self._logger.error(
+                "Chunks do RAG com embedding inválido não puderam ser reindexados; agente sobe "
+                "sem RAG (o próximo startup tenta de novo)",
+                agent_id=agent_id,
+                collection=collection,
+                failed=report.failed,
+                error_type=EmbeddingDimensionError.__name__,
+            )
+            return False
+        return True
+
+    def _accept_insert(self, agent_id: str, vector_db: GuardedMongoVectorDb) -> bool:
+        """Indexação sem recusa; com recusa, descarta o documento (o próximo startup reindexa)."""
+        rejected = vector_db.rejected_chunks
+        if not rejected:
+            return True
+        removed = vector_db.discard_rejected()
+        self._logger.error(
+            "Embedding vazio ou de dimensão diferente do índice recusado; documento não indexado "
+            "e agente sobe sem RAG",
+            agent_id=agent_id,
+            collection=vector_db.collection_name,
+            rejected=rejected,
+            removed=removed,
+            error_type=EmbeddingDimensionError.__name__,
+        )
+        return False
 
     async def _build_hierarchical_tool(self, config: AgentConfig) -> Any | None:
         """Cria tool de busca hierárquica se a estratégia for HIERARCHICAL."""

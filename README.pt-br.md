@@ -213,8 +213,7 @@ db.agents_config.insertOne({
     "active": true,
     "doc_name": "basic-prog.txt",
     "factoryIaModel": "ollama",
-    "model": "nomic-embed-text",
-    "model_params": {"dimensions": 768}
+    "model": "nomic-embed-text"
   },
   "user_memory_active": false,
   "summary_active": false,
@@ -223,8 +222,8 @@ db.agents_config.insertOne({
 ```
 
 - O embedder é referenciado no `rag_config` (`factoryIaModel` + `model`) e o servidor é o `OLLAMA_BASE_URL` do processo.
-- `model_params.dimensions` precisa ser a dimensão real do modelo (768 no `nomic-embed-text`): o `OllamaEmbedder` do agno 2.5.8 assume 4096, cria o índice com esse tamanho e descarta vetor de outro tamanho.
-- **Puxe o modelo de embedding antes do primeiro start do agente.** Sem ele, os chunks são gravados em `rag_<agent_id>` com embedding vazio (warning `model "..." not found` no log) e, como o documento é indexado uma vez só (`skip_if_exists`), continuam vazios depois. Para reindexar: `db.getCollection("rag_rag-assistant").drop()` e reinicie o app.
+- `model_params.dimensions` é opcional (F2-11): sem ele, o app descobre a dimensão real do modelo no startup com uma embedding curta (sonda, uma vez por embedder; 768 no `nomic-embed-text`) e cria o índice com ela. Com ele (ex.: `"model_params": {"dimensions": 768}`), vale o valor escrito e não há sonda.
+- **Puxe o modelo de embedding antes do primeiro start do agente.** Sem ele, a sonda falha (prazo de 15 s, ou o `model_params.timeout`) e o agente sobe sem RAG (log de erro `Sonda de dimensão do embedder falhou`, com `error_type`); depois do `pull`, reinicie o app. Se a `rag_<agent_id>` já tiver índice vetorial de um startup anterior, o agente sobe com RAG usando a dimensão desse índice, sem reindexar, e a busca volta quando o Ollama voltar. Embedding vazio nunca é gravado, e uma `rag_<agent_id>` gravada antes do F2-11 com embedding vazio ou índice de outra dimensão é corrigida no startup (índice recriado, chunks reindexados no lugar): não precisa mais de `drop()` manual.
 
 **5. Fumaça** (as chaves são lidas sem eco, para não irem ao histórico do shell):
 
@@ -238,7 +237,7 @@ curl -s -H "Authorization: Bearer $API_KEY_RUN" -X POST http://localhost:7777/ag
   -F message="Segundo a base de conhecimento, o que é uma variável?" -F stream=false
 ```
 
-No startup do `rag-assistant` o log mostra `Search index 'vector_index_1' created successfully` e `Documento RAG inserido`; no Mongo, `rag_rag-assistant` tem os chunks com `embedding` de 768 posições.
+No startup do `rag-assistant` o log mostra `Dimensão do embedder obtida pela sonda` (`dimensions=768`), `Search index 'vector_index_1' created successfully` e `Documento RAG inserido`; no Mongo, `rag_rag-assistant` tem os chunks com `embedding` de 768 posições.
 
 **6. mongo-express:** http://127.0.0.1:8081, com `MONGO_EXPRESS_USERNAME`/`MONGO_EXPRESS_PASSWORD`.
 
@@ -849,7 +848,7 @@ Modelo recusado vira `Agente não carregado`/`Team não carregado` com `reason` 
 | `model` | Modelo de embedding (ex: `gemini-embedding-001`, `text-embedding-3-small`) |
 | `factoryIaModel` | Provider do embedder: `gemini`, `openai`, `ollama`, `azure`, `openai_compatible` |
 | `search_strategy` | Estratégia de busca: `semantic` (padrão, agno nativo) ou `hierarchical` (árvore de documentos) |
-| `model_params`, `base_url`, `api_key_ref` | Opcionais do embedder, como no agente. Com algum deles, `model` e `factoryIaModel` precisam estar no documento, não vazios (os defaults `ollama`/`nomic-embed-text:latest` valem só para `rag_config` sem campos novos; no agno 2.5.8 esse default grava embedding vazio, porque sem `model_params.dimensions: 768` o embedder espera 4096 posições: correção no F2-11) |
+| `model_params`, `base_url`, `api_key_ref` | Opcionais do embedder, como no agente. Com algum deles, `model` e `factoryIaModel` precisam estar no documento, não vazios (os defaults `ollama`/`nomic-embed-text:latest` valem só para `rag_config` sem campos novos). `model_params.dimensions` é opcional: sem ele, a dimensão vem de uma sonda no startup (F2-11); com ele, vale o valor escrito |
 
 ### Collection: `tools`
 
@@ -994,6 +993,8 @@ Utiliza o knowledge base nativo do agno com busca vetorial direta. Requer Atlas 
 2. No `agents_config`, configure `rag_config` com `active: true` e `doc_name: "basic-prog.txt"`
 3. Na inicialização, o documento é embedado e persistido na collection do próprio agente no MongoDB, `rag_<agent_id>` (um agente nunca busca nos documentos de outro, e embedders de dimensões diferentes nunca dividem um índice). `id` em `[a-z0-9-]` (até 64 caracteres) é usado como está (`rag_suporte-n1`); qualquer outro `id` vira `rag_<slug>_<12 hex do sha256(id)>`, então ids diferentes nunca dividem collection
 4. A cada mensagem, o agente busca trechos relevantes para compor a resposta
+
+**Dimensão do embedding (F2-11):** o índice `vectorSearch` usa a dimensão real do embedder (`model_params.dimensions` ou, sem ele, a sonda do startup: uma embedding curta por config, com prazo de 15 s ou o `model_params.timeout`). A sonda não muda o que o app pede ao provider (no Azure, por exemplo, `dimensions` continua sem ir no pedido do `text-embedding-ada-002`); só o embedder do Ollama recebe a dimensão real, porque o do agno 2.5.8 descarta vetor de outro tamanho. Se a sonda falha e a collection já tem índice vetorial, o agente sobe com RAG na dimensão desse índice, sem reindexar nem inserir nesta subida; sem índice, sobe sem RAG. `model_params.dimensions` aceita `768` ou `768.0` (double do Mongo); zero, negativo ou fracionário deixa o agente sem RAG com `error_type=EmbeddingDimensionError`. Chunk com embedding vazio ou de tamanho diferente do índice nunca é gravado: o documento inteiro fica de fora e o agente sobe sem RAG (log de erro com a contagem e `error_type=EmbeddingDimensionError`), e o próximo startup tenta de novo. No startup, `rag_<agent_id>` com índice ausente ou de outra dimensão tem o índice recriado, e chunks com embedding vazio ou de outro tamanho são reindexados no lugar a partir do texto gravado (nada é apagado; só a collection do próprio agente); se algum continuar inválido, o agente sobe sem RAG até o próximo startup. O RAG hierárquico tem a mesma guarda: nó sem embedding válido recusa o documento (nada gravado em `document_tree`), e árvore gravada antes com `embedding: []` é refeita.
 
 **Nota de operação (atualização para o F1-07):** antes do F1-07 todos os agentes dividiam a collection `rag`. No primeiro startup depois da atualização cada agente reembeda o seu documento em `rag_<agent_id>` (o `skip_if_exists` é checado por collection), o que custa uma passada de embedding por agente. A collection legada `rag` deixa de ser lida e escrita e não é apagada automaticamente; remova-a (`db.rag.drop()`) depois que as novas collections estiverem populadas. No MongoDB Atlas, cada collection nova precisa do próprio índice de busca vetorial (criado pelo agno como o antigo).
 
@@ -1321,6 +1322,13 @@ client = MongoClient('SUA_CONNECTION_STRING')
 print(client.admin.command('ping'))
 "
 ```
+
+#### Agente sobe sem RAG
+
+- Log `Sonda de dimensão do embedder falhou`: o embedder não respondeu no prazo (15 s, ou `model_params.timeout`; `error_type=TimeoutError` em host que não responde) ou deu erro (Ollama fora do ar, modelo não baixado: `ollama pull nomic-embed-text`). Agentes com o mesmo embedder não esperam de novo por 60 s (a falha fica em cache por esse tempo). Se a `rag_<agent_id>` já tinha índice, o agente sobe com RAG na dimensão dele (warning `Sonda do embedder falhou; RAG sobe com a dimensão do índice existente...`) e a busca volta quando o provider voltar; senão, sobe sem RAG. Corrija e reinicie o app; não há o que limpar no Mongo. No RAG hierárquico, a falha da sonda deixa o agente sem a tool de busca até o próximo startup.
+- Log `Embedding vazio, de tamanho diferente ou com erro; documento não indexado` (RAG hierárquico, com `rejected`/`total`): algum nó do documento ficou sem embedding válido. Causa provável: uma seção grande demais para o limite de entrada do modelo de embedding (o `TextDocumentParser` só divide por heading `#`, `##`...; uma seção sem subtítulo vira um nó inteiro). Remédio: quebre a seção em subseções com headings e reinicie o app (nada foi gravado em `document_tree`).
+- Log `Embedding vazio ou de dimensão diferente do índice recusado`: o modelo devolveu vetor vazio ou de outro tamanho que o de `model_params.dimensions`. Remova `dimensions` (a sonda descobre o tamanho) ou corrija o valor.
+- `rag_<agent_id>` antiga com embedding vazio ou índice de outra dimensão é corrigida sozinha no startup (logs `Índice vetorial do RAG ... recriado` e `Chunks do RAG ... reindexados`); o `drop()` manual não é mais necessário.
 
 #### Provider de modelo não funciona
 

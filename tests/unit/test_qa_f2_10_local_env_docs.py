@@ -245,7 +245,8 @@ def _readme_rag_document(lang: str) -> dict:
 
 
 @pytest.mark.parametrize("lang", LANGS)
-async def test_documento_rag_do_readme_carrega_como_agente_com_embedder_de_768_dimensoes(lang, monkeypatch):
+async def test_documento_rag_do_readme_carrega_como_agente_com_embedder_sem_dimensions(lang, monkeypatch):
+    """F2-11: o contorno ``model_params.dimensions: 768`` saiu; a sonda do startup acha a dimensão."""
     document = _readme_rag_document(lang)
     repo = MongoBackend(monkeypatch).agents([document])
     [agent] = await repo.get_active_agents()
@@ -257,7 +258,7 @@ async def test_documento_rag_do_readme_carrega_como_agente_com_embedder_de_768_d
     embedder = rag.model_config
     assert embedder is not None
     assert (embedder.provider, embedder.model_id) == ("ollama", "nomic-embed-text")
-    assert dict(embedder.params or {}) == {"dimensions": 768}
+    assert dict(embedder.params or {}) == {}
 
 
 @pytest.mark.parametrize("lang", LANGS)

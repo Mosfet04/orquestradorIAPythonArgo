@@ -213,8 +213,7 @@ db.agents_config.insertOne({
     "active": true,
     "doc_name": "basic-prog.txt",
     "factoryIaModel": "ollama",
-    "model": "nomic-embed-text",
-    "model_params": {"dimensions": 768}
+    "model": "nomic-embed-text"
   },
   "user_memory_active": false,
   "summary_active": false,
@@ -223,8 +222,8 @@ db.agents_config.insertOne({
 ```
 
 - The embedder is referenced in `rag_config` (`factoryIaModel` + `model`), and the server is the process's `OLLAMA_BASE_URL`.
-- `model_params.dimensions` must be the model's real dimension (768 for `nomic-embed-text`): agno 2.5.8's `OllamaEmbedder` assumes 4096, creates the index with that size and discards vectors of any other size.
-- **Pull the embedding model before the agent's first start.** Without it, the chunks are stored in `rag_<agent_id>` with an empty embedding (`model "..." not found` warning in the log) and, since the document is indexed only once (`skip_if_exists`), they stay empty afterwards. To reindex: `db.getCollection("rag_rag-assistant").drop()` and restart the app.
+- `model_params.dimensions` is optional (F2-11): without it, the app finds the model's real dimension at startup with a short embedding (probe, once per embedder; 768 for `nomic-embed-text`) and creates the index with it. With it (e.g. `"model_params": {"dimensions": 768}`), the written value is used and there is no probe.
+- **Pull the embedding model before the agent's first start.** Without it, the probe fails (15 s deadline, or `model_params.timeout`) and the agent starts without RAG (error log `Sonda de dimensão do embedder falhou`, with `error_type`); after the `pull`, restart the app. If `rag_<agent_id>` already has a vector index from a previous startup, the agent starts with RAG using that index's dimension, without re-embedding, and search comes back when Ollama does. An empty embedding is never stored, and a `rag_<agent_id>` written before F2-11 with empty embeddings or an index of another dimension is fixed at startup (index recreated, chunks re-embedded in place): no manual `drop()` needed anymore.
 
 **5. Smoke test** (the keys are read without echo, so they stay out of the shell history):
 
@@ -238,7 +237,7 @@ curl -s -H "Authorization: Bearer $API_KEY_RUN" -X POST http://localhost:7777/ag
   -F message="According to the knowledge base, what is a variable?" -F stream=false
 ```
 
-When `rag-assistant` starts, the log shows `Search index 'vector_index_1' created successfully` and `Documento RAG inserido`; in MongoDB, `rag_rag-assistant` holds the chunks with 768-position `embedding` arrays.
+When `rag-assistant` starts, the log shows `Dimensão do embedder obtida pela sonda` (`dimensions=768`), `Search index 'vector_index_1' created successfully` and `Documento RAG inserido`; in MongoDB, `rag_rag-assistant` holds the chunks with 768-position `embedding` arrays.
 
 **6. mongo-express:** http://127.0.0.1:8081, with `MONGO_EXPRESS_USERNAME`/`MONGO_EXPRESS_PASSWORD`.
 
@@ -835,7 +834,7 @@ A refused model becomes `Agente não carregado`/`Team não carregado` with `reas
 | `model` | Embedding model (e.g., `gemini-embedding-001`, `text-embedding-3-small`) |
 | `factoryIaModel` | Embedder provider: `gemini`, `openai`, `ollama`, `azure`, `openai_compatible` |
 | `search_strategy` | Search strategy: `semantic` (default, agno native) or `hierarchical` (document tree) |
-| `model_params`, `base_url`, `api_key_ref` | Optional embedder fields, as in the agent. With any of them, `model` and `factoryIaModel` must be in the document, non-empty (the `ollama`/`nomic-embed-text:latest` defaults only apply to a `rag_config` without the new fields; on agno 2.5.8 that default stores empty embeddings, because without `model_params.dimensions: 768` the embedder expects 4096 positions: fix in F2-11) |
+| `model_params`, `base_url`, `api_key_ref` | Optional embedder fields, as in the agent. With any of them, `model` and `factoryIaModel` must be in the document, non-empty (the `ollama`/`nomic-embed-text:latest` defaults only apply to a `rag_config` without the new fields). `model_params.dimensions` is optional: without it, the dimension comes from a probe at startup (F2-11); with it, the written value is used |
 
 ### Collection: `tools`
 
@@ -980,6 +979,8 @@ Uses agno's native knowledge base with direct vector search. Requires Atlas Vect
 2. In `agents_config`, set `rag_config` with `active: true` and `doc_name: "basic-prog.txt"`
 3. At startup, the document is embedded and persisted in the agent's own MongoDB collection, `rag_<agent_id>` (an agent never searches another agent's documents, and embedders with different dimensions never share an index). An `id` in `[a-z0-9-]` (up to 64 chars) is used as is (`rag_support-n1`); any other `id` becomes `rag_<slug>_<12 hex chars of sha256(id)>`, so different ids never share a collection
 4. On each message, the agent retrieves relevant chunks to compose the answer
+
+**Embedding dimension (F2-11):** the `vectorSearch` index uses the embedder's real dimension (`model_params.dimensions` or, without it, the startup probe: one short embedding per config, with a 15 s deadline or `model_params.timeout`). The probe does not change what the app asks the provider (on Azure, for example, `dimensions` is still left out of the `text-embedding-ada-002` request); only the Ollama embedder gets the real dimension, because agno 2.5.8's one discards vectors of any other size. If the probe fails and the collection already has a vector index, the agent starts with RAG at that index's dimension, without re-embedding or inserting on that startup; without an index, it starts without RAG. `model_params.dimensions` accepts `768` or `768.0` (a MongoDB double); zero, negative or fractional values leave the agent without RAG with `error_type=EmbeddingDimensionError`. A chunk with an empty embedding or one whose size differs from the index is never stored: the whole document is left out and the agent starts without RAG (error log with the count and `error_type=EmbeddingDimensionError`), and the next startup tries again. At startup, a `rag_<agent_id>` with a missing index or one of another dimension gets the index recreated, and chunks with empty or wrong-size embeddings are re-embedded in place from the stored text (nothing is deleted; only the agent's own collection); if any stays invalid, the agent starts without RAG until the next startup. Hierarchical RAG has the same guard: a node without a valid embedding rejects the document (nothing stored in `document_tree`), and a tree stored earlier with `embedding: []` is rebuilt.
 
 **Operations note (upgrade to F1-07):** before F1-07 every agent shared the `rag` collection. On the first startup after the upgrade each agent re-embeds its document into `rag_<agent_id>` (`skip_if_exists` is checked per collection), which costs one embedding pass per agent. The legacy `rag` collection is no longer read or written and is not deleted automatically; drop it (`db.rag.drop()`) once the new collections are populated. On MongoDB Atlas, each new collection needs its own vector search index (created by agno like the old one).
 
@@ -1307,6 +1308,13 @@ client = MongoClient('YOUR_CONNECTION_STRING')
 print(client.admin.command('ping'))
 "
 ```
+
+#### Agent starts without RAG
+
+- Log `Sonda de dimensão do embedder falhou`: the embedder did not answer within the deadline (15 s, or `model_params.timeout`; `error_type=TimeoutError` for a host that never answers) or failed (Ollama down, model not pulled: `ollama pull nomic-embed-text`). Agents with the same embedder do not wait again for 60 s (the failure is cached for that long). If `rag_<agent_id>` already had an index, the agent starts with RAG at its dimension (warning `Sonda do embedder falhou; RAG sobe com a dimensão do índice existente...`) and search comes back when the provider does; otherwise it starts without RAG. Fix it and restart the app; there is nothing to clean up in MongoDB. In hierarchical RAG, a failed probe leaves the agent without the search tool until the next startup.
+- Log `Embedding vazio, de tamanho diferente ou com erro; documento não indexado` (hierarchical RAG, with `rejected`/`total`): some node of the document got no valid embedding. Likely cause: a section too large for the embedding model's input limit (`TextDocumentParser` only splits on `#`, `##`... headings; a section without subheadings becomes a single node). Fix: split the section into subsections with headings and restart the app (nothing was stored in `document_tree`).
+- Log `Embedding vazio ou de dimensão diferente do índice recusado`: the model returned an empty vector or one whose size differs from `model_params.dimensions`. Remove `dimensions` (the probe finds the size) or fix the value.
+- An old `rag_<agent_id>` with empty embeddings or an index of another dimension is fixed automatically at startup (logs `Índice vetorial do RAG ... recriado` and `Chunks do RAG ... reindexados`); the manual `drop()` is no longer needed.
 
 #### Model provider not working
 

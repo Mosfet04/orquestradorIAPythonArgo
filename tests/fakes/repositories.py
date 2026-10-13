@@ -97,3 +97,12 @@ class InMemoryDocumentTreeRepository(IDocumentTreeRepository):
 
     async def exists(self, doc_name: str) -> bool:
         return any(n.doc_name == doc_name for n in self._nodes)
+
+    async def has_empty_embedding(self, doc_name: str) -> bool:
+        return any(n.doc_name == doc_name and n.embedding == [] for n in self._nodes)
+
+    async def delete_document(self, doc_name: str) -> int:
+        kept = [n for n in self._nodes if n.doc_name != doc_name]
+        deleted = len(self._nodes) - len(kept)
+        self._nodes[:] = kept
+        return deleted

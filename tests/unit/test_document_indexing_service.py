@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.application.services.document_indexing_service import DocumentIndexingService
+from src.application.services.document_indexing_service import DocumentIndexingService, EmbeddingRejectedError
 from src.domain.entities.document_node import DocumentNode
 from src.domain.entities.rag_config import RagConfig, SearchStrategy
 from src.domain.ports.summary_generator_port import SummaryTimeoutError
@@ -56,6 +56,7 @@ class TestDocumentIndexingService:
     @pytest.mark.asyncio
     async def test_skip_if_already_indexed(self):
         self.mock_tree_repo.exists.return_value = True
+        self.mock_tree_repo.has_empty_embedding.return_value = False  # árvore sem o [] legado (F2-11)
         rag = RagConfig(active=True, doc_name="test.txt")
 
         result = await self.service.index_document("test.txt", "content", rag)
@@ -138,10 +139,11 @@ class TestDocumentIndexingService:
         self.mock_embedder_factory.create_embedder.return_value = mock_embedder
 
         rag = RagConfig(active=True, doc_name="t.txt", model="m", factory_ia_model="o")
-        result = await self.service.index_document("t.txt", "content", rag)
+        # F2-11: nó com texto e sem embedding não é gravado (nem a árvore, que seria pulada depois)
+        with pytest.raises(EmbeddingRejectedError):
+            await self.service.index_document("t.txt", "content", rag)
 
-        assert len(result) == 1
-        assert result[0].embedding is None
+        self.mock_tree_repo.save_nodes.assert_not_called()
         self.mock_logger.warning.assert_called()
 
 

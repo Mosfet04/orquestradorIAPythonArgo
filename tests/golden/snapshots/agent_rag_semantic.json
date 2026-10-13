@@ -23,7 +23,7 @@
         "max_results": 10,
         "name": null,
         "vector_db": {
-          "__type__": "agno.vectordb.mongodb.mongodb.MongoDb",
+          "__type__": "src.infrastructure.runtime.agno.rag_vector_db.GuardedMongoVectorDb",
           "collection_name": "rag_rag-semantic",
           "connection_string": "mongodb://mongo.golden.invalid:27017",
           "database": "golden_db",

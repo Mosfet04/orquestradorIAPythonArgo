@@ -111,6 +111,16 @@ class MongoDocumentTreeRepository(AsyncMongoRepository, IDocumentTreeRepository)
         count = await self._collection.count_documents({"doc_name": doc_name}, limit=1)
         return count > 0
 
+    async def has_empty_embedding(self, doc_name: str) -> bool:
+        """Algum nó do documento com ``embedding: []`` (igualdade com lista vazia, F2-11)."""
+        count = await self._collection.count_documents({"doc_name": doc_name, "embedding": []}, limit=1)
+        return count > 0
+
+    async def delete_document(self, doc_name: str) -> int:
+        """Apaga os nós do documento; devolve quantos."""
+        result = await self._collection.delete_many({"doc_name": doc_name})
+        return int(result.deleted_count)
+
     # ── mappers ─────────────────────────────────────────────────────
 
     @staticmethod
