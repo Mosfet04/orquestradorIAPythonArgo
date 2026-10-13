@@ -169,11 +169,9 @@ def test_azure_ada_002_sem_dimensions_continua_sem_dimensions_no_pedido() -> Non
     config = ModelConfig(provider="azure", model_id="text-embedding-ada-002")
 
     sized = DimensionResolvingEmbedderFactory(_azure_factory(client), logger=RecordingLogger()).create_sized(config)
-    vector = sized.embedder.get_embedding("Texto A")
-
+    assert len(sized.embedder.get_embedding("Texto A")) == 1536
     assert sized.dimensions == 1536
     assert sized.embedder.dimensions is None  # type: ignore[attr-defined]
-    assert len(vector) == 1536
     assert [("dimensions" in r) for r in client.requests] == [False, False]  # sonda e uso
 
 
@@ -207,8 +205,10 @@ def test_dimensions_explicito_double_integral_vira_int() -> None:
 
     sized = DimensionResolvingEmbedderFactory(_ollama_factory(client), logger=RecordingLogger()).create_sized(config)
 
-    assert sized.dimensions == 768 and type(sized.dimensions) is int
-    assert type(sized.embedder.dimensions) is int  # type: ignore[attr-defined]
+    # int de verdade: nem float (768.0) nem bool (subclasse de int)
+    assert sized.dimensions == 768 and isinstance(sized.dimensions, int) and not isinstance(sized.dimensions, bool)
+    assert isinstance(sized.embedder.dimensions, int)  # type: ignore[attr-defined]
+    assert not isinstance(sized.embedder.dimensions, (bool, float))  # type: ignore[attr-defined]
     assert client.calls == []
 
 

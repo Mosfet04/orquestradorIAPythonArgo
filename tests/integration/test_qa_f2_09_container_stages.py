@@ -93,6 +93,47 @@ def _spy_all(monkeypatch: pytest.MonkeyPatch, *, fail_at: str | None = None, exc
     return spies
 
 
+def _assert_rag_wiring(spies: Spies, config: AppConfig, registry: object) -> object:
+    """Árvore, resumo, indexação e busca recebem o que a etapa anterior devolveu; devolve o embedder."""
+    tree_repo = spies.only("MongoDocumentTreeRepository").result
+    tree_kwargs = spies.only("MongoDocumentTreeRepository").kwargs
+    assert tree_kwargs["connection_string"] == config.mongo_connection_string
+    assert tree_kwargs["database_name"] == config.mongo_database_name
+    assert spies.only("LLMSummaryGenerator").kwargs["model_factory"] is registry
+    index_kwargs = spies.only("DocumentIndexingService").kwargs
+    assert index_kwargs["tree_repository"] is tree_repo
+    assert index_kwargs["summary_generator"] is spies.only("LLMSummaryGenerator").result
+    # F2-11: o embedder sai do registry com a dimensão real (sonda), o mesmo para os dois RAGs
+    embedders = index_kwargs["embedder_factory"]
+    assert isinstance(embedders, DimensionResolvingEmbedderFactory)
+    assert embedders.inner is registry  # delega ao registry, que monta o embedder
+    assert spies.only("KnowledgeSearchFactory").kwargs["tree_repository"] is tree_repo
+    return embedders
+
+
+def _assert_agent_wiring(spies: Spies, config: AppConfig, registry: object, embedders: object) -> None:
+    """Fábricas de agente/team e runtime recebem o db de sessões, os serviços e as fábricas certas."""
+    session_db = spies.only("create_session_db").result
+    assert spies.only("create_session_db").args == (config.mongo_connection_string, config.mongo_database_name)
+    agent_kwargs = spies.only("AgentFactoryService").kwargs
+    assert agent_kwargs["session_db"] is session_db
+    assert agent_kwargs["indexing_service"] is spies.only("DocumentIndexingService").result
+    assert agent_kwargs["search_factory"] is spies.only("KnowledgeSearchFactory").result
+    assert agent_kwargs["tool_repository"] is spies.only("MongoToolRepository").result
+    assert agent_kwargs["tool_factory"] is spies.only("HttpToolFactory").result
+    assert agent_kwargs["model_factory"] is registry and agent_kwargs["embedder_factory"] is embedders
+    assert (agent_kwargs["db_url"], agent_kwargs["db_name"]) == (
+        config.mongo_connection_string,
+        config.mongo_database_name,
+    )
+    assert spies.only("TeamFactoryService").kwargs["session_db"] is session_db
+    assert spies.only("AgnoRuntime").kwargs == {
+        "agent_factory": spies.only("AgentFactoryService").result,
+        "team_factory": spies.only("TeamFactoryService").result,
+        "session_db": session_db,
+    }
+
+
 async def test_etapas_rodam_na_ordem_da_base_e_cada_uma_recebe_o_que_a_anterior_devolveu(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -103,51 +144,11 @@ async def test_etapas_rodam_na_ordem_da_base_e_cada_uma_recebe_o_que_a_anterior_
         container = await di.DependencyContainer.create_async(config)
         try:
             assert spies.names() == STAGES
-
-            tree_repo = spies.only("MongoDocumentTreeRepository").result
-            summary = spies.only("LLMSummaryGenerator").result
-            indexing = spies.only("DocumentIndexingService").result
-            search = spies.only("KnowledgeSearchFactory").result
-            tool_repo = spies.only("MongoToolRepository").result
-            session_db = spies.only("create_session_db").result
-            agent_factory = spies.only("AgentFactoryService").result
-            team_factory = spies.only("TeamFactoryService").result
-            runtime = spies.only("AgnoRuntime").result
             registry = spies.only("TeamFactoryService").kwargs["model_factory"]
+            embedders = _assert_rag_wiring(spies, config, registry)
+            _assert_agent_wiring(spies, config, registry, embedders)
 
-            tree_kwargs = spies.only("MongoDocumentTreeRepository").kwargs
-            assert tree_kwargs["connection_string"] == config.mongo_connection_string
-            assert tree_kwargs["database_name"] == config.mongo_database_name
-            assert spies.only("LLMSummaryGenerator").kwargs["model_factory"] is registry
-            index_kwargs = spies.only("DocumentIndexingService").kwargs
-            assert index_kwargs["tree_repository"] is tree_repo
-            assert index_kwargs["summary_generator"] is summary
-            # F2-11: o embedder sai do registry com a dimensão real (sonda), o mesmo para os dois RAGs
-            embedders = index_kwargs["embedder_factory"]
-            assert isinstance(embedders, DimensionResolvingEmbedderFactory)
-            assert embedders.inner is registry  # delega ao registry, que monta o embedder
-            assert spies.only("KnowledgeSearchFactory").kwargs["tree_repository"] is tree_repo
-
-            assert spies.only("create_session_db").args == (config.mongo_connection_string, config.mongo_database_name)
-            agent_kwargs = spies.only("AgentFactoryService").kwargs
-            assert agent_kwargs["session_db"] is session_db
-            assert agent_kwargs["indexing_service"] is indexing
-            assert agent_kwargs["search_factory"] is search
-            assert agent_kwargs["tool_repository"] is tool_repo
-            assert agent_kwargs["tool_factory"] is spies.only("HttpToolFactory").result
-            assert agent_kwargs["model_factory"] is registry and agent_kwargs["embedder_factory"] is embedders
-            assert (agent_kwargs["db_url"], agent_kwargs["db_name"]) == (
-                config.mongo_connection_string,
-                config.mongo_database_name,
-            )
-            assert spies.only("TeamFactoryService").kwargs["session_db"] is session_db
-            runtime_kwargs = spies.only("AgnoRuntime").kwargs
-            assert runtime_kwargs == {
-                "agent_factory": agent_factory,
-                "team_factory": team_factory,
-                "session_db": session_db,
-            }
-
+            runtime = spies.only("AgnoRuntime").result
             agents_repo = spies.only("MongoAgentConfigRepository").result
             teams_repo = spies.only("MongoTeamConfigRepository").result
             assert spies.only("GetActiveAgentsUseCase").args[:2] == (runtime, agents_repo)
