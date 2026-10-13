@@ -1,0 +1,40 @@
+# Dependências de desenvolvimento (testes e ferramentas de qualidade).
+# Lock gerado (sempre DEPOIS de requirements.lock) com:
+#   .venv/bin/pip-compile --upgrade --generate-hashes --allow-unsafe --strip-extras \
+#       --output-file=requirements-dev.lock requirements-dev.in
+# (ou --upgrade-package X para subir um pacote só). Sem --upgrade, o pip-compile
+# preserva os pinos atuais e nunca corrige vulnerabilidades sozinho.
+# Instale SEMPRE junto com o lock de runtime:
+#   pip install --require-hashes -r requirements.lock -r requirements-dev.lock
+
+# Garante que pacotes compartilhados com o runtime fiquem na mesma versão do lock de runtime.
+-c requirements.lock
+
+# === Testes ===
+pytest>=8.4.0
+pytest-asyncio>=0.25.0
+pytest-cov>=6.0.0
+respx>=0.22.0
+# Ordem aleatória a cada execução (seed no cabeçalho; reproduza com -p randomly --randomly-seed=N,
+# desligue com -p no:randomly). MIT, pytest-dev, sem dependências além do pytest.
+pytest-randomly>=4.0.0
+# Execução paralela (`-n auto`, CI e local). MIT, pytest-dev; única dependência nova: execnet
+# (MIT, pytest-dev). Compatível com pytest-randomly (mesma seed em todos os workers) e com
+# pytest-cov (combina a cobertura dos workers). Alternativa descartada: pytest-parallel
+# (sem manutenção, sem suporte a cobertura).
+pytest-xdist>=3.8.0
+
+# === Qualidade / arquitetura ===
+ruff>=0.15.0
+mypy>=1.15.0
+import-linter>=2.3
+bandit>=1.8.0
+pip-audit>=2.9.0
+diff-cover>=9.0.0
+
+# === Lock ===
+pip-tools>=7.4.0
+
+# diff-cover puxa chardet; requests (runtime) só suporta chardet < 6 e emite
+# RequestsDependencyWarning com versões maiores.
+chardet<6

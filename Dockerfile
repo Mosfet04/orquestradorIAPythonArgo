@@ -1,43 +1,41 @@
-# Use Python 3.11 slim image for better performance and modern features
-FROM python:3.11-slim
+# Python 3.12: mesma versão em que os locks são gerados e testada na CI (3.11 e 3.12).
+# Tag com patch fixo; atualizar junto com a matriz da CI.
+FROM python:3.12.15-slim-trixie
 
-# Set working directory
 WORKDIR /app
 
-# Set environment variables
+# APP_HOST=0.0.0.0 só dentro do container (fora dele o default do AppConfig é 127.0.0.1).
+# ENVIRONMENT=production: docs desligados e log JSON por padrão na imagem; o
+# docker-compose.dev.yml troca para development.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app
+    PYTHONPATH=/app \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    APP_HOST=0.0.0.0 \
+    APP_PORT=7777 \
+    ENVIRONMENT=production
 
-# Install system dependencies
-# hadolint ignore=DL3008
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    && rm -rf /var/lib/apt/lists/*
+# Dependências só pelo lock de runtime, com hash. Todo pacote do lock tem wheel para
+# Linux x86_64/aarch64 (cp312), então a imagem não precisa de compilador.
+COPY requirements.lock .
+RUN pip install --no-cache-dir --require-hashes --only-binary=:all: -r requirements.lock
 
-# Copy requirements first (for better caching)
-COPY requirements.txt .
-
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy application code
+# Usuário sem privilégios. O código fica com dono root (somente leitura para o app).
+# setup_structlog só faz mkdir de logs/ no cwd (nada grava lá hoje): o diretório já
+# existe na imagem, então o container funciona com read_only (docker-compose.yml).
+# UID/GID numéricos fixos: orquestradores com runAsNonRoot só verificam o número.
+RUN groupadd --system --gid 10001 appuser \
+    && useradd --system --uid 10001 --gid 10001 --create-home --shell /usr/sbin/nologin appuser
 COPY . .
+RUN mkdir -p logs && chown 10001:10001 logs
+USER 10001:10001
 
-# Create logs directory
-RUN mkdir -p logs
-
-# Create non-root user
-RUN adduser --disabled-password --gecos '' appuser && \
-    chown -R appuser:appuser /app
-USER appuser
-
-# Expose port
 EXPOSE 7777
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:7777/health || exit 1
+# Sem curl na imagem: health via stdlib. /livez é público e não depende do MongoDB
+# (o /admin/health responde 503 com dependência fora e exige a chave admin).
+# Bind em 0.0.0.0: o app só inicia com API_KEY_RUN e API_KEY_ADMIN definidas.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+    CMD python -c "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.environ.get('APP_PORT', '7777') + '/livez', timeout=5)"
 
-# Run the application
 CMD ["python", "app.py"]

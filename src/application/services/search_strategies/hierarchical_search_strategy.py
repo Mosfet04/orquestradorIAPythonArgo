@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
 from typing import Any, List, Optional
 
@@ -11,7 +12,12 @@ from src.domain.ports.document_tree_repository_port import IDocumentTreeReposito
 from src.domain.ports.knowledge_search_port import IKnowledgeSearchStrategy
 from src.domain.ports.logger_port import ILogger
 
-_HIGH_CONFIDENCE_THRESHOLD = 0.85
+# Similaridade cosseno mínima de um resultado (F1-07, B9). Piso conservador: descarta o
+# claramente não relacionado (e score 0.0: nó sem embedding ou de dimensão diferente) sem
+# cortar trecho relevante de embedders cuja escala é baixa (ex.: OpenAI text-embedding-3,
+# relevante costuma ficar em 0.3-0.6). O 0.85 anterior nunca filtrava nada; como filtro,
+# esvaziaria a busca com os embedders usados aqui. Calibrar por embedder com eval.
+_MIN_CONFIDENCE = 0.3
 _BEAM_WIDTH = 2  # nós explorados por nível
 
 
@@ -25,7 +31,8 @@ class HierarchicalSearchStrategy(IKnowledgeSearchStrategy):
     4. Seleciona os ``beam_width`` melhores nós.
     5. Desce recursivamente para os filhos do(s) melhor(es) nó(s).
     6. Repete até chegar a nós folha.
-    7. Retorna chunks finais como ``List[SearchResult]``.
+    7. Descarta resultados com score abaixo de ``confidence_threshold``.
+    8. Retorna os chunks finais como ``List[SearchResult]``.
     """
 
     def __init__(
@@ -36,7 +43,7 @@ class HierarchicalSearchStrategy(IKnowledgeSearchStrategy):
         doc_name: str,
         logger: ILogger,
         beam_width: int = _BEAM_WIDTH,
-        confidence_threshold: float = _HIGH_CONFIDENCE_THRESHOLD,
+        confidence_threshold: float = _MIN_CONFIDENCE,
     ) -> None:
         self._tree_repo = tree_repository
         self._embedder = embedder
@@ -49,7 +56,7 @@ class HierarchicalSearchStrategy(IKnowledgeSearchStrategy):
 
     async def search(self, query: str, *, top_k: int = 5) -> List[SearchResult]:
         """Executa busca top-down na árvore hierárquica."""
-        query_embedding = self._compute_embedding(query)
+        query_embedding = await self._compute_embedding(query)
         if query_embedding is None:
             self._logger.warning("Falha ao computar embedding da query")
             return []
@@ -62,8 +69,19 @@ class HierarchicalSearchStrategy(IKnowledgeSearchStrategy):
             return []
 
         leaf_results = await self._traverse(root_nodes, query_embedding)
-        leaf_results.sort(key=lambda r: r.score, reverse=True)
-        return leaf_results[:top_k]
+        confident = [r for r in leaf_results if r.score >= self._confidence_threshold]
+        discarded = len(leaf_results) - len(confident)
+        if discarded:
+            # Sem conteúdo no log: só o necessário para calibrar o limiar.
+            self._logger.debug(
+                "Resultados abaixo do limiar descartados",
+                doc_name=self._doc_name,
+                discarded=discarded,
+                best_score=round(max(r.score for r in leaf_results), 4),
+                threshold=self._confidence_threshold,
+            )
+        confident.sort(key=lambda r: r.score, reverse=True)
+        return confident[:top_k]
 
     # ── travessia ───────────────────────────────────────────────────
 
@@ -92,24 +110,13 @@ class HierarchicalSearchStrategy(IKnowledgeSearchStrategy):
                     )
                 )
             else:
-                if score >= self._confidence_threshold:
-                    children = await self._tree_repo.get_children(node.id)
-                    if children:
-                        child_results = await self._traverse(
-                            children, query_embedding
-                        )
-                        results.extend(child_results)
-                    else:
-                        results.append(self._node_to_result(node, score))
+                # O limiar vale para o resultado final (``search``), não para a descida:
+                # sumário com score baixo pode ter filho relevante.
+                children = await self._tree_repo.get_children(node.id)
+                if children:
+                    results.extend(await self._traverse(children, query_embedding))
                 else:
-                    children = await self._tree_repo.get_children(node.id)
-                    if children:
-                        child_results = await self._traverse(
-                            children, query_embedding
-                        )
-                        results.extend(child_results)
-                    else:
-                        results.append(self._node_to_result(node, score))
+                    results.append(self._node_to_result(node, score))
         return results
 
     # ── scoring ─────────────────────────────────────────────────────
@@ -144,13 +151,13 @@ class HierarchicalSearchStrategy(IKnowledgeSearchStrategy):
 
     # ── helpers ─────────────────────────────────────────────────────
 
-    def _compute_embedding(self, text: str) -> Optional[List[float]]:
-        """Computa embedding via embedder injetado."""
+    async def _compute_embedding(self, text: str) -> Optional[List[float]]:
+        """Computa embedding via embedder injetado (síncrono, com rede: fora do loop)."""
         try:
-            result = self._embedder.get_embedding(text)
+            result = await asyncio.to_thread(self._embedder.get_embedding, text)
             return result if isinstance(result, list) else None
         except Exception as exc:
-            self._logger.warning("Erro ao computar embedding", error=str(exc))
+            self._logger.warning("Erro ao computar embedding", error_type=type(exc).__name__)
             return None
 
     @staticmethod

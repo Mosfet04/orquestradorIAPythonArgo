@@ -13,7 +13,6 @@ from src.presentation.controllers.orquestrador_controller import (
     TeamCacheEntry,
 )
 
-
 # ── TeamCacheEntry ───────────────────────────────────────────────────
 
 

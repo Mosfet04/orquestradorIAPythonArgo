@@ -53,9 +53,6 @@ htmlcov/
 .tox/
 .nox/
 
-# Docker
-.dockerignore
-
 # MongoDB
 *.bson
 
@@ -87,3 +84,5 @@ build/
 codacy.yaml
 
 .codacy/cli.sh
+# Estado local do /dev-cycle
+.claude/dev-cycle/

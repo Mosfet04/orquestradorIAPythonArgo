@@ -1,5 +1,8 @@
+"""Porta do repositório de configurações de agentes."""
+
 from abc import ABC, abstractmethod
 from typing import List
+
 from src.domain.entities.agent_config import AgentConfig
 
 

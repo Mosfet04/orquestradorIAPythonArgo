@@ -1,5 +1,4 @@
-"""
-Métricas de negócio e sistema do Orquestrador IA.
+"""Métricas de negócio e sistema do Orquestrador IA.
 
 Instrumentos registrados via OpenTelemetry Meter e exportados
 automaticamente via OTLP push para Grafana Mimir.
@@ -29,6 +28,8 @@ agent_response_duration = _meter.create_histogram(
     unit="s",
 )
 
+# Fonte única: MetricsMiddleware (run de agente que falhou: exceção, status >= 400,
+# evento SSE ``RunError`` ou JSON com ``status == "ERROR"``).
 agent_errors_total = _meter.create_counter(
     name="agent_errors_total",
     description="Total de erros em requisições de agentes",
@@ -44,6 +45,13 @@ agents_active = _meter.create_up_down_counter(
 team_requests_total = _meter.create_counter(
     name="team_requests_total",
     description="Total de requisições processadas por teams",
+    unit="1",
+)
+
+# Fonte única: MetricsMiddleware (mesmos critérios de agent_errors_total, evento ``TeamRunError``).
+team_errors_total = _meter.create_counter(
+    name="team_errors_total",
+    description="Total de erros em requisições de teams",
     unit="1",
 )
 
@@ -135,6 +143,11 @@ class TelemetryMetrics:
     def record_team_request(team_id: str, status: str = "success") -> None:
         """Registra uma requisição a um team."""
         team_requests_total.add(1, {"team_id": team_id, "status": status})
+
+    @staticmethod
+    def record_team_error(team_id: str) -> None:
+        """Registra um erro em requisição de team."""
+        team_errors_total.add(1, {"team_id": team_id})
 
     @staticmethod
     def record_agents_loaded(count: int) -> None:

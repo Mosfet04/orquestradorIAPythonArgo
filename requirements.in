@@ -1,0 +1,86 @@
+# Dependências diretas de runtime (fonte de verdade).
+# O lock reprodutível com hashes é gerado a partir deste arquivo. Nunca edite
+# requirements.lock à mão. Atualizar (tudo, ou um pacote com --upgrade-package X):
+#   .venv/bin/pip-compile --upgrade --generate-hashes --allow-unsafe --strip-extras \
+#       --output-file=requirements.lock requirements.in
+#   .venv/bin/pip-audit -r requirements.lock --require-hashes --disable-pip
+# Depois regenere requirements-dev.lock (ele usa -c requirements.lock).
+# Detalhes: "Dependencies and lock files" no CONTRIBUTING.md.
+
+# Tetos de major (<N) abaixo: SDKs consumidos pelo agno ficam na major com que o
+# agno 2.5.8 foi validado; subir major é trabalho da migração do agno (F3), não de
+# um --upgrade. Nenhum desses tetos segura correção de CVE (ver pip-audit).
+
+# === Core AI Framework ===
+# Versão exata: toda a evidência do roadmap (docs/roadmap/) é da 2.5.8.
+agno==2.5.8
+
+# === Web Framework ===
+# Teto <0.137: a partir da 0.137 o include_router embrulha as rotas em _IncludedRouter
+# (sem .path) e o agno 2.5.8 assume lista plana de APIRoute: AgentOS.resync() quebra
+# com AttributeError (agno/os/app.py:425-429) e a detecção de conflito de rotas
+# (agno/os/utils.py:707-748, usada por on_route_conflict) deixa de ver rotas incluídas.
+fastapi>=0.115.0,<0.137
+uvicorn>=0.34.0
+python-dotenv>=1.0.0
+# Starlette é importada diretamente (src/infrastructure/web/).
+starlette>=1.3.1  # piso = primeira versão sem os CVEs PYSEC-2026-248/249/2280/2281
+# uvloop não existe para Windows; o app.py o importa com guarda e só o usa fora dele.
+uvloop>=0.21.0; sys_platform != "win32"
+
+# === Database ===
+motor>=3.7.0
+pymongo>=4.13.0
+
+# === AI Model Providers ===
+ollama>=0.5.0
+openai>=1.60.0,<3  # 3.x troca httpx por httpx2; agno 2.5.8 não foi validado com ela
+google-genai>=1.0.0,<2  # major nova não validada com agno 2.5.8
+
+# === Knowledge / RAG ===
+# chromadb saiu no F1-02: nenhum código de src/ o usa e ele trazia CVEs sem correção.
+# Volta com o vector store plugável (F7).
+pypdf>=5.0.0
+
+# === HTTP Client ===
+httpx>=0.28.0
+
+# === Logging & Monitoring ===
+structlog>=24.0.0
+rich>=13.9.0
+psutil>=5.9.0
+
+# === Tracing / OpenTelemetry ===
+opentelemetry-api>=1.30.0
+opentelemetry-sdk>=1.30.0
+opentelemetry-exporter-otlp>=1.30.0
+opentelemetry-instrumentation-fastapi>=0.51b0
+opentelemetry-instrumentation-httpx>=0.51b0
+opentelemetry-instrumentation-logging>=0.51b0
+openinference-instrumentation-agno>=0.1.28,<0.2  # 1.x não validada com agno 2.5.8
+
+# === Utilities ===
+packaging>=24.0
+importlib-metadata>=8.0.0
+# Importado diretamente: CONFIG_STORE=yaml (F2-06) lê a config com yaml.safe_load. Já vinha no lock
+# como dependência do agno; declarado para não depender disso. MIT, mantido pela org yaml (PyPI);
+# alternativas descartadas: ruamel.yaml (dependência nova) e JSON (sem comentário no arquivo do operador).
+pyyaml>=6.0.1
+
+# === AG-UI Protocol (interface AGUI para os.agno.com) ===
+ag-ui-protocol>=0.1.13,<0.2  # 1.0 é major nova; agno.os.interfaces.agui 2.5.8 usa a 0.1.x
+
+# === Portabilidade do lock (Windows) ===
+# click, tqdm e uvicorn[standard] exigem colorama SÓ no Windows. O pip-compile roda
+# no Linux e descarta requisitos com marker falso, então o lock ficaria sem colorama
+# e `pip install --require-hashes` falharia no Windows. Sem marker de propósito;
+# no Linux o pacote é inerte (structlog/click/tqdm só o usam quando os.name == "nt").
+colorama>=0.4.6
+
+# === Extras opcionais (NÃO instalados por padrão, fora do lock) ===
+# Só são necessários para os providers/recursos correspondentes:
+#   PyJWT      -> autenticação JWT do AgentOS (agno[os])
+#   mcp        -> tools MCP (agno[mcp])
+#   anthropic  -> provider "anthropic" (agno[anthropic])
+#   groq       -> provider "groq" (agno[groq])
+# Para adotar um deles: acrescente aqui com versão mínima e regenere o lock.

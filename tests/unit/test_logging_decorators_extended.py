@@ -10,7 +10,6 @@ from src.infrastructure.logging.decorators import (
     log_http_request,
 )
 
-
 # ── log_ai_interaction ──────────────────────────────────────────────
 
 
@@ -127,7 +126,7 @@ class TestLogExecutionExtras:
         def fn(config):
             return config
 
-        result = fn({"api_key": "FAKE_KEY_FOR_TESTING", "name": "test"})  # noqa: S106
+        result = fn({"api_key": "FAKE_KEY_FOR_TESTING", "name": "test"})
         assert result == {"api_key": "FAKE_KEY_FOR_TESTING", "name": "test"}
 
     def test_with_self_like_object(self):

@@ -112,8 +112,9 @@ Certifique-se de que o MongoDB está rodando:
 # Windows (se instalado como serviço)
 net start MongoDB
 
-# Ou usando Docker
-docker run -d -p 27017:27017 --name mongodb mongo:latest
+# Ou usando Docker: MongoDB Atlas Local do compose de dev (com vector search, auth e porta só em 127.0.0.1;
+# ver "Rodar localmente" no README.pt-br.md)
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d mongodb
 ```
 
 ### 3. **Ambiente Python**

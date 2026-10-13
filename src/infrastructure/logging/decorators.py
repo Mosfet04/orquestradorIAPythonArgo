@@ -1,10 +1,9 @@
-"""
-Decoradores para logging automático de métodos e funções.
-"""
+"""Decoradores para logging automático de métodos e funções."""
 
-import time
 import functools
+import time
 from typing import Any, Callable, Dict
+
 from .structlog_logger import LoggerFactory
 
 _SENSITIVE_KEYS = {"password", "passwd", "secret", "token", "api_key", "apikey", "authorization", "auth"}
@@ -51,8 +50,7 @@ def log_execution(logger_name: str = "execution",
                  include_args: bool = False,
                  include_result: bool = False,
                  mask_sensitive: bool = True):
-    """
-    Decorador para logging automático de execução de métodos.
+    """Decorador para logging automático de execução de métodos.
 
     Args:
         logger_name: Nome do logger a ser usado
@@ -105,8 +103,8 @@ def log_execution(logger_name: str = "execution",
 
 def log_performance(threshold_seconds: float = 1.0,
                    logger_name: str = "performance"):
-    """
-    Decorador para logging de performance.
+    """Decorador para logging de performance.
+
     Só registra se a execução demorar mais que o threshold.
 
     Args:
@@ -140,8 +138,7 @@ def log_performance(threshold_seconds: float = 1.0,
 
 
 def log_ai_interaction(logger_name: str = "ai_interactions"):
-    """
-    Decorador específico para interações com IA.
+    """Decorador específico para interações com IA.
 
     Args:
         logger_name: Nome do logger
@@ -233,8 +230,7 @@ def _extract_request_context(args) -> Dict[str, Any]:
 
 
 def log_http_request(logger_name: str = "http_requests"):
-    """
-    Decorador específico para requisições HTTP.
+    """Decorador específico para requisições HTTP.
 
     Args:
         logger_name: Nome do logger

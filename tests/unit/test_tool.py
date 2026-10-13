@@ -1,5 +1,6 @@
 import pytest
-from src.domain.entities.tool import Tool, ToolParameter, HttpMethod, ParameterType
+
+from src.domain.entities.tool import HttpMethod, ParameterType, Tool, ToolParameter
 
 
 class TestTool:

@@ -3,14 +3,13 @@ import sys
 import types
 from types import SimpleNamespace
 
-
 from src.infrastructure.logging.structlog_logger import (
     DataSanitizer,
+    LoggerFactory,
     add_correlation_id,
     add_otel_trace_context,
     sanitize_log_data,
     setup_structlog,
-    LoggerFactory,
 )
 
 
@@ -102,3 +101,11 @@ def test_structlog_logger_basic_flow(monkeypatch):
     # Sanitização simples
     out = DataSanitizer.sanitize_data({"password": "abc12345"})
     assert '***' in out['password']
+
+
+def test_alias_secure_logger_removido():
+    """Uma única API de logging: o alias de compatibilidade do SecureLogger morto saiu (F1-03)."""
+    import src.infrastructure.logging as logging_pkg
+
+    assert not hasattr(logging_pkg, "SecureLogger")
+    assert "SecureLogger" not in logging_pkg.__all__

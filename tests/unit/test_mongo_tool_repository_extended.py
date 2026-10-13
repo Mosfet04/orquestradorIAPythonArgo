@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.domain.entities.tool import HttpMethod, ParameterType
+from src.infrastructure.repositories.config_documents import map_tool_document
 from src.infrastructure.repositories.mongo_tool_repository import MongoToolRepository
 
 
@@ -16,6 +17,9 @@ class _AsyncCursorMock:
     def __init__(self, docs):
         self._docs = docs
         self._index = 0
+
+    def sort(self, *_args):
+        return self
 
     def __aiter__(self):
         return self
@@ -87,6 +91,28 @@ class TestGetToolsByIds:
         tools = await repository.get_tools_by_ids(["missing"])
         assert tools == []
 
+    @pytest.mark.parametrize(
+        "invalid",
+        [
+            _make_tool_doc(id="ruim", route=""),
+            _make_tool_doc(id="ruim", parameters=[{"name": "q", "type": "texto", "description": "x"}]),
+            _make_tool_doc(id="ruim", parameters=[{"name": "q", "type": "string"}]),
+            _make_tool_doc(id="ruim", http_method="TRACE"),
+        ],
+    )
+    async def test_invalid_document_is_skipped_with_error_log(self, repo, mock_logger, invalid):
+        """F1-05: um documento inválido some com log de erro (id), sem derrubar os outros."""
+        repository, mock_collection = repo
+        mock_collection.find.return_value = _AsyncCursorMock([invalid, _make_tool_doc(id="t2")])
+
+        tools = await repository.get_tools_by_ids(["ruim", "t2"])
+
+        assert [t.id for t in tools] == ["t2"]
+        (call,) = mock_logger.error.call_args_list
+        assert call.args == ("Documento de tool inválido ignorado",)
+        assert call.kwargs["tool_id"] == "ruim"
+        assert call.kwargs["error_type"] in ("ValueError", "KeyError")
+
 
 class TestGetToolById:
     async def test_found(self, repo):
@@ -128,12 +154,12 @@ class TestMapToEntity:
                 }
             ]
         )
-        tool = MongoToolRepository._map_to_entity(doc)
+        tool = map_tool_document(doc)
         assert len(tool.parameters) == 1
         assert tool.parameters[0].name == "q"
         assert tool.parameters[0].type == ParameterType.STRING
 
     def test_http_method_post(self):
         doc = _make_tool_doc(http_method="POST")
-        tool = MongoToolRepository._map_to_entity(doc)
+        tool = map_tool_document(doc)
         assert tool.http_method == HttpMethod.POST

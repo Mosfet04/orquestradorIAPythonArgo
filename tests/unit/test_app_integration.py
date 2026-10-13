@@ -38,7 +38,7 @@ class TestAppFactory:
         app = factory.create_app()
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(transport=transport, base_url="http://127.0.0.1:7777") as client:
             resp = await client.get("/admin/health")
             assert resp.status_code == 200
             assert resp.json()["status"] == "healthy"
@@ -49,7 +49,7 @@ class TestAppFactory:
         app = factory.create_app()
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(transport=transport, base_url="http://127.0.0.1:7777") as client:
             resp = await client.get("/metrics/cache")
             assert resp.status_code == 200
 
@@ -59,7 +59,7 @@ class TestAppFactory:
         app = factory.create_app()
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(transport=transport, base_url="http://127.0.0.1:7777") as client:
             resp = await client.post("/admin/refresh-cache")
             assert resp.status_code == 200
             assert resp.json()["status"] == "cache_refreshed"

@@ -81,12 +81,13 @@ function Initialize-VirtualEnvironment {
 function Install-Dependencies {
     Write-Step "Installing Python dependencies..."
     
-    if (Test-Path "requirements.txt") {
-        pip install -r requirements.txt
+    # Lock com hashes: runtime + desenvolvimento (pytest e ferramentas de qualidade)
+    if ((Test-Path "requirements.lock") -and (Test-Path "requirements-dev.lock")) {
+        pip install --require-hashes -r requirements.lock -r requirements-dev.lock
         Write-Success "Dependencies installed"
     }
     else {
-        Write-Error "requirements.txt not found"
+        Write-Error "requirements.lock / requirements-dev.lock not found"
         exit 1
     }
 }
@@ -118,7 +119,8 @@ function Initialize-Database {
         if (!$mongoProcess) {
             Write-Error "MongoDB is not running. Please start MongoDB:"
             Write-Information "  - Using Windows Service: net start MongoDB"
-            Write-Information "  - Using Docker: docker run -d -p 27017:27017 mongo:7-jammy"
+            Write-Information "  - Using Docker: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d mongodb"
+            Write-Information "    (MongoDB Atlas Local; see `"Run locally`" in README.en.md)"
             Write-Information "  - Manual start: mongod --dbpath=C:\data\db"
             exit 1
         }
