@@ -7,7 +7,8 @@ Ordem de execução = numeração. Cada item passa por `/dev-cycle <item> --comm
 | F0 Fundação | `pyproject.toml`, lock com hashes, ferramentas, CI mínimo, fakes e golden tests | — | [F0-fundacao.md](F0-fundacao.md) |
 | F1 Estabilização + higiene | Corrige o que o README promete e não funciona; fecha a borda (auth, CORS, telemetria, container) sem mudar a arquitetura | F0 | [F1-estabilizacao.md](F1-estabilizacao.md) |
 | F2 Núcleo plugável | Registry de providers (+ OpenAI-compatível), entidades neutras, Agno confinado no `AgnoRuntime`, config store Mongo + YAML | F1 | [F2-nucleo-plugavel.md](F2-nucleo-plugavel.md) |
-| F3 Migração Agno 3.x | Bump só no adapter, migração do esquema, runbook | F2 | [F3-F9.md](F3-F9.md) |
+| FA API Admin de config | CRUD `/admin/config/*` validado pelas entidades, `/admin/schema`, troca a quente do runtime, auditoria, SSRF e headers por referência na escrita (pedido pelo playground) | F2 | [FA-admin-config.md](FA-admin-config.md) |
+| F3 Migração Agno 3.x | Bump só no adapter, migração do esquema, runbook | F2, FA | [F3-F9.md](F3-F9.md) |
 | F4 Tools + MCP cliente | Tools HTTP endurecidas (SSRF), MCP cliente HTTP, auditoria | F3 | [F3-F9.md](F3-F9.md) |
 | F5 Segurança e governança | Auth com escopos/JWT, identidade do principal, rate limit, guardrails, segredos por referência, supply chain | F3, F4 | [F3-F9.md](F3-F9.md) |
 | F6 Protocolos | AG-UI 1.0, AgentProtocol, servidor MCP | F3, F5 | [F3-F9.md](F3-F9.md) |
@@ -43,6 +44,13 @@ Ordem de execução = numeração. Cada item passa por `/dev-cycle <item> --comm
 | F2-09 | concluído |
 | F2-10 | concluído |
 | F2-11 | concluído |
+| FA-01 | pendente |
+| FA-02 | pendente |
+| FA-03 | pendente |
+| FA-04 | pendente |
+| FA-05 | pendente |
+| FA-06 | pendente |
+| FA-07 | pendente |
 
 ## Molde de item (lido pelo `/dev-cycle`)
 
