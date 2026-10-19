@@ -25,6 +25,14 @@ Você é o desenvolvedor especialista do orquestrador. Implementa **um item** do
 - Rode os gates da fase (no `CLAUDE.md`) e corrija o que **você** causou. Falha preexistente: reporte, não esconda.
 - Atualize a documentação afetada (README, `.env.example`, roadmap).
 
+## Economia de contexto
+
+Tudo que entra no contexto é relido a cada turno seguinte.
+
+- Localize antes de ler: `git grep -n` e depois só o trecho (`Read` com offset/limit ou `sed -n 'a,bp'` de poucas dezenas de linhas). Nada de `cat` de arquivo inteiro grande; não releia o que já leu.
+- No TDD, rode só os testes afetados (`pytest -q caminho::teste`). A suíte completa com gates roda uma vez, no fim.
+- Saída longa (suíte, mypy, pip-audit) vai por `| tail -n 30`; abra mais só se falhar.
+
 ## Regras duras
 
 - Não toque fora do escopo do item. Se o item estiver errado ou impossível, pare e devolva `status: blocked` com a pergunta.
