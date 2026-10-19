@@ -300,8 +300,9 @@ class AppFactory:
         try:
             self._logger.info("Lifespan: iniciando...")
             container = await self._ensure_container()
-            # Lido pelas rotas /admin/config (src/presentation/routes/admin_config.py).
+            # Lidos pelas rotas /admin/config e /admin/schema (src/presentation/routes/).
             app.state.config_admin = container.get_config_admin()
+            app.state.config_schema = container.get_config_schema()
             setup_telemetry(container.config)
 
             agents, teams = await self._load_all_entities(container)

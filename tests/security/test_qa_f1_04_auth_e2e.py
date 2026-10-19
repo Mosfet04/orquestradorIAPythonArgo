@@ -758,6 +758,9 @@ def _lifespan_client(monkeypatch: pytest.MonkeyPatch, env: dict[str, str]) -> tu
         def get_config_admin(self) -> None:
             return None
 
+        def get_config_schema(self) -> None:
+            return None
+
         async def cleanup(self) -> None:
             return None
 

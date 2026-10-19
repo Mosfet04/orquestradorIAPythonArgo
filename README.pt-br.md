@@ -737,6 +737,7 @@ Exceto `/livez` (público), exigem a chave admin.
 | `POST` | `/admin/config/{tipo}` | Cria (201, versão 1). Validação pelas entidades, mais estrita que a leitura: tipo errado, provider (`factory_ia_model`) ausente, item não texto em `tools_ids`/`member_ids`, `http_method` ou tipo de parâmetro desconhecido são recusados em vez de corrigidos; chave que o documento não tem (erro de digitação como `promt`, ou o camelCase `apiKeyRef`/`baseUrl`/`modelParams`, na raiz ou em `rag_config`) também, com a chave em `field` (ou `unknown_key`, se ela não for um identificador de até 64 caracteres). 422 com `field` (e `indexes`, posições no corpo), sem eco do valor; `tools_ids` e `member_ids` precisam existir (422); id existente ou store YAML: 409; corpo acima de 1 MiB: 413 |
 | `PUT` | `/admin/config/{tipo}/{id}` | Substitui o documento do id na versão do `If-Match` (com id repetido, é ela que escolhe o documento): ausente 428, nenhum documento nessa versão 412. O `version` do documento lido pode voltar no corpo (é ignorado: vale o `If-Match`). Header de tool com `***` mantém o valor gravado, desde que a `route` siga no mesmo esquema, host e porta (senão 422 `headers`) |
 | `DELETE` | `/admin/config/{tipo}/{id}` | Desativa (`active: false`); `?hard=true` remove. Exige `If-Match`. Tool ou agente em uso: 409 com `used_by` |
+| `GET` | `/admin/schema` | O que a UI pode oferecer, a partir do código em vigor: `providers.chat`/`providers.embedder` (ids e aliases do registry, plugins da `PLUGIN_ALLOWLIST` inclusive, cada um com os `model_params` aceitos e `requires_base_url`), `team.mode`, `tool.http_method`, `tool.parameter_type`, `rag_config.search_strategy`, `api_key_ref.formats` (`env:<PROVEDOR>_API_KEY`, `file:<caminho em SECRETS_DIR>`) e `config_store.writable` (`false` com o store YAML). Nenhum valor de ambiente nem segredo |
 
 As rotas `/admin/config` gravam no store (Mongo; o YAML responde 409 na escrita) mas **ainda não** mudam o que o AgentOS e o AG-UI servem: a mudança vale no próximo restart (troca a quente é o FA-04). Chave começando com `$` em qualquer nível do corpo, aninhamento acima de 32 níveis, número não finito (`NaN`, `Infinity`, `1e999`) ou texto com surrogate solitário (`"\ud800"`) é recusado (422). As escritas são serializadas no processo; entre réplicas, vale só o `If-Match`. Cada recusa vira um aviso no log com o tipo de config e o tipo da recusa, sem id nem valor.
 
@@ -1183,7 +1184,7 @@ tests/
 
 ### Como a Aplicação Funciona (Resumo)
 
-1. **`app.py`** carrega `.env` e chama `create_app(routers=[...])` (síncrono), passando as rotas de `src/presentation` (ex.: `/admin/config`)
+1. **`app.py`** carrega `.env` e chama `create_app(routers=[...])` (síncrono), passando as rotas de `src/presentation` (ex.: `/admin/config`, `/admin/schema`)
 2. **`AppFactory.create_app()`** cria o FastAPI com CORS, endpoints admin e esses routers, sob a mesma auth
 3. No **lifespan** (async), o `DependencyContainer` é criado — ele conecta ao MongoDB e faz o wiring de todas as dependências
 4. O `OrquestradorController.warm_up_cache()` executa o `GetActiveAgentsUseCase`, que:

@@ -676,7 +676,11 @@ def test_lifespan_real_monta_o_agui_por_entidade_e_desmonta_sem_resto(monkeypatc
             cleaned.append(True)
 
         factory._container = SimpleNamespace(  # type: ignore[assignment]
-            config=factory._config, cleanup=cleanup, get_agent_runtime=lambda: runtime, get_config_admin=lambda: None
+            config=factory._config,
+            cleanup=cleanup,
+            get_agent_runtime=lambda: runtime,
+            get_config_admin=lambda: None,
+            get_config_schema=lambda: None,
         )
         return factory._container
 

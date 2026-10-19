@@ -155,6 +155,7 @@ class _Env:
                 get_orquestrador_controller=lambda: controller,
                 get_agent_runtime=lambda: runtime,
                 get_config_admin=lambda: None,
+                get_config_schema=lambda: None,
             )
             return factory._container
 

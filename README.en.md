@@ -723,6 +723,7 @@ Except `/livez` (public), they require the admin key.
 | `POST` | `/admin/config/{kind}` | Creates (201, version 1). Validated by the entities, stricter than reading: a wrong type, a missing provider (`factory_ia_model`), a non-text item in `tools_ids`/`member_ids`, an unknown `http_method` or parameter type are refused instead of corrected; so is a key the document does not have (a typo such as `promt`, or the camelCase `apiKeyRef`/`baseUrl`/`modelParams`, at the root or in `rag_config`), with the key in `field` (or `unknown_key` when it is not an identifier of up to 64 characters). 422 with `field` (and `indexes`, positions in the body), without echoing the value; `tools_ids` and `member_ids` must exist (422); existing id or YAML store: 409; body over 1 MiB: 413 |
 | `PUT` | `/admin/config/{kind}/{id}` | Replaces the id's document at the `If-Match` version (with a repeated id, the version picks the document): missing 428, no document at that version 412. The `version` of the document read may come back in the body (it is ignored: `If-Match` applies). A tool header sent as `***` keeps the stored value as long as the `route` keeps the same scheme, host and port (otherwise 422 `headers`) |
 | `DELETE` | `/admin/config/{kind}/{id}` | Deactivates (`active: false`); `?hard=true` removes it. Requires `If-Match`. Tool or agent in use: 409 with `used_by` |
+| `GET` | `/admin/schema` | What the UI can offer, built from the running code: `providers.chat`/`providers.embedder` (registry ids and aliases, `PLUGIN_ALLOWLIST` plugins included, each with its accepted `model_params` and `requires_base_url`), `team.mode`, `tool.http_method`, `tool.parameter_type`, `rag_config.search_strategy`, `api_key_ref.formats` (`env:<PROVEDOR>_API_KEY`, `file:<caminho em SECRETS_DIR>`) and `config_store.writable` (`false` with the YAML store). No environment or secret value |
 
 The `/admin/config` routes write to the store (MongoDB; YAML answers 409 on writes) but do **not** yet change what AgentOS and AG-UI serve: the change applies on the next restart (hot swap is FA-04). A key starting with `$` at any level of the body, nesting deeper than 32 levels, a non-finite number (`NaN`, `Infinity`, `1e999`) or text with a lone surrogate (`"\ud800"`) is refused (422). Writes are serialized within the process; across replicas only `If-Match` applies. Each refusal is logged as a warning with the config kind and the refusal type, never the id or the value.
 
@@ -1169,7 +1170,7 @@ tests/
 
 ### How the Application Works (Summary)
 
-1. **`app.py`** loads `.env` and calls `create_app(routers=[...])` (synchronous), passing the `src/presentation` routes (e.g. `/admin/config`)
+1. **`app.py`** loads `.env` and calls `create_app(routers=[...])` (synchronous), passing the `src/presentation` routes (e.g. `/admin/config`, `/admin/schema`)
 2. **`AppFactory.create_app()`** creates FastAPI with CORS, admin endpoints and those routers, behind the same auth
 3. On **lifespan** (async), `DependencyContainer` is created — it connects to MongoDB and wires all dependencies
 4. `OrquestradorController.warm_up_cache()` runs `GetActiveAgentsUseCase`, which:

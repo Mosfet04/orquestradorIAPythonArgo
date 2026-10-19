@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from typing import Literal, cast
 from urllib.parse import urlsplit
 
+from src.application.use_cases.config_schema import ProviderOption
 from src.domain.entities.model_config import ModelConfig, ModelParams, ParamValue
 from src.domain.ports.embedder_factory_port import IEmbedderFactory, TextEmbedder
 from src.domain.ports.model_factory_port import ChatModel, IModelFactory, InvalidModelConfigError
@@ -188,7 +189,20 @@ class ProviderRegistry(IModelFactory, IEmbedderFactory):
 
     def supported(self, kind: Kind) -> list[str]:
         """Ids e aliases que criam ``kind``, em ordem alfabética."""
-        return sorted(name for name, spec in self._specs.items() if self._class_spec(spec, kind) is not None)
+        return [option.name for option in self.options(kind)]
+
+    def options(self, kind: Kind) -> list[ProviderOption]:
+        """O que a config pode pedir de cada id e alias que cria ``kind`` (``/admin/schema``), em ordem alfabética.
+
+        Só nomes de parâmetro e se a ``base_url`` é obrigatória: nada do operador (env, URLs, allowlist).
+        """
+        return [
+            ProviderOption(
+                name=name, model_params=tuple(sorted(class_spec.params)), requires_base_url=spec.requires_base_url
+            )
+            for name, spec in sorted(self._specs.items())
+            if (class_spec := self._class_spec(spec, kind)) is not None
+        ]
 
     def create_model(self, config: ModelConfig) -> ChatModel:
         """Cria o modelo de chat do provider indicado na configuração."""

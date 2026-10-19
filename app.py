@@ -10,13 +10,14 @@ load_dotenv()  # carrega .env antes de qualquer acesso a os.getenv()
 from src.infrastructure.logging import setup_structlog
 from src.infrastructure.web.app_factory import create_app
 from src.presentation.routes.admin_config import router as admin_config_router
+from src.presentation.routes.admin_schema import router as admin_schema_router
 
 # Configurar logging estruturado
 setup_structlog()
 
 # Criar app via factory síncrona — uvicorn recebe um objeto ASGI real. As rotas da apresentação
 # entram aqui: a infraestrutura (app_factory) não importa src.presentation (lint-imports).
-app = create_app(routers=[admin_config_router])
+app = create_app(routers=[admin_config_router, admin_schema_router])
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())

@@ -1,8 +1,9 @@
-"""Borda real do app (CORS + auth por chave) com as rotas ``/admin/config`` sobre repositórios em memória.
+"""Borda real do app (CORS + auth por chave) com as rotas ``/admin/config`` e ``/admin/schema`` em memória.
 
-``admin_world`` cria o app pelo ``AppFactory`` com o router de ``src/presentation`` e põe no
+``admin_world`` cria o app pelo ``AppFactory`` com os routers de ``src/presentation`` e põe no
 ``app.state`` o caso de uso montado como o container monta (``build_config_admin``, mappers reais do
-store). Sem lifespan: o ``httpx.ASGITransport`` não o dispara. Chaves são valores de teste.
+store) e o schema do registry recebido (``build_config_schema``; default: os built-ins). Sem lifespan: o
+``httpx.ASGITransport`` não o dispara. Chaves são valores de teste.
 """
 
 from __future__ import annotations
@@ -19,9 +20,12 @@ from fastapi import FastAPI
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.team_config import TeamConfig
 from src.domain.entities.tool import HttpMethod, ParameterType, Tool, ToolParameter
-from src.infrastructure.dependency_injection import build_config_admin
+from src.infrastructure.dependency_injection import build_config_admin, build_config_schema
+from src.infrastructure.providers import ProviderRegistry
+from src.infrastructure.providers.builtins import BUILTIN_PROVIDERS
 from src.infrastructure.web.app_factory import AppFactory
 from src.presentation.routes.admin_config import router as admin_config_router
+from src.presentation.routes.admin_schema import router as admin_schema_router
 from tests.fakes.logger import RecordingLogger
 from tests.fakes.repositories import (
     InMemoryAgentConfigRepository,
@@ -111,14 +115,16 @@ async def admin_world(
     agents: Iterable[AgentConfig] = (),
     teams: Iterable[TeamConfig] = (),
     tools: Iterable[Tool] = (),
+    providers: ProviderRegistry | None = None,
 ) -> AsyncIterator[AdminWorld]:
     admin_env(monkeypatch)
     logger = RecordingLogger()
     agent_repo = InMemoryAgentConfigRepository(agents)
     team_repo = InMemoryTeamConfigRepository(teams)
     tool_repo = InMemoryToolRepository(tools)
-    app = AppFactory().create_app(routers=[admin_config_router])
+    app = AppFactory().create_app(routers=[admin_config_router, admin_schema_router])
     app.state.config_admin = build_config_admin(agent_repo, team_repo, tool_repo, logger)
+    app.state.config_schema = build_config_schema(providers or ProviderRegistry(BUILTIN_PROVIDERS), writable=True)
     transport = httpx.ASGITransport(app=app, client=LOOPBACK_CLIENT)
     async with httpx.AsyncClient(transport=transport, base_url=LOOPBACK_BASE_URL) as client:
         yield AdminWorld(agent_repo, team_repo, tool_repo, logger, app, client)

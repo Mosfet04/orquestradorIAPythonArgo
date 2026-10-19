@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Any, get_args
 
 from motor.motor_asyncio import AsyncIOMotorClient
 
@@ -15,6 +15,7 @@ from src.application.use_cases.config_admin_use_case import (
     TeamConfigEditor,
     ToolConfigEditor,
 )
+from src.application.use_cases.config_schema import ConfigSchema
 from src.application.use_cases.get_active_agents_use_case import GetActiveAgentsUseCase
 from src.application.use_cases.get_active_teams_use_case import GetActiveTeamsUseCase
 from src.domain.ports import IEmbedderFactory, ILogger
@@ -27,6 +28,7 @@ from src.infrastructure.parsers.text_document_parser import TextDocumentParser
 from src.infrastructure.providers import DestinationPolicy, ProviderRegistry
 from src.infrastructure.providers.builtins import BUILTIN_PROVIDERS
 from src.infrastructure.providers.plugins import load_provider_plugins
+from src.infrastructure.providers.registry import Kind
 from src.infrastructure.repositories.config_documents import (
     entity_document,
     map_agent_document,
@@ -174,6 +176,17 @@ def build_provider_registry(config: AppConfig, logger: ILogger) -> ProviderRegis
     return registry
 
 
+def build_config_schema(providers: ProviderRegistry, *, writable: bool) -> ConfigSchema:
+    """Schema de ``/admin/schema`` (FA-03): opções de cada tipo de provider do registry em vigor e o store.
+
+    ``writable``: ``False`` com o store YAML (só leitura; a escrita responde 409).
+    """
+    return ConfigSchema(
+        providers={kind: tuple(providers.options(kind)) for kind in get_args(Kind)},
+        config_store_writable=writable,
+    )
+
+
 def build_config_admin(
     agents: IAgentConfigRepository,
     teams: ITeamConfigRepository,
@@ -216,6 +229,7 @@ class DependencyContainer:
         self._health_service: HealthService | None = None
         self._controller: OrquestradorController | None = None
         self._config_admin: ConfigAdmin | None = None
+        self._config_schema: ConfigSchema | None = None
         self._runtime: AgnoRuntime | None = None
 
     @classmethod
@@ -262,6 +276,7 @@ class DependencyContainer:
         )
 
         self._config_admin = build_config_admin(agent_config_repo, team_config_repo, tool_repo, self._logger)
+        self._config_schema = build_config_schema(providers, writable=self.config.config_store != "yaml")
 
         agents_use_case = GetActiveAgentsUseCase(
             runtime, agent_config_repo, self._logger
@@ -406,6 +421,12 @@ class DependencyContainer:
         if self._config_admin is None:
             raise RuntimeError("Container não inicializado: chame create_async() antes")
         return self._config_admin
+
+    def get_config_schema(self) -> ConfigSchema:
+        """Schema da rota ``/admin/schema``; ``RuntimeError`` se o container não foi inicializado."""
+        if self._config_schema is None:
+            raise RuntimeError("Container não inicializado: chame create_async() antes")
+        return self._config_schema
 
     def get_agent_runtime(self) -> AgnoRuntime:
         """Runtime que monta as entidades e as serve no app (``mount``/``start``/``close``)."""

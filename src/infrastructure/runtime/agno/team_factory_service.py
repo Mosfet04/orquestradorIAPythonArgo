@@ -18,13 +18,6 @@ from src.infrastructure.runtime.agno.user_id_guardrail import (
     requires_user_id,
 )
 
-_MODE_MAP: dict[str, TeamMode] = {
-    "route": TeamMode.route,
-    "coordinate": TeamMode.coordinate,
-    "broadcast": TeamMode.broadcast,
-    "tasks": TeamMode.tasks,
-}
-
 
 class TeamFactoryService:
     """Cria instâncias de ``Team`` (agno v2.5) a partir de ``TeamConfig``."""
@@ -55,7 +48,8 @@ class TeamFactoryService:
         # Síncrono e com I/O (segredo file:, DNS do destino): quem chama do caminho async
         # roda create_team via asyncio.to_thread (GetActiveTeamsUseCase, pelo AgnoRuntime).
         model: Any = self._model_factory.create_model(config.model_config)
-        mode = _MODE_MAP.get(config.mode, TeamMode.route)
+        # Os valores de TEAM_MODES (validados na entidade) são os do TeamMode: modo sem par falha alto.
+        mode = TeamMode(config.mode)
         # O team repassa o user_id da requisição aos membros: exige se ele ou um membro
         # guarda memória de usuário (recusa logo no team, antes de delegar).
         user_memories = agentic_memory = config.user_memory_active

@@ -9,6 +9,9 @@ from typing import List, Optional
 from src.domain.entities.model_config import ModelConfig, ParamValue
 from src.domain.entities.validation import InvalidField, require_optional_text, require_text
 
+TEAM_MODES = ("route", "coordinate", "broadcast", "tasks")
+"""Modos de team aceitos em ``mode`` (validação e ``/admin/schema``)."""
+
 
 @dataclass
 class TeamConfig:
@@ -38,9 +41,9 @@ class TeamConfig:
         require_optional_text(self.descricao, "descricao", "Descrição do team")
         if not self.member_ids:
             raise InvalidField("member_ids", "Team precisa de pelo menos um membro")
-        if self.mode not in ("route", "coordinate", "broadcast", "tasks"):
+        if self.mode not in TEAM_MODES:
             # Sem o valor na mensagem: a recusa vai a log e não pode ecoar o que foi recebido.
-            raise InvalidField("mode", "Modo inválido. Valores aceitos: route, coordinate, broadcast, tasks")
+            raise InvalidField("mode", f"Modo inválido. Valores aceitos: {', '.join(TEAM_MODES)}")
         _ = self.model_config  # valida os campos do modelo
 
     @property

@@ -21,6 +21,8 @@ ParamValue: TypeAlias = str | int | float | bool
 
 ENV_SCHEME = "env"
 FILE_SCHEME = "file"
+SECRET_REF_FORMATS = (f"{ENV_SCHEME}:<PROVEDOR>_API_KEY", f"{FILE_SCHEME}:<caminho em SECRETS_DIR>")
+"""Formatos de ``api_key_ref`` que ``parse_secret_ref`` aceita, para quem monta a config (``/admin/schema``)."""
 # Quem grava config não é confiável para ler qualquer variável do processo (API_KEY_ADMIN,
 # MONGO_CONNECTION_STRING...): ``env:`` só aponta para chave de provider.
 _ENV_VAR_NAME = re.compile(r"[A-Z][A-Z0-9_]{0,119}_API_KEY")
