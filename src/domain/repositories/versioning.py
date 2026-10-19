@@ -8,6 +8,7 @@ com ``expected_version`` 0.
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Generic, TypeVar
 
@@ -36,3 +37,26 @@ class ConfigStoreReadOnly(Exception):
 
     def __init__(self) -> None:
         super().__init__("O store de configuração é somente leitura")
+
+
+class VersionedConfigRepository(ABC, Generic[T]):
+    """Listagem e escrita com versão, iguais nas três portas de config (agentes, teams e tools)."""
+
+    @abstractmethod
+    async def list_all(self) -> list[Versioned[T]]:
+        """Todos os documentos, inclusive inativos e ids repetidos, na ordem estável, com a versão."""
+        ...
+
+    @abstractmethod
+    async def save(self, entity: T, expected_version: int) -> int:
+        """Grava (cria ou substitui) o documento do id e devolve a nova versão.
+
+        ``ConfigVersionConflict`` se nenhum documento do id estiver em ``expected_version`` (0 = id
+        novo ou documento legado); ``ConfigStoreReadOnly`` se o store não aceitar escrita.
+        """
+        ...
+
+    @abstractmethod
+    async def delete(self, entity_id: str, expected_version: int) -> None:
+        """Remove o documento do id na versão esperada; mesmos erros do ``save``."""
+        ...

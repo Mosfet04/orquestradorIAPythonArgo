@@ -15,7 +15,7 @@ from pathlib import PurePosixPath
 from typing import TypeAlias
 from urllib.parse import SplitResult, urlsplit
 
-from src.domain.entities.validation import require_text
+from src.domain.entities.validation import InvalidField, require_text
 
 ParamValue: TypeAlias = str | int | float | bool
 
@@ -32,7 +32,7 @@ MAX_BASE_URL_LENGTH = 2048
 
 
 def parse_secret_ref(ref: object) -> tuple[str, str]:
-    """``api_key_ref`` -> ``(esquema, alvo)``. Inválida: ``ValueError`` sem o valor.
+    """``api_key_ref`` -> ``(esquema, alvo)``. Inválida: ``InvalidField`` sem o valor.
 
     O valor nunca entra na mensagem: quem erra o formato costuma ter colado o próprio segredo.
     """
@@ -47,7 +47,7 @@ def parse_secret_ref(ref: object) -> tuple[str, str]:
             and PurePosixPath(target).is_absolute()
         ):
             return scheme, target
-    raise ValueError(f"api_key_ref inválido: {_REF_HINT}")
+    raise InvalidField("api_key_ref", f"api_key_ref inválido: {_REF_HINT}")
 
 
 class ModelParams(Mapping[str, ParamValue]):
@@ -59,7 +59,7 @@ class ModelParams(Mapping[str, ParamValue]):
     __slots__ = ("_items",)
 
     def __init__(self, items: Mapping[str, ParamValue] | None = None) -> None:
-        """``None`` = vazio. Chave texto não vazia e valor escalar; senão ``ValueError`` sem eco."""
+        """``None`` = vazio. Chave texto não vazia e valor escalar; senão ``InvalidField`` sem eco."""
         self._items: dict[str, ParamValue] = _validated_params(items)
 
     def __getitem__(self, key: str) -> ParamValue:
@@ -85,13 +85,13 @@ def _validated_params(params: object) -> dict[str, ParamValue]:
     if params is None:
         return {}
     if not isinstance(params, Mapping):
-        raise ValueError("model_params deve ser um objeto (chave -> valor)")
+        raise InvalidField("model_params", "model_params deve ser um objeto (chave -> valor)")
     for key, value in params.items():
         if not isinstance(key, str) or not key:
-            raise ValueError("model_params: toda chave deve ser texto não vazio")
+            raise InvalidField("model_params", "model_params: toda chave deve ser texto não vazio")
         # Sem a chave na mensagem: o documento é de quem grava config, não necessariamente limpo.
         if not isinstance(value, (str, int, float, bool)):
-            raise ValueError("model_params: todo valor deve ser texto, número ou booleano")
+            raise InvalidField("model_params", "model_params: todo valor deve ser texto, número ou booleano")
     return dict(params)
 
 
@@ -108,11 +108,11 @@ def _split_url(url: str) -> SplitResult | None:
 def _base_url_text(url: object) -> str:
     r"""A ``base_url`` como texto curto, sem espaço, ``\`` nem caractere de controle (antes de parsear)."""
     if not isinstance(url, str):
-        raise ValueError("base_url deve ser texto")
+        raise InvalidField("base_url", "base_url deve ser texto")
     if len(url) > MAX_BASE_URL_LENGTH:
-        raise ValueError(f"base_url maior que {MAX_BASE_URL_LENGTH} caracteres")
+        raise InvalidField("base_url", f"base_url maior que {MAX_BASE_URL_LENGTH} caracteres")
     if any(ch.isspace() or not ch.isprintable() for ch in url) or "\\" in url:
-        raise ValueError("base_url não pode ter espaço, '\\' nem caractere de controle")
+        raise InvalidField("base_url", "base_url não pode ter espaço, '\\' nem caractere de controle")
     return url
 
 
@@ -125,15 +125,15 @@ def _check_base_url(url: object) -> None:
     text = _base_url_text(url)
     parts = _split_url(text)
     if parts is None or parts.scheme not in ("http", "https") or not parts.hostname:
-        raise ValueError("base_url deve ser http(s)://host[:porta][/caminho]")
+        raise InvalidField("base_url", "base_url deve ser http(s)://host[:porta][/caminho]")
     if "@" in parts.netloc:
-        raise ValueError("base_url não pode ter credenciais; use api_key_ref")
+        raise InvalidField("base_url", "base_url não pode ter credenciais; use api_key_ref")
     if "?" in text or "#" in text:
-        raise ValueError("base_url não pode ter query nem fragmento")
+        raise InvalidField("base_url", "base_url não pode ter query nem fragmento")
     if not parts.netloc.isascii() or "%" in parts.netloc:
-        raise ValueError("base_url: host só em ASCII, sem '%' (IDN em punycode)")
+        raise InvalidField("base_url", "base_url: host só em ASCII, sem '%' (IDN em punycode)")
     if parts.port == 0 or parts.netloc.endswith(":"):
-        raise ValueError("base_url com porta vazia ou 0")
+        raise InvalidField("base_url", "base_url com porta vazia ou 0")
 
 
 @dataclass(frozen=True, init=False)
@@ -141,7 +141,8 @@ class ModelConfig:
     """Modelo de chat ou embedder: provider, id, parâmetros escalares, endpoint e chave por ref.
 
     Imutável; igualdade e hash por valor (inclusive ``params``). ``repr`` omite ``params`` e
-    ``api_key_ref``. ``params=None`` vale como vazio.
+    ``api_key_ref``. ``params=None`` vale como vazio. A recusa é ``InvalidField`` com o nome do campo
+    no documento (``factory_ia_model``, ``model``, ``model_params``, ``base_url``, ``api_key_ref``).
     """
 
     provider: str
@@ -158,8 +159,8 @@ class ModelConfig:
         base_url: str | None = None,
         api_key_ref: str | None = None,
     ) -> None:
-        require_text(provider, "Provider do modelo")
-        require_text(model_id, "ID do modelo")
+        require_text(provider, "factory_ia_model", "Provider do modelo")
+        require_text(model_id, "model", "ID do modelo")
         checked = ModelParams(params)
         if base_url is not None:
             _check_base_url(base_url)

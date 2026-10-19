@@ -9,6 +9,12 @@ from motor.motor_asyncio import AsyncIOMotorClient
 
 from src.application.services.document_indexing_service import DocumentIndexingService
 from src.application.services.knowledge_search_factory import KnowledgeSearchFactory
+from src.application.use_cases.config_admin_use_case import (
+    AgentConfigEditor,
+    ConfigAdmin,
+    TeamConfigEditor,
+    ToolConfigEditor,
+)
 from src.application.use_cases.get_active_agents_use_case import GetActiveAgentsUseCase
 from src.application.use_cases.get_active_teams_use_case import GetActiveTeamsUseCase
 from src.domain.ports import IEmbedderFactory, ILogger
@@ -21,6 +27,12 @@ from src.infrastructure.parsers.text_document_parser import TextDocumentParser
 from src.infrastructure.providers import DestinationPolicy, ProviderRegistry
 from src.infrastructure.providers.builtins import BUILTIN_PROVIDERS
 from src.infrastructure.providers.plugins import load_provider_plugins
+from src.infrastructure.repositories.config_documents import (
+    entity_document,
+    map_agent_document,
+    map_team_document,
+    map_tool_document,
+)
 from src.infrastructure.repositories.mongo_agent_config_repository import (
     MongoAgentConfigRepository,
 )
@@ -162,6 +174,37 @@ def build_provider_registry(config: AppConfig, logger: ILogger) -> ProviderRegis
     return registry
 
 
+def build_config_admin(
+    agents: IAgentConfigRepository,
+    teams: ITeamConfigRepository,
+    tools: IToolRepository,
+    logger: ILogger,
+) -> ConfigAdmin:
+    """Administração da config (FA-02) sobre os repositórios do store.
+
+    O corpo passa pelo mapper do store no modo estrito (recusa o que a leitura legada tolera) e os três
+    editores dividem uma trava de escrita (as referências cruzam os tipos).
+    """
+    lock = asyncio.Lock()
+    return ConfigAdmin(
+        agents=AgentConfigEditor(
+            agents,
+            lambda doc: map_agent_document(doc, logger, strict=True),
+            entity_document,
+            logger,
+            lock,
+            tools=tools,
+            teams=teams,
+        ),
+        teams=TeamConfigEditor(
+            teams, lambda doc: map_team_document(doc, logger, strict=True), entity_document, logger, lock, agents=agents
+        ),
+        tools=ToolConfigEditor(
+            tools, lambda doc: map_tool_document(doc, strict=True), entity_document, logger, lock, agents=agents
+        ),
+    )
+
+
 class DependencyContainer:
     """Composition Root — cria e fornece todas as dependências."""
 
@@ -172,6 +215,7 @@ class DependencyContainer:
         self._session_db: SessionDb | None = None
         self._health_service: HealthService | None = None
         self._controller: OrquestradorController | None = None
+        self._config_admin: ConfigAdmin | None = None
         self._runtime: AgnoRuntime | None = None
 
     @classmethod
@@ -216,6 +260,8 @@ class DependencyContainer:
             indexing_service=indexing_service,
             search_factory=search_factory,
         )
+
+        self._config_admin = build_config_admin(agent_config_repo, team_config_repo, tool_repo, self._logger)
 
         agents_use_case = GetActiveAgentsUseCase(
             runtime, agent_config_repo, self._logger
@@ -354,6 +400,12 @@ class DependencyContainer:
         if self._controller is None:
             raise RuntimeError("Container não inicializado: chame create_async() antes")
         return self._controller
+
+    def get_config_admin(self) -> ConfigAdmin:
+        """Caso de uso das rotas ``/admin/config``; ``RuntimeError`` se o container não foi inicializado."""
+        if self._config_admin is None:
+            raise RuntimeError("Container não inicializado: chame create_async() antes")
+        return self._config_admin
 
     def get_agent_runtime(self) -> AgnoRuntime:
         """Runtime que monta as entidades e as serve no app (``mount``/``start``/``close``)."""

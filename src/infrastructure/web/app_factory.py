@@ -12,7 +12,7 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -72,11 +72,13 @@ class AppFactory:
         self._lifespan_ran = False
         self._logger = StructlogLoggerAdapter("app_factory")
 
-    def create_app(self) -> FastAPI:
+    def create_app(self, routers: Sequence[APIRouter] = ()) -> FastAPI:
         """Cria a aplicação FastAPI — **síncrono** (module-level safe).
 
         Lê o ``AppConfig`` aqui (configuração inválida falha no startup, antes do bind).
         Sem ``API_KEY_RUN``/``API_KEY_ADMIN`` fora do modo dev local, recusa (fail-closed).
+        ``routers``: rotas da camada de apresentação (``app.py`` as passa; a infraestrutura não
+        importa ``src.presentation``), sob a mesma borda (CORS + auth) das demais.
         """
         _disable_agno_telemetry_by_default()
         self._config = AppConfig.load()
@@ -106,6 +108,8 @@ class AppFactory:
         # middleware; instrument_app depois disso não gera span nenhum.
         self._instrument_fastapi(base_app)
         self._add_admin_endpoints(base_app)
+        for router in routers:
+            base_app.include_router(router)
         # Por último: add_middleware insere na frente, então o CORS fica o mais externo
         # (preflight e headers CORS valem também para respostas de erro dos demais) e a
         # auth logo dentro dele.
@@ -296,6 +300,8 @@ class AppFactory:
         try:
             self._logger.info("Lifespan: iniciando...")
             container = await self._ensure_container()
+            # Lido pelas rotas /admin/config (src/presentation/routes/admin_config.py).
+            app.state.config_admin = container.get_config_admin()
             setup_telemetry(container.config)
 
             agents, teams = await self._load_all_entities(container)
@@ -375,6 +381,6 @@ class AppFactory:
 _factory = AppFactory()
 
 
-def create_app() -> FastAPI:
+def create_app(routers: Sequence[APIRouter] = ()) -> FastAPI:
     """Factory **síncrona** global — segura para atribuir o ``app`` no nível do módulo."""
-    return _factory.create_app()
+    return _factory.create_app(routers)

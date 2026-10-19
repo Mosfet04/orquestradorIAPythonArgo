@@ -1,0 +1,124 @@
+"""Borda real do app (CORS + auth por chave) com as rotas ``/admin/config`` sobre repositórios em memória.
+
+``admin_world`` cria o app pelo ``AppFactory`` com o router de ``src/presentation`` e põe no
+``app.state`` o caso de uso montado como o container monta (``build_config_admin``, mappers reais do
+store). Sem lifespan: o ``httpx.ASGITransport`` não o dispara. Chaves são valores de teste.
+"""
+
+from __future__ import annotations
+
+from collections.abc import AsyncIterator, Iterable
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from typing import Any
+
+import httpx
+import pytest
+from fastapi import FastAPI
+
+from src.domain.entities.agent_config import AgentConfig
+from src.domain.entities.team_config import TeamConfig
+from src.domain.entities.tool import HttpMethod, ParameterType, Tool, ToolParameter
+from src.infrastructure.dependency_injection import build_config_admin
+from src.infrastructure.web.app_factory import AppFactory
+from src.presentation.routes.admin_config import router as admin_config_router
+from tests.fakes.logger import RecordingLogger
+from tests.fakes.repositories import (
+    InMemoryAgentConfigRepository,
+    InMemoryTeamConfigRepository,
+    InMemoryToolRepository,
+)
+from tests.fakes.startup_world import CLEAN_ENV
+from tests.fakes.web import LOOPBACK_BASE_URL, LOOPBACK_CLIENT
+
+RUN_KEY = "fa02-run-key-" + "r" * 20
+ADMIN_KEY = "fa02-admin-key-" + "a" * 19
+RUN = {"Authorization": f"Bearer {RUN_KEY}"}
+ADMIN = {"Authorization": f"Bearer {ADMIN_KEY}"}
+
+
+def agent(agent_id: str, *, tools_ids: list[str] | None = None, active: bool = True) -> AgentConfig:
+    return AgentConfig(
+        id=agent_id,
+        nome=f"Agente {agent_id}",
+        factory_ia_model="ollama",
+        model="llama3.2",
+        descricao="d",
+        prompt="p",
+        tools_ids=tools_ids or [],
+        active=active,
+    )
+
+
+def team(team_id: str, member_ids: list[str]) -> TeamConfig:
+    return TeamConfig(
+        id=team_id, nome=f"Time {team_id}", factory_ia_model="ollama", model="qwen3", member_ids=member_ids
+    )
+
+
+def tool(tool_id: str, *, headers: dict[str, str] | None = None) -> Tool:
+    return Tool(
+        id=tool_id,
+        name=tool_id,
+        description="Busca endereço",
+        route="https://api.example.invalid/cep/{cep}",
+        http_method=HttpMethod.GET,
+        parameters=[ToolParameter(name="cep", type=ParameterType.STRING, description="CEP")],
+        headers=headers,
+    )
+
+
+def agent_body(agent_id: str, **extra: Any) -> dict[str, Any]:
+    body: dict[str, Any] = {
+        "id": agent_id,
+        "nome": f"Agente {agent_id}",
+        "factory_ia_model": "ollama",
+        "model": "llama3.2",
+        "prompt": "p",
+        "tools_ids": [],
+    }
+    body.update(extra)
+    return body
+
+
+@dataclass
+class AdminWorld:
+    agents: InMemoryAgentConfigRepository
+    teams: InMemoryTeamConfigRepository
+    tools: InMemoryToolRepository
+    logger: RecordingLogger
+    app: FastAPI
+    client: httpx.AsyncClient
+
+
+def admin_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ambiente de produção em loopback com as duas chaves de teste (run e admin), sem o resto da config."""
+    for name in CLEAN_ENV:
+        monkeypatch.delenv(name, raising=False)
+    for name, value in {
+        "ENVIRONMENT": "production",
+        "APP_HOST": "127.0.0.1",
+        "API_KEY_RUN": RUN_KEY,
+        "API_KEY_ADMIN": ADMIN_KEY,
+    }.items():
+        monkeypatch.setenv(name, value)
+
+
+@asynccontextmanager
+async def admin_world(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    agents: Iterable[AgentConfig] = (),
+    teams: Iterable[TeamConfig] = (),
+    tools: Iterable[Tool] = (),
+) -> AsyncIterator[AdminWorld]:
+    admin_env(monkeypatch)
+    logger = RecordingLogger()
+    agent_repo = InMemoryAgentConfigRepository(agents)
+    team_repo = InMemoryTeamConfigRepository(teams)
+    tool_repo = InMemoryToolRepository(tools)
+    app = AppFactory().create_app(routers=[admin_config_router])
+    app.state.config_admin = build_config_admin(agent_repo, team_repo, tool_repo, logger)
+    transport = httpx.ASGITransport(app=app, client=LOOPBACK_CLIENT)
+    async with httpx.AsyncClient(transport=transport, base_url=LOOPBACK_BASE_URL) as client:
+        yield AdminWorld(agent_repo, team_repo, tool_repo, logger, app, client)

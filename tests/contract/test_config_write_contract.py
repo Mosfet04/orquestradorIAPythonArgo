@@ -108,6 +108,19 @@ async def test_delete_na_versao_esperada_remove_e_divergente_ou_inexistente_conf
     assert await repo.list_all() == [Versioned(kind.make("b", "v1"), 1)]
 
 
+async def test_com_id_repetido_save_e_delete_agem_no_documento_da_versao_esperada(writable, kind):
+    """FA-02: o ``If-Match`` aponta o documento; com o id repetido, a versão escolhe qual."""
+    repo = kind.repo(writable, [kind.make("a"), kind.make("a", "repetido")])
+
+    assert await repo.save(kind.make("a", "v1"), 0) == 1
+    assert await repo.save(kind.make("a", "repetido v1"), 0) == 1
+    with pytest.raises(ConfigVersionConflict):
+        await repo.save(kind.make("a", "terceiro"), 0)
+    await repo.delete("a", 1)
+
+    assert await repo.list_all() == [Versioned(kind.make("a", "repetido v1"), 1)]
+
+
 async def test_id_ou_versao_operador_e_recusado_sem_tocar_o_store(writable, kind):
     """Injeção NoSQL: id ou versão operador casaria (e trocaria ou apagaria) outro documento."""
     repo = kind.repo(writable, [kind.make("vitima")])

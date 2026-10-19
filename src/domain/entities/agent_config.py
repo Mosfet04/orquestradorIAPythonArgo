@@ -30,11 +30,11 @@ class AgentConfig:
     api_key_ref: Optional[str] = None
 
     def __post_init__(self):
-        require_text(self.id, "ID do agente")
-        require_text(self.nome, "Nome do agente")
-        require_text(self.model, "Modelo do agente")
-        require_text(self.factory_ia_model, "Factory do modelo do agente")
-        require_optional_text(self.descricao, "Descrição do agente")
+        require_text(self.id, "id", "ID do agente")
+        require_text(self.nome, "nome", "Nome do agente")
+        require_text(self.model, "model", "Modelo do agente")
+        require_text(self.factory_ia_model, "factory_ia_model", "Factory do modelo do agente")
+        require_optional_text(self.descricao, "descricao", "Descrição do agente")
         _ = self.model_config  # valida os campos do modelo
 
     @property

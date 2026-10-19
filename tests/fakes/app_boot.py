@@ -169,6 +169,7 @@ def _serve_with(
             health_service=None,
             get_orquestrador_controller=lambda: controller,
             get_agent_runtime=lambda: runtime,
+            get_config_admin=lambda: None,
         )
         return factory._container
 

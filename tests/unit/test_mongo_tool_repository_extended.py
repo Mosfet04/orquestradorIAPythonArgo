@@ -111,7 +111,7 @@ class TestGetToolsByIds:
         (call,) = mock_logger.error.call_args_list
         assert call.args == ("Documento de tool inválido ignorado",)
         assert call.kwargs["tool_id"] == "ruim"
-        assert call.kwargs["error_type"] in ("ValueError", "KeyError")
+        assert call.kwargs["error_type"] in ("InvalidField", "KeyError")
 
 
 class TestGetToolById:

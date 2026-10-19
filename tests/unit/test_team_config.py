@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from src.domain.entities.team_config import TeamConfig
+from src.domain.entities.validation import InvalidField
 
 
 def _valid_kwargs(**overrides):
@@ -78,6 +79,25 @@ class TestTeamConfigValidation:
     def test_invalid_mode_raises(self):
         with pytest.raises(ValueError, match="Modo inválido"):
             TeamConfig(**_valid_kwargs(mode="invalid"))
+
+
+@pytest.mark.parametrize(
+    ("overrides", "field"),
+    [
+        ({"mode": "valor-recebido-x"}, "mode"),
+        ({"member_ids": []}, "member_ids"),
+        ({"nome": ["valor-recebido-x"]}, "nome"),
+        ({"api_key_ref": "valor-recebido-x"}, "api_key_ref"),
+        ({"base_url": "ftp://valor-recebido-x"}, "base_url"),
+        ({"model_params": {"t": ["valor-recebido-x"]}}, "model_params"),
+    ],
+)
+def test_recusa_diz_o_campo_do_documento_sem_ecoar_o_valor(overrides, field):
+    """FA-02: a API responde 422 com o campo; a mensagem (que vai a log) não cita o valor."""
+    with pytest.raises(InvalidField) as raised:
+        TeamConfig(**_valid_kwargs(**overrides))
+    assert raised.value.field == field
+    assert "valor-recebido-x" not in str(raised.value)
 
 
 @pytest.mark.parametrize("field", ["id", "nome", "model", "factory_ia_model"])

@@ -238,7 +238,7 @@ async def test_documento_invalido_e_isolado_loga_ids_e_o_agente_sobe_com_as_outr
     errors = _errors(logger)
     repo_errors = [ctx for msg, ctx in errors if msg == "Documento de tool inválido ignorado"]
     assert [c["tool_id"] for c in repo_errors] == [bad_id]
-    assert repo_errors[0]["error_type"] in {"ValueError", "KeyError", "TypeError", "AttributeError"}
+    assert repo_errors[0]["error_type"] in {"InvalidField", "KeyError", "TypeError", "AttributeError"}
     agent_errors = [ctx for msg, ctx in errors if "não encontrada" in msg]
     assert agent_errors == [{"agent_id": "analyst-assistant", "tool_id": bad_id}]
 

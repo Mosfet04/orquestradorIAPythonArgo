@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 
 from src.domain.entities.model_config import ModelConfig, ParamValue
-from src.domain.entities.validation import require_optional_text, require_text
+from src.domain.entities.validation import InvalidField, require_optional_text, require_text
 
 
 @dataclass
@@ -31,18 +31,16 @@ class TeamConfig:
     api_key_ref: Optional[str] = None
 
     def __post_init__(self) -> None:
-        require_text(self.id, "ID do team")
-        require_text(self.nome, "Nome do team")
-        require_text(self.model, "Modelo do team")
-        require_text(self.factory_ia_model, "Factory do modelo do team")
-        require_optional_text(self.descricao, "Descrição do team")
+        require_text(self.id, "id", "ID do team")
+        require_text(self.nome, "nome", "Nome do team")
+        require_text(self.model, "model", "Modelo do team")
+        require_text(self.factory_ia_model, "factory_ia_model", "Factory do modelo do team")
+        require_optional_text(self.descricao, "descricao", "Descrição do team")
         if not self.member_ids:
-            raise ValueError("Team precisa de pelo menos um membro")
+            raise InvalidField("member_ids", "Team precisa de pelo menos um membro")
         if self.mode not in ("route", "coordinate", "broadcast", "tasks"):
-            raise ValueError(
-                f"Modo inválido: {self.mode!r}. "
-                "Valores aceitos: route, coordinate, broadcast, tasks"
-            )
+            # Sem o valor na mensagem: a recusa vai a log e não pode ecoar o que foi recebido.
+            raise InvalidField("mode", "Modo inválido. Valores aceitos: route, coordinate, broadcast, tasks")
         _ = self.model_config  # valida os campos do modelo
 
     @property

@@ -212,7 +212,7 @@ def test_agente_com_campo_novo_hostil_e_isolado_e_o_app_sobe_com_os_demais(
     assert sorted(t["id"] for t in result.teams) == (["t-ok"] if expect_team_bad else ["t-ok", "t-ruim"])
     ignored = [c for m, c in result.errors() if m.endswith("inválido ignorado")]
     assert {c.get("agent_id") for c in ignored if "agent_id" in c} == {"ruim"}
-    assert all(c["error_type"] == "ValueError" for c in ignored)
+    assert all(c["error_type"] == "InvalidField" for c in ignored)
     assert PASTED_KEY_MARKER not in result.everything() and URL_USERINFO_MARKER not in result.everything()
 
 

@@ -34,7 +34,7 @@ def _assert_invalid_logged(
     assert [ctx[id_field] for _, ctx in errors] == ids
     for _, ctx in errors:
         assert set(ctx) == {id_field, LOCATION_KEY[backend.name], "error_type"}
-        assert ctx["error_type"] in ("ValueError", "KeyError")
+        assert ctx["error_type"] in ("InvalidField", "KeyError")
     assert all(MARKER not in repr(r) for r in logger.records)
 
 
@@ -278,7 +278,7 @@ async def test_member_ids_sem_nenhum_id_de_texto_continua_invalidando_o_team(bac
     errors = logged_errors(logger)
     assert errors[0] == (message, {"team_id": "ruim", **context})
     assert [(m, ctx["team_id"], ctx["error_type"]) for m, ctx in errors[1:]] == [
-        ("Documento de team inválido ignorado", "ruim", "ValueError")
+        ("Documento de team inválido ignorado", "ruim", "InvalidField")
     ]
     assert all(MARKER not in repr(r) for r in logger.records)
 

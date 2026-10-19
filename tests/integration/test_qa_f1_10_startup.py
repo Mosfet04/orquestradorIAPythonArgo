@@ -154,6 +154,7 @@ class _Env:
                 health_service=HealthService(_Mongo(), self.logger),  # type: ignore[arg-type]
                 get_orquestrador_controller=lambda: controller,
                 get_agent_runtime=lambda: runtime,
+                get_config_admin=lambda: None,
             )
             return factory._container
 

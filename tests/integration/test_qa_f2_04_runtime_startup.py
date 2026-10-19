@@ -315,7 +315,7 @@ def test_sequencia_de_erros_logados_no_startup_e_a_mesma_do_commit_base(boot: Bo
     startup = boot.errors()[: len(boot.errors()) // 2]  # o refresh repete a mesma carga
 
     assert startup == [
-        ("Documento de agente inválido ignorado", {"agent_id": None, "error_type": "ValueError", "mongo_id": None}),
+        ("Documento de agente inválido ignorado", {"agent_id": None, "error_type": "InvalidField", "mongo_id": None}),
         ("Agente com id repetido ignorado", {"agent_id": "a-simples"}),
         (
             "Tool referenciada pelo agente não encontrada (ausente, inativa ou inválida); ignorada",

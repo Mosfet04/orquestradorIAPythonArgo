@@ -151,6 +151,7 @@ def _start(monkeypatch: pytest.MonkeyPatch, logger: RecordingLogger) -> tuple[Ap
             health_service=None,
             get_orquestrador_controller=lambda: controller,
             get_agent_runtime=lambda: runtime,
+            get_config_admin=lambda: None,
         )
         return factory._container
 
@@ -194,21 +195,21 @@ def _assert_only_valid_entities_exposed(
 
 # Documento inválido: um log por documento, só com ids e o tipo do erro, na ordem da carga.
 EXPECTED_IGNORED = [
-    ("Documento de agente inválido ignorado", {"agent_id": None, "mongo_id": None, "error_type": "ValueError"}),
-    ("Documento de agente inválido ignorado", {"agent_id": None, "mongo_id": None, "error_type": "ValueError"}),
+    ("Documento de agente inválido ignorado", {"agent_id": None, "mongo_id": None, "error_type": "InvalidField"}),
+    ("Documento de agente inválido ignorado", {"agent_id": None, "mongo_id": None, "error_type": "InvalidField"}),
     (
         "Documento de agente inválido ignorado",
-        {"agent_id": "rag-quebrado", "mongo_id": None, "error_type": "AttributeError"},
+        {"agent_id": "rag-quebrado", "mongo_id": None, "error_type": "InvalidField"},
     ),
     (
         "Documento de agente inválido ignorado",
-        {"agent_id": "descricao-objeto", "mongo_id": None, "error_type": "ValueError"},
+        {"agent_id": "descricao-objeto", "mongo_id": None, "error_type": "InvalidField"},
     ),
-    ("Documento de team inválido ignorado", {"team_id": "time-modo", "mongo_id": None, "error_type": "ValueError"}),
-    ("Documento de team inválido ignorado", {"team_id": None, "mongo_id": None, "error_type": "ValueError"}),
+    ("Documento de team inválido ignorado", {"team_id": "time-modo", "mongo_id": None, "error_type": "InvalidField"}),
+    ("Documento de team inválido ignorado", {"team_id": None, "mongo_id": None, "error_type": "InvalidField"}),
     (
         "Documento de team inválido ignorado",
-        {"team_id": "time-descricao", "mongo_id": None, "error_type": "ValueError"},
+        {"team_id": "time-descricao", "mongo_id": None, "error_type": "InvalidField"},
     ),
 ]
 

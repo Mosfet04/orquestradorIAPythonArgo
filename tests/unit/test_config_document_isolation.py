@@ -82,23 +82,25 @@ def _assert_secret_not_logged(logger: RecordingLogger) -> None:
 # ── agents_config ────────────────────────────────────────────────────
 
 HOSTILE_AGENT_DOCS = [
-    pytest.param(_without(_agent_doc(), "id"), None, "ValueError", id="sem-id"),
-    pytest.param(_agent_doc(""), "", "ValueError", id="id-vazio"),
-    pytest.param(_agent_doc(123), None, "ValueError", id="id-numero"),
-    pytest.param(_agent_doc({"$gt": ""}), None, "ValueError", id="id-objeto"),
-    pytest.param(_agent_doc(["a"]), None, "ValueError", id="id-lista"),
-    pytest.param(_agent_doc("sem-nome", nome=""), "sem-nome", "ValueError", id="nome-vazio"),
-    pytest.param(_agent_doc("nome-objeto", nome={"pt": "x"}), "nome-objeto", "ValueError", id="nome-objeto"),
-    pytest.param(_agent_doc("sem-model", model=None), "sem-model", "ValueError", id="model-nulo"),
-    pytest.param(_agent_doc("descricao-numero", descricao=7), "descricao-numero", "ValueError", id="descricao-numero"),
+    pytest.param(_without(_agent_doc(), "id"), None, "InvalidField", id="sem-id"),
+    pytest.param(_agent_doc(""), "", "InvalidField", id="id-vazio"),
+    pytest.param(_agent_doc(123), None, "InvalidField", id="id-numero"),
+    pytest.param(_agent_doc({"$gt": ""}), None, "InvalidField", id="id-objeto"),
+    pytest.param(_agent_doc(["a"]), None, "InvalidField", id="id-lista"),
+    pytest.param(_agent_doc("sem-nome", nome=""), "sem-nome", "InvalidField", id="nome-vazio"),
+    pytest.param(_agent_doc("nome-objeto", nome={"pt": "x"}), "nome-objeto", "InvalidField", id="nome-objeto"),
+    pytest.param(_agent_doc("sem-model", model=None), "sem-model", "InvalidField", id="model-nulo"),
     pytest.param(
-        _agent_doc("descricao-objeto", descricao={"pt": "x"}), "descricao-objeto", "ValueError", id="descricao-objeto"
+        _agent_doc("descricao-numero", descricao=7), "descricao-numero", "InvalidField", id="descricao-numero"
     ),
-    pytest.param(_agent_doc("rag-texto", rag_config="sim"), "rag-texto", "AttributeError", id="rag-config-texto"),
+    pytest.param(
+        _agent_doc("descricao-objeto", descricao={"pt": "x"}), "descricao-objeto", "InvalidField", id="descricao-objeto"
+    ),
+    pytest.param(_agent_doc("rag-texto", rag_config="sim"), "rag-texto", "InvalidField", id="rag-config-texto"),
     pytest.param(
         _agent_doc("rag-estrategia", rag_config={"active": True, "search_strategy": "vetorial"}),
         "rag-estrategia",
-        "ValueError",
+        "InvalidField",
         id="search-strategy-invalida",
     ),
 ]
@@ -131,7 +133,10 @@ async def test_agente_invalido_sem_id_loga_o_object_id_do_mongo(monkeypatch: pyt
 
     assert await repo.get_active_agents() == []
     assert _errors(logger) == [
-        ("Documento de agente inválido ignorado", {"agent_id": None, "mongo_id": str(oid), "error_type": "ValueError"})
+        (
+            "Documento de agente inválido ignorado",
+            {"agent_id": None, "mongo_id": str(oid), "error_type": "InvalidField"},
+        )
     ]
 
 
@@ -181,13 +186,15 @@ async def test_falha_do_banco_ao_listar_agentes_continua_subindo(monkeypatch: py
 # ── teams_config ─────────────────────────────────────────────────────
 
 HOSTILE_TEAM_DOCS = [
-    pytest.param(_without(_team_doc(), "id"), None, "ValueError", id="sem-id"),
-    pytest.param(_team_doc(["t"]), None, "ValueError", id="id-lista"),
-    pytest.param(_team_doc(7), None, "ValueError", id="id-numero"),
-    pytest.param(_team_doc("nome-numero", nome=5), "nome-numero", "ValueError", id="nome-numero"),
-    pytest.param(_without(_team_doc("sem-membros"), "member_ids"), "sem-membros", "ValueError", id="sem-membros"),
-    pytest.param(_team_doc("modo", mode="aleatorio"), "modo", "ValueError", id="modo-invalido"),
-    pytest.param(_team_doc("descricao-lista", descricao=["x"]), "descricao-lista", "ValueError", id="descricao-lista"),
+    pytest.param(_without(_team_doc(), "id"), None, "InvalidField", id="sem-id"),
+    pytest.param(_team_doc(["t"]), None, "InvalidField", id="id-lista"),
+    pytest.param(_team_doc(7), None, "InvalidField", id="id-numero"),
+    pytest.param(_team_doc("nome-numero", nome=5), "nome-numero", "InvalidField", id="nome-numero"),
+    pytest.param(_without(_team_doc("sem-membros"), "member_ids"), "sem-membros", "InvalidField", id="sem-membros"),
+    pytest.param(_team_doc("modo", mode="aleatorio"), "modo", "InvalidField", id="modo-invalido"),
+    pytest.param(
+        _team_doc("descricao-lista", descricao=["x"]), "descricao-lista", "InvalidField", id="descricao-lista"
+    ),
 ]
 
 

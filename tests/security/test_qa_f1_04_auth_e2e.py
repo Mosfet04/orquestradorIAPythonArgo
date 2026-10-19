@@ -755,6 +755,9 @@ def _lifespan_client(monkeypatch: pytest.MonkeyPatch, env: dict[str, str]) -> tu
         def get_agent_runtime(self) -> AgnoRuntime:
             return runtime
 
+        def get_config_admin(self) -> None:
+            return None
+
         async def cleanup(self) -> None:
             return None
 

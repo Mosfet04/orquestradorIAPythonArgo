@@ -33,7 +33,10 @@ E = TypeVar("E", bound=_HasId)
 
 
 class _VersionedItems(Generic[E]):
-    """Itens na ordem de inserção, cada um com a versão; escrita condicional pela versão do primeiro com o id."""
+    """Itens na ordem de inserção, cada um com a versão; a escrita age no item do id na versão esperada.
+
+    Como o filtro ``{"id", "version"}`` do Mongo: com id repetido, cada versão aponta um documento.
+    """
 
     def __init__(self, items: Iterable[E] = ()) -> None:
         self._entries: list[Versioned[E]] = [Versioned(copy.deepcopy(item), 0) for item in items]
@@ -43,12 +46,12 @@ class _VersionedItems(Generic[E]):
         return [entry.entity for entry in self._entries]
 
     def _position(self, entity_id: str, expected_version: int) -> int | None:
-        """Posição do primeiro item com o id, ``None`` se não houver; versão divergente levanta conflito."""
+        """Posição do primeiro item do id na versão, ``None`` para id novo na versão 0; senão, conflito."""
         if not isinstance(entity_id, str) or type(expected_version) is not int:
             raise TypeError("id da config deve ser texto e a versão, inteiro")
-        position = next((i for i, entry in enumerate(self._entries) if entry.entity.id == entity_id), None)
-        current = 0 if position is None else self._entries[position].version
-        if current != expected_version:
+        same_id = [i for i, entry in enumerate(self._entries) if entry.entity.id == entity_id]
+        position = next((i for i in same_id if self._entries[i].version == expected_version), None)
+        if position is None and (same_id or expected_version != 0):
             raise ConfigVersionConflict(entity_id, expected_version)
         return position
 
