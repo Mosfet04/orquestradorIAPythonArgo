@@ -5,15 +5,15 @@ from __future__ import annotations
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.ports import ILogger
 from src.domain.repositories.agent_config_repository import IAgentConfigRepository
-from src.infrastructure.repositories.config_documents import (
-    INVALID_DOCUMENT_ERRORS,
-    map_agent_document,
-)
-from src.infrastructure.repositories.mongo_base import AsyncMongoRepository
+from src.infrastructure.repositories.config_documents import map_agent_document
+from src.infrastructure.repositories.mongo_base import MongoConfigRepository, MongoDocument
 
 
-class MongoAgentConfigRepository(AsyncMongoRepository, IAgentConfigRepository):
+class MongoAgentConfigRepository(MongoConfigRepository[AgentConfig], IAgentConfigRepository):
     """Implementação async do repositório de configurações de agentes."""
+
+    _id_field = "agent_id"
+    _invalid_message = "Documento de agente inválido ignorado"
 
     def __init__(
         self,
@@ -34,22 +34,14 @@ class MongoAgentConfigRepository(AsyncMongoRepository, IAgentConfigRepository):
         """Lista os agentes ativos, do documento mais antigo ao mais novo."""
         try:
             # Ordem determinística (o documento mais antigo primeiro): com id repetido, o
-            # use case fica com o primeiro.
-            cursor = self._collection.find({"active": True}).sort(self._STABLE_ORDER)
-            configs: list[AgentConfig] = []
-            async for doc in cursor:
-                self._warn_ignored_camel_case("agent_id", doc)
-                # Documento inválido isola só ele: o startup segue com os válidos (F1-10).
-                try:
-                    configs.append(map_agent_document(doc, self._logger))
-                except INVALID_DOCUMENT_ERRORS as exc:
-                    self._log_invalid_document(
-                        "Documento de agente inválido ignorado", "agent_id", doc, exc
-                    )
-            return configs
+            # use case fica com o primeiro. Documento inválido isola só ele (F1-10).
+            return await self._documents({"active": True}, self._map)
         except Exception as exc:
             self._logger.error("Erro ao buscar agentes ativos", error_type=type(exc).__name__)
             raise
+
+    def _map(self, doc: MongoDocument) -> AgentConfig:
+        return map_agent_document(doc, self._logger)
 
     async def get_agent_by_id(self, agent_id: str) -> AgentConfig:
         """Devolve o agente pelo id; ``ValueError`` se não existir."""

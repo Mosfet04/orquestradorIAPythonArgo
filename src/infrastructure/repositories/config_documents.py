@@ -3,14 +3,17 @@
 O Mongo (coleções ``agents_config``, ``teams_config``, ``tools``) e o YAML (``CONFIG_YAML_PATH``,
 seções ``agents``, ``teams``, ``tools``) guardam o mesmo formato de documento e passam pelas mesmas
 funções: mesmo resultado, mesmas recusas (validação nas entidades). Também ficam aqui os logs comuns
-de documento inválido e de chave camelCase ignorada, e a regra de uma tool por id.
+de documento inválido e de chave camelCase ignorada, a regra de uma tool por id e o caminho de volta
+da escrita (FA-01): entidade -> documento em snake_case e a ``version`` do documento.
 """
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Mapping
+from enum import Enum
 from itertools import islice
-from typing import Any
+from typing import Any, TypeVar
 
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.rag_config import (
@@ -26,6 +29,9 @@ from src.domain.ports import ILogger
 # Documento cru (sem schema): os valores só são validados pelas entidades.
 Document = Mapping[str, Any]
 
+# Entidade de config (o tipo de cada um dos três repositórios).
+ConfigEntityT = TypeVar("ConfigEntityT", AgentConfig, TeamConfig, Tool)
+
 # Erros do mapeamento documento -> entidade (campo ausente, tipo errado, valor fora do enum).
 INVALID_DOCUMENT_ERRORS = (ValueError, TypeError, AttributeError, KeyError)
 
@@ -39,6 +45,38 @@ MAX_LOGGED_ITEM_POSITIONS = 10
 def is_active(doc: object) -> bool:
     """Entra nas listagens: ``active`` é o booleano ``True`` (como a consulta ``{"active": True}`` do Mongo)."""
     return isinstance(doc, Mapping) and doc.get("active") is True
+
+
+def document_version(doc: Document) -> int:
+    """``version`` do documento (FA-01); ausente ou nula (legado) é 0.
+
+    Outro valor que não um inteiro >= 0 invalida o documento (``ValueError``), em vez de virar 0: uma
+    versão inventada faria toda escrita nele conflitar sem motivo visível. Só a listagem da escrita
+    (``list_all``) aplica a regra: o runtime (``get_active_*``, busca por id) segue servindo o
+    documento, que some só do admin (com log) até a ``version`` ser corrigida no banco.
+    """
+    version = doc.get("version")
+    if version is None:
+        return 0
+    if isinstance(version, bool) or not isinstance(version, int) or version < 0:
+        raise ValueError("version do documento deve ser inteiro >= 0")
+    return version
+
+
+def entity_document(entity: ConfigEntityT) -> dict[str, Any]:
+    """Entidade -> documento em snake_case, o formato que os ``map_*_document`` leem de volta."""
+    return {key: _plain(value) for key, value in dataclasses.asdict(entity).items()}
+
+
+def _plain(value: Any) -> Any:
+    """Só dict/list/escalares: enum vira o valor, mapeamento vira dict e tupla vira lista."""
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, Mapping):
+        return {key: _plain(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_plain(item) for item in value]
+    return value
 
 
 def text_id(doc: object) -> str | None:

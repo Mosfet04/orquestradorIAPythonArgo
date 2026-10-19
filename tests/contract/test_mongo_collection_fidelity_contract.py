@@ -4,8 +4,8 @@ A mesma suíte roda contra a ``FakeMongoCollection`` (pelo ``FakeMotorClient``) 
 ``MONGO_LIVE_URL`` (marker ``live``), contra uma coleção de um Mongo de verdade pelo motor. Cobre o
 que os repositórios e o ``AsyncMongoDb`` do agno usam e em que um fake costuma divergir: ordenação
 com campo ausente, igualdade BSON de booleano, índice único (``BulkWriteError`` 11000 com
-``ordered=False``, ``DuplicateKeyError`` no upsert), ``find_one(sort=)``, ``None``/``$exists``/``$or``,
-campo de lista, projeção e paginação.
+``ordered=False``, ``DuplicateKeyError`` no upsert e no ``insert_one``), ``find_one(sort=)``,
+``None``/``$exists``/``$or``, campo de lista, projeção e paginação.
 """
 
 from __future__ import annotations
@@ -180,6 +180,22 @@ async def test_find_one_and_replace_com_upsert_devolve_o_documento_novo(collecti
     assert created["runs"] == [] and updated["runs"] == [1]
     assert updated["_id"] == created["_id"]
     assert await collection.count_documents({}) == 1
+
+
+async def test_insert_one_gera_id_no_documento_e_repetido_no_indice_unico_levanta_duplicate_key(
+    collection: Any,
+) -> None:
+    """A criação de config (FA-01) conta com isto quando a coleção tem o índice único de ``id``."""
+    await collection.create_index([("id", 1)], unique=True)
+    first = {"id": "a", "k": "primeiro"}
+    await collection.insert_one(first)
+
+    with pytest.raises(DuplicateKeyError) as raised:
+        await collection.insert_one({"id": "a", "k": "repetido"})
+
+    assert raised.value.code == DUPLICATE_KEY
+    assert (await collection.find_one({"id": "a"}))["_id"] == first["_id"]
+    assert await _keys(collection.find({})) == ["primeiro"]
 
 
 async def test_upsert_que_nao_casa_o_filtro_mas_repete_a_chave_unica_levanta_duplicate_key(collection: Any) -> None:

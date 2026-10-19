@@ -2,21 +2,20 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from src.domain.entities.tool import Tool
 from src.domain.ports import ILogger
 from src.domain.repositories.tool_repository import IToolRepository
-from src.infrastructure.repositories.config_documents import (
-    INVALID_DOCUMENT_ERRORS,
-    first_tool_per_id,
-    map_tool_document,
-)
-from src.infrastructure.repositories.mongo_base import AsyncMongoRepository
+from src.infrastructure.repositories.config_documents import first_tool_per_id, map_tool_document
+from src.infrastructure.repositories.mongo_base import MongoConfigRepository, MongoDocument
 
 
-class MongoToolRepository(AsyncMongoRepository, IToolRepository):
+class MongoToolRepository(MongoConfigRepository[Tool], IToolRepository):
     """Implementação async do repositório de tools."""
+
+    _id_field = "tool_id"
+    # quem a referencia loga a ausência com o id do agente (AgentFactoryService)
+    _invalid_message = "Documento de tool inválido ignorado"
+    _warns_camel_case = False
 
     def __init__(
         self,
@@ -66,13 +65,9 @@ class MongoToolRepository(AsyncMongoRepository, IToolRepository):
             self._logger.error("Erro ao listar tools ativas", error_type=type(exc).__name__)
             raise
 
-    async def _active_tools(self, query: dict[str, Any]) -> list[Tool]:
+    def _map(self, doc: MongoDocument) -> Tool:
+        return map_tool_document(doc)
+
+    async def _active_tools(self, query: MongoDocument) -> list[Tool]:
         """Tools da consulta na ordem estável; inválida isola só ela e o id repetido fica com a primeira."""
-        tools: list[Tool] = []
-        async for doc in self._collection.find(query).sort(self._STABLE_ORDER):
-            try:
-                tools.append(map_tool_document(doc))
-            except INVALID_DOCUMENT_ERRORS as exc:
-                # quem a referencia loga a ausência com o id do agente (AgentFactoryService)
-                self._log_invalid_document("Documento de tool inválido ignorado", "tool_id", doc, exc)
-        return first_tool_per_id(tools, self._logger)
+        return first_tool_per_id(await self._documents(query, self._map), self._logger)

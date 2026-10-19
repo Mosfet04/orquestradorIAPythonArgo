@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
+from src.domain.entities.validation import require_text
+
 
 class HttpMethod(Enum):
     """Métodos HTTP suportados."""
@@ -58,8 +60,7 @@ class Tool:
     active: bool = True
 
     def __post_init__(self):
-        if not self.id:
-            raise ValueError("ID da tool não pode estar vazio")
+        require_text(self.id, "ID da tool")
         if not self.name:
             raise ValueError("Nome da tool não pode estar vazio")
         if not self.description:

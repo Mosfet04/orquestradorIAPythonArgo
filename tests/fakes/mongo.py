@@ -5,7 +5,7 @@ Só o que os repositórios e o ``AsyncMongoDb`` do agno 2.5.8 usam em sessões e
 ``find``/``find_one`` com filtro de igualdade em campos de topo (ex.: ``{"active": True}``), ``$in``,
 ``$ne``, ``$exists`` e ``$or``, projeção de inclusão, ``sort`` por um campo ou por uma lista de campos (no
 cursor ou no kwarg ``sort=``), ``skip``/``limit``/``to_list``, iteração com ``async for``,
-``insert_many`` (com ``_id`` gerado), ``replace_one``/``find_one_and_replace`` (com ``upsert``),
+``insert_one``/``insert_many`` (com ``_id`` gerado), ``replace_one``/``find_one_and_replace`` (com ``upsert``),
 ``delete_one``/``delete_many``, ``distinct``, ``count_documents`` e o ``aggregate`` mínimo das
 estatísticas de memória (``$match``, ``$group`` com ``$sum: 1``/``$max``, ``$sort``, ``$skip``,
 ``$limit``, ``$count``). O índice único de
@@ -315,6 +315,13 @@ class FakeMongoCollection:
         if unique and len(fields) == 1:
             self.unique_keys.add(fields[0][0])
         return name or "_".join(f"{k}_{d}" for k, d in fields)
+
+    async def insert_one(self, doc: dict[str, Any]) -> None:
+        """Como o pymongo: ``_id`` gerado no documento passado; repetido no índice único = ``DuplicateKeyError``."""
+        self._use()
+        doc.setdefault("_id", ObjectId())
+        self._refuse_duplicate(doc)
+        self.docs.append(copy.deepcopy(doc))
 
     async def insert_many(self, docs: list[dict[str, Any]], *, ordered: bool = True) -> None:
         """Como o pymongo: ``_id`` gerado no documento passado; com ``ordered=False`` grava todos os que

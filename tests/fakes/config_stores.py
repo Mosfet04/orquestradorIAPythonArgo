@@ -10,7 +10,7 @@ A ordem da lista é a ordem estável do backend: ``_id`` crescente no Mongo, ord
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -21,7 +21,7 @@ from bson import ObjectId
 
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.team_config import TeamConfig
-from src.domain.entities.tool import Tool
+from src.domain.entities.tool import HttpMethod, Tool
 from src.domain.repositories.agent_config_repository import IAgentConfigRepository
 from src.domain.repositories.team_config_repository import ITeamConfigRepository
 from src.domain.repositories.tool_repository import IToolRepository
@@ -248,6 +248,64 @@ def entity_backend(
     if name == "memory":
         return MemoryBackend()
     return EntityBackend(document_backend(name, monkeypatch, tmp_path, live))
+
+
+WRITABLE_BACKEND_PARAMS = ("memory", "mongo", _LIVE_PARAM)
+"""Backends por entidades que aceitam escrita (FA-01; o YAML é só leitura). Mongo sem índice
+único de ``id``: a escrita não pode depender dele."""
+
+
+# ── os três tipos de config, para a suíte de contrato da escrita (FA-01) ─────────
+
+
+def make_agent(entity_id: str, label: str = "v0", *, active: bool = True) -> AgentConfig:
+    return AgentConfig(
+        id=entity_id, nome=label, factory_ia_model="ollama", model="m", descricao="d", prompt="p", active=active
+    )
+
+
+def make_team(entity_id: str, label: str = "v0", *, active: bool = True) -> TeamConfig:
+    return TeamConfig(id=entity_id, nome=label, factory_ia_model="ollama", model="m", member_ids=["a"], active=active)
+
+
+def make_tool(entity_id: str, label: str = "v0", *, active: bool = True) -> Tool:
+    return Tool(
+        id=entity_id,
+        name=label,
+        description="d",
+        route="https://example.invalid",
+        http_method=HttpMethod.GET,
+        parameters=[],
+        active=active,
+    )
+
+
+@dataclasses.dataclass(frozen=True)
+class ConfigKind:
+    """Uma das três portas: como montar a entidade, o repositório e as leituras do runtime."""
+
+    make: Callable[..., Any]
+    repo: Callable[[Any, list[Any]], Any]
+    get: Callable[[Any, str], Awaitable[Any]]
+    active: Callable[[Any], Awaitable[list[Any]]]
+
+    @staticmethod
+    def label(entity: Any) -> str:
+        """O rótulo que ``make`` grava: ``nome`` em agent/team, ``name`` na tool."""
+        return str(entity.name if isinstance(entity, Tool) else entity.nome)
+
+
+CONFIG_KINDS = {
+    "agent": ConfigKind(
+        make_agent, lambda b, i: b.agent_repo(i), lambda r, i: r.get_agent_by_id(i), lambda r: r.get_active_agents()
+    ),
+    "team": ConfigKind(
+        make_team, lambda b, i: b.team_repo(i), lambda r, i: r.get_team_by_id(i), lambda r: r.get_active_teams()
+    ),
+    "tool": ConfigKind(
+        make_tool, lambda b, i: b.tool_repo(i), lambda r, i: r.get_tool_by_id(i), lambda r: r.get_all_active_tools()
+    ),
+}
 
 
 # ── documentos de exemplo da suíte de contrato de documentos ─────────

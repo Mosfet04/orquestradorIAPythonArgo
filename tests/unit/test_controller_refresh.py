@@ -83,7 +83,7 @@ async def test_refresh_com_sucesso_troca_os_dois_caches() -> None:
     controller, agents, _, logger = _setup()
     await controller.warm_up_cache()
     old_agents = await controller.get_agents()
-    agents._items.append(_agent("a3"))
+    await agents.save(_agent("a3"), 0)
 
     await controller.refresh_agents()
 
