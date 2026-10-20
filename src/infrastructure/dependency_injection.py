@@ -21,6 +21,7 @@ from src.application.use_cases.get_active_agents_use_case import GetActiveAgents
 from src.application.use_cases.get_active_teams_use_case import GetActiveTeamsUseCase
 from src.domain.ports import IEmbedderFactory, ILogger
 from src.domain.repositories.agent_config_repository import IAgentConfigRepository
+from src.domain.repositories.config_audit import ConfigAuditLog
 from src.domain.repositories.team_config_repository import ITeamConfigRepository
 from src.domain.repositories.tool_repository import IToolRepository
 from src.infrastructure.config.app_config import AppConfig
@@ -39,7 +40,8 @@ from src.infrastructure.repositories.config_documents import (
 from src.infrastructure.repositories.mongo_agent_config_repository import (
     MongoAgentConfigRepository,
 )
-from src.infrastructure.repositories.mongo_base import MongoDocument
+from src.infrastructure.repositories.mongo_base import MongoClientFactory, MongoDocument
+from src.infrastructure.repositories.mongo_config_audit_log import MongoConfigAuditLog
 from src.infrastructure.repositories.mongo_document_tree_repository import (
     MongoDocumentTreeRepository,
 )
@@ -195,14 +197,14 @@ def build_config_admin(
     logger: ILogger,
     *,
     runtime: RuntimeSwap,
-    writable: bool,
+    audit: ConfigAuditLog | None,
 ) -> ConfigAdmin:
     """Administração da config (FA-02) sobre os repositórios do store, com a troca a quente do runtime (FA-04).
 
     O corpo passa pelo mapper do store no modo estrito (recusa o que a leitura legada tolera) e os três
-    editores e o ``reload`` dividem uma trava de escrita (as referências cruzam os tipos e cada escrita monta
-    o runtime com a config que as anteriores gravaram). ``writable``: ``False`` com o store YAML (toda escrita
-    responde 409 antes de montar).
+    editores, o ``reload`` e o ``sync`` dividem uma trava de escrita (as referências cruzam os tipos e cada
+    escrita monta o runtime com a config que as anteriores gravaram). ``audit``: o diário das escritas (FA-05);
+    ``None`` com o store YAML (só leitura: toda escrita responde 409 antes de montar).
     """
     lock = asyncio.Lock()
     return ConfigAdmin(
@@ -213,7 +215,7 @@ def build_config_admin(
             logger,
             lock,
             runtime,
-            writable=writable,
+            audit=audit,
             tools=tools,
             teams=teams,
         ),
@@ -224,7 +226,7 @@ def build_config_admin(
             logger,
             lock,
             runtime,
-            writable=writable,
+            audit=audit,
             agents=agents,
         ),
         tools=ToolConfigEditor(
@@ -234,11 +236,12 @@ def build_config_admin(
             logger,
             lock,
             runtime,
-            writable=writable,
+            audit=audit,
             agents=agents,
         ),
         runtime=runtime,
         write_lock=lock,
+        audit=audit,
     )
 
 
@@ -306,16 +309,16 @@ class DependencyContainer:
             runtime, team_config_repo, self._logger
         )
 
-        writable = self.config.config_store != "yaml"
+        audit = self._build_config_audit()
         self._config_admin = build_config_admin(
             agent_config_repo,
             team_config_repo,
             tool_repo,
             self._logger,
             runtime=RuntimeSwap(runtime, agents_use_case, teams_use_case, self._logger),
-            writable=writable,
+            audit=audit,
         )
-        self._config_schema = build_config_schema(providers, writable=writable)
+        self._config_schema = build_config_schema(providers, writable=audit is not None)
 
         self._controller = OrquestradorController(
             get_active_agents_use_case=agents_use_case,
@@ -441,6 +444,14 @@ class DependencyContainer:
             MongoTeamConfigRepository(connection_string=conn, database_name=db, logger=self._logger),
             MongoToolRepository(connection_string=conn, database_name=db, logger=self._logger),
         )
+
+    def _build_config_audit(self) -> ConfigAuditLog | None:
+        """Diário das escritas de config (FA-05) no Mongo; ``None`` com o store YAML, que a API não grava."""
+        config = self.config
+        if config.config_store == "yaml":
+            return None
+        client = MongoClientFactory.get_client(config.mongo_connection_string)
+        return MongoConfigAuditLog(client[config.mongo_database_name])
 
     def get_orquestrador_controller(self) -> OrquestradorController:
         """Devolve o controller; ``RuntimeError`` se o container não foi inicializado."""

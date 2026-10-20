@@ -48,7 +48,7 @@ Ordem de execução = numeração. Cada item passa por `/dev-cycle <item> --comm
 | FA-02 | concluído |
 | FA-03 | concluído |
 | FA-04 | concluído |
-| FA-05 | pendente |
+| FA-05 | concluído |
 | FA-06 | pendente |
 | FA-07 | pendente |
 

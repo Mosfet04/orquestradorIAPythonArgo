@@ -20,7 +20,7 @@ from src.domain.entities.agent_config import AgentConfig
 from src.domain.ports import InvalidModelConfigError
 from src.domain.repositories.versioning import ConfigStoreReadOnly, Versioned
 from src.infrastructure.dependency_injection import build_config_admin
-from tests.fakes.admin_config_app import agent, agent_body, fake_runtime_swap, team, tool
+from tests.fakes.admin_config_app import agent, agent_body, fake_audit_log, fake_runtime_swap, team, tool
 from tests.fakes.config_stores import YamlBackend, agent_document
 from tests.fakes.logger import RecordingLogger
 from tests.fakes.repositories import (
@@ -84,7 +84,7 @@ class _Admin:
             self.tools,
             self.logger,
             runtime=fake_runtime_swap(self.agents, self.teams, self.runtime),
-            writable=True,
+            audit=fake_audit_log(),
         )
 
     def served(self) -> tuple[list[tuple[str, str]], list[str]]:
@@ -150,7 +150,7 @@ async def test_team_alterado_sem_membro_montado_recusa():
 async def test_alteracao_monta_grava_e_troca_e_devolve_a_revisao():
     world = _Admin(InMemoryAgentConfigRepository([agent("a1"), agent("a2")]))
 
-    written = await world.admin.agents.replace("a1", agent_body("a1", nome="Renomeado"), 0)
+    written = await world.admin.agents.replace("a1", agent_body("a1", nome="Renomeado"), 0, actor="admin")
 
     assert isinstance(written, ConfigWrite)
     assert (written.item.version, written.runtime_revision) == (1, 1)
@@ -164,7 +164,7 @@ async def test_config_que_nao_monta_nao_grava_nem_troca_e_loga_a_recusa():
     world.runtime.swap([await runtime.build_agent(agent("a1"))], [])
 
     with pytest.raises(ConfigNotBuildable):
-        await world.admin.agents.create(agent_body("a2"))
+        await world.admin.agents.create(agent_body("a2"), actor="admin")
 
     assert [i.entity.id for i in await world.agents.list_all()] == ["a1"]
     assert (world.runtime.revision, world.served()) == (1, ([("a1", "Agente a1")], []))
@@ -182,16 +182,16 @@ async def test_store_so_leitura_recusa_toda_escrita_antes_de_montar(tmp_path: Pa
     runtime = FakeAgentRuntime(failures={"a2": InvalidModelConfigError("x")})
     logger = RecordingLogger()
     admin = build_config_admin(
-        agents, teams, tools, logger, runtime=fake_runtime_swap(agents, teams, runtime), writable=False
+        agents, teams, tools, logger, runtime=fake_runtime_swap(agents, teams, runtime), audit=None
     )
 
     writes: list[Callable[[], Awaitable[object]]] = [
-        lambda: admin.agents.replace("a1", agent_body("a1", nome="Renomeado"), 0),  # monta
-        lambda: admin.agents.create(agent_body("a2")),  # não monta
-        lambda: admin.teams.create(TEAM_BODY),
-        lambda: admin.tools.create({"id": "t"}),
-        lambda: admin.agents.deactivate("a1", 0),
-        lambda: admin.agents.remove("a1", 0),
+        lambda: admin.agents.replace("a1", agent_body("a1", nome="Renomeado"), 0, actor="admin"),  # monta
+        lambda: admin.agents.create(agent_body("a2"), actor="admin"),  # não monta
+        lambda: admin.teams.create(TEAM_BODY, actor="admin"),
+        lambda: admin.tools.create({"id": "t"}, actor="admin"),
+        lambda: admin.agents.deactivate("a1", 0, actor="admin"),
+        lambda: admin.agents.remove("a1", 0, actor="admin"),
     ]
     for write in writes:
         with pytest.raises(ConfigStoreReadOnly):
@@ -204,9 +204,9 @@ async def test_store_so_leitura_recusa_toda_escrita_antes_de_montar(tmp_path: Pa
 async def test_criacao_de_team_e_remocoes_trocam_o_conjunto_servido():
     world = _Admin(InMemoryAgentConfigRepository([agent("a1"), agent("a2")]))
 
-    created = await world.admin.teams.create(TEAM_BODY)
-    deactivated = await world.admin.agents.deactivate("a2", 0)
-    removed_revision = await world.admin.teams.remove("t1", created.item.version)
+    created = await world.admin.teams.create(TEAM_BODY, actor="admin")
+    deactivated = await world.admin.agents.deactivate("a2", 0, actor="admin")
+    removed_revision = await world.admin.teams.remove("t1", created.item.version, actor="admin")
 
     assert (created.runtime_revision, deactivated.runtime_revision, removed_revision) == (1, 2, 3)
     assert world.served() == ([("a1", "Agente a1")], [])
@@ -225,7 +225,7 @@ async def test_escrita_de_tool_grava_antes_de_montar_porque_o_agente_le_as_tools
 
     world.runtime.build_agent = build_reading_tools  # type: ignore[method-assign]
 
-    written = await world.admin.tools.replace("cep", {**shown, "description": "nova"}, 0)
+    written = await world.admin.tools.replace("cep", {**shown, "description": "nova"}, 0, actor="admin")
 
     assert written.runtime_revision == 1
     assert descriptions_at_build == ["nova"]
@@ -240,7 +240,7 @@ async def test_tool_gravada_com_falha_na_troca_loga_e_sobe_sem_texto_da_excecao(
     shown = (await world.admin.tools.get("cep")).entity
 
     with pytest.raises(RuntimeError):
-        await world.admin.tools.replace("cep", {**shown, "description": "nova"}, 0)
+        await world.admin.tools.replace("cep", {**shown, "description": "nova"}, 0, actor="admin")
 
     assert [i.entity.description for i in await world.tools.list_all()] == ["nova"]
     assert [(r.level, r.message, r.context) for r in world.logger.records] == [
@@ -283,8 +283,8 @@ async def test_duas_escritas_simultaneas_sao_serializadas_e_a_ultima_troca_tem_a
     world = _Admin(_YieldingAgents([agent("a1"), agent("a2")]))
 
     first, second = await asyncio.gather(
-        world.admin.agents.replace("a1", agent_body("a1", nome="Um"), 0),
-        world.admin.agents.replace("a2", agent_body("a2", nome="Dois"), 0),
+        world.admin.agents.replace("a1", agent_body("a1", nome="Um"), 0, actor="admin"),
+        world.admin.agents.replace("a2", agent_body("a2", nome="Dois"), 0, actor="admin"),
     )
 
     assert sorted((first.runtime_revision, second.runtime_revision)) == [1, 2]
@@ -297,7 +297,7 @@ async def test_reload_concorrente_com_escrita_nao_troca_por_um_conjunto_velho():
     world = _Admin(agents)
     reload = asyncio.create_task(world.admin.reload())
     await agents.reading.wait()
-    write = asyncio.create_task(world.admin.agents.replace("a1", agent_body("a1", nome="Novo"), 0))
+    write = asyncio.create_task(world.admin.agents.replace("a1", agent_body("a1", nome="Novo"), 0, actor="admin"))
     for _ in range(20):
         await asyncio.sleep(0)
     agents.release.set()

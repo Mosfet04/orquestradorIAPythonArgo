@@ -44,6 +44,7 @@ from src.infrastructure.runtime.agno.agent_factory_service import AgentFactorySe
 from src.infrastructure.runtime.agno.http_tool_factory import HttpToolFactory
 from src.infrastructure.web.app_factory import AppFactory
 from tests.fakes import FakeChatModel, FakeEmbedderFactory, InMemoryToolRepository, RecordingLogger
+from tests.fakes.admin_config_app import read_only_config_admin
 from tests.fakes.agui import assert_valid_run, parse_agui_sse, text_of, types_of
 from tests.fakes.web import agno_runtime, mount_agent_os
 
@@ -679,7 +680,7 @@ def test_lifespan_real_monta_o_agui_por_entidade_e_desmonta_sem_resto(monkeypatc
             config=factory._config,
             cleanup=cleanup,
             get_agent_runtime=lambda: runtime,
-            get_config_admin=lambda: None,
+            get_config_admin=read_only_config_admin,
             get_config_schema=lambda: None,
         )
         return factory._container

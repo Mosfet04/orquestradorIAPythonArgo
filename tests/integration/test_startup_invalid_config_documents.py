@@ -36,6 +36,7 @@ from tests.fakes import (
     InMemoryToolRepository,
     RecordingLogger,
 )
+from tests.fakes.admin_config_app import read_only_config_admin
 from tests.fakes.session_db import fake_session_db
 
 _ENV_NAMES = ("ENVIRONMENT", "ENABLE_DOCS", "CORS_ALLOWED_ORIGINS", "APP_HOST", "API_KEY_RUN", "API_KEY_ADMIN")
@@ -151,7 +152,7 @@ def _start(monkeypatch: pytest.MonkeyPatch, logger: RecordingLogger) -> tuple[Ap
             health_service=None,
             get_orquestrador_controller=lambda: controller,
             get_agent_runtime=lambda: runtime,
-            get_config_admin=lambda: None,
+            get_config_admin=read_only_config_admin,
             get_config_schema=lambda: None,
         )
         return factory._container

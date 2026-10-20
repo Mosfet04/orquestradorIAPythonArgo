@@ -6,6 +6,7 @@ Só o que os repositórios e o ``AsyncMongoDb`` do agno 2.5.8 usam em sessões e
 ``$ne``, ``$exists`` e ``$or``, projeção de inclusão, ``sort`` por um campo ou por uma lista de campos (no
 cursor ou no kwarg ``sort=``), ``skip``/``limit``/``to_list``, iteração com ``async for``,
 ``insert_one``/``insert_many`` (com ``_id`` gerado), ``replace_one``/``find_one_and_replace`` (com ``upsert``),
+``find_one_and_update`` só com ``$inc`` (com ``upsert``),
 ``delete_one``/``delete_many``, ``distinct``, ``count_documents`` e o ``aggregate`` mínimo das
 estatísticas de memória (``$match``, ``$group`` com ``$sum: 1``/``$max``, ``$sort``, ``$skip``,
 ``$limit``, ``$count``). O índice único de
@@ -292,6 +293,29 @@ class FakeMongoCollection:
             return before
         after = next((d for d in self.docs if _matches(d, filter)), None)
         return copy.deepcopy(after) if after is not None else None
+
+    async def find_one_and_update(
+        self,
+        filter: dict[str, Any],  # pylint: disable=redefined-builtin  # nome do parâmetro no pymongo
+        update: dict[str, Any],
+        *,
+        upsert: bool = False,
+        return_document: bool = ReturnDocument.BEFORE,
+    ) -> dict[str, Any] | None:
+        """Só ``$inc`` (o contador da revisão da config, FA-05); sem casar e com ``upsert``, cria pelo filtro."""
+        if set(update) != {"$inc"}:
+            raise NotImplementedError(f"update não suportado pelo fake: {sorted(update)}")
+        self._use(filter)
+        found = next((d for d in self.docs if _matches(d, filter)), None)
+        if found is None and not upsert:
+            return None
+        before = copy.deepcopy(found)
+        if found is None:
+            found = {"_id": ObjectId(), **{k: v for k, v in filter.items() if not isinstance(v, dict)}}
+            self.docs.append(found)
+        for key, amount in update["$inc"].items():
+            found[key] = found.get(key, 0) + amount
+        return copy.deepcopy(found) if return_document == ReturnDocument.AFTER else before
 
     async def delete_one(self, query: dict[str, Any]) -> FakeWriteResult:
         self._use(query)

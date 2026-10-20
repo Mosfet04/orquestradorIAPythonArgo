@@ -39,6 +39,7 @@ from tests.fakes import (
     RecordingLogger,
     loopback_client,
 )
+from tests.fakes.admin_config_app import fake_audit_log
 from tests.fakes.logger import LoggedRecord
 from tests.fakes.session_db import fake_session_db
 
@@ -130,7 +131,7 @@ class _Env:
             InMemoryToolRepository(),
             logger,
             runtime=RuntimeSwap(runtime, agents_use_case, teams_use_case, logger),
-            writable=True,
+            audit=fake_audit_log(),
         )
 
     def app(self, monkeypatch: pytest.MonkeyPatch) -> tuple[AppFactory, Any]:

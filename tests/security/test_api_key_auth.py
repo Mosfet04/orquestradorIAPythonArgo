@@ -678,6 +678,43 @@ async def test_lifespan_passa_direto_no_modo_dev_local():
     assert seen == ["lifespan"]
 
 
+@pytest.mark.parametrize(
+    ("keys", "presented", "path", "expected"),
+    [
+        (ApiKeys(run=RUN_KEY.encode(), admin=ADMIN_KEY.encode()), ADMIN_KEY, "/admin/config/agents", "admin"),
+        (ApiKeys(run=RUN_KEY.encode(), admin=ADMIN_KEY.encode()), ADMIN_KEY, "/agents", "admin"),
+        (ApiKeys(run=RUN_KEY.encode(), admin=ADMIN_KEY.encode()), RUN_KEY, "/agents", "run"),
+        (None, None, "/admin/config/agents", "local-dev"),
+    ],
+)
+async def test_request_aceito_leva_o_id_da_chave_e_nunca_a_chave(
+    keys: ApiKeys | None, presented: str | None, path: str, expected: str
+):
+    """O ator que a auditoria de config registra (FA-05): o papel da chave, ou ``local-dev`` sem chaves."""
+    seen: list[dict[str, Any]] = []
+
+    async def inner(scope: Scope, receive: Receive, send: Send) -> None:
+        seen.append(dict(scope["state"]))
+        await _ok_app(scope, receive, send)
+
+    headers = [] if presented is None else [(b"authorization", f"Bearer {presented}".encode())]
+    middleware = ApiKeyAuthMiddleware(inner, keys=keys, docs_require_admin=True)
+
+    assert await _status(middleware, _http_scope(method="POST", path=path, headers=headers)) == 200
+    assert seen == [{"api_key_id": expected}]
+    assert all(key not in repr(seen) for key in (RUN_KEY, ADMIN_KEY, RUN_KEY[:12], ADMIN_KEY[:12]))
+
+
+async def test_request_recusado_nao_chega_ao_app_com_id_de_chave():
+    keys = ApiKeys(run=RUN_KEY.encode(), admin=ADMIN_KEY.encode())
+    middleware = ApiKeyAuthMiddleware(_ok_app, keys=keys, docs_require_admin=True)
+    run_key = [(b"authorization", f"Bearer {RUN_KEY}".encode())]
+    scope = _http_scope(method="POST", path="/admin/config/agents", headers=run_key)
+
+    assert await _status(middleware, scope) == 403
+    assert "api_key_id" not in scope.get("state", {})
+
+
 async def test_preflight_que_chega_a_auth_exige_chave():
     """O CORS mais externo responde o preflight; se a ordem quebrar, a auth não abre exceção."""
     keys = ApiKeys(run=RUN_KEY.encode(), admin=ADMIN_KEY.encode())

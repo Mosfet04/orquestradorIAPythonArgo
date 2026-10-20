@@ -389,3 +389,21 @@ class TestPluginConfig:
             with pytest.raises(ValueError, match="DYNAMIC_PROVIDER_SPECS") as caught:
                 AppConfig.load()
         assert "entrada 2" in str(caught.value) and entry not in str(caught.value)
+
+
+# ── CONFIG_REVISION_POLL_SECONDS (FA-05) ──────────────────────────────
+
+
+@pytest.mark.parametrize(("raw", "expected"), [(None, 2.0), ("", 2.0), (" 0.5 ", 0.5), ("10", 10.0)])
+def test_intervalo_do_poll_da_revisao_da_config(raw: str | None, expected: float):
+    env = {} if raw is None else {"CONFIG_REVISION_POLL_SECONDS": raw}
+    with patch.dict(os.environ, env, clear=True):
+        assert AppConfig.load().config_revision_poll_seconds == expected
+
+
+@pytest.mark.parametrize("raw", ["0", "-1", "nan", "inf", "dois", "1e999"])
+def test_intervalo_do_poll_invalido_nao_inicia_e_nao_ecoa_o_valor(raw: str):
+    with patch.dict(os.environ, {"CONFIG_REVISION_POLL_SECONDS": raw}, clear=True), pytest.raises(ValueError) as caught:
+        AppConfig.load()
+
+    assert str(caught.value) == "CONFIG_REVISION_POLL_SECONDS deve ser um número de segundos maior que zero"

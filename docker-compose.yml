@@ -59,6 +59,7 @@ services:
       # ex.: volumes: ["./config.yaml:/app/config.yaml:ro"] e CONFIG_YAML_PATH=/app/config.yaml.
       CONFIG_STORE:
       CONFIG_YAML_PATH:
+      CONFIG_REVISION_POLL_SECONDS:
     # Endurecimento: sem escalada de privilégio, sem capabilities, raiz somente leitura.
     # Nada grava em disco no runtime (logs vão para stdout); /tmp em memória.
     security_opt:

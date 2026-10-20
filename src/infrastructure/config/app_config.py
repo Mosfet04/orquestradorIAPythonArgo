@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import math
 import os
 import re
 from dataclasses import dataclass, field
@@ -27,6 +28,9 @@ DEFAULT_CORS_ALLOWED_ORIGINS = (
 # Chaves de API da borda (F1-04): tamanho mínimo e como gerar uma.
 API_KEY_MIN_LENGTH = 32
 API_KEY_HINT = 'python -c "import secrets; print(secrets.token_urlsafe(32))"'
+
+# Consulta à revisão da config (FA-05): uma réplica serve a escrita de outra em até um ciclo.
+DEFAULT_CONFIG_REVISION_POLL_SECONDS = 2.0
 
 # Rótulo DNS (RFC 1123): letras, dígitos e hífen, sem hífen nas pontas, até 63 caracteres.
 _DNS_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
@@ -87,6 +91,9 @@ class AppConfig:
     # absoluto, conferido no startup; None com "mongo").
     config_store: ConfigStoreName = "mongo"
     config_yaml_path: str | None = None
+    # Segundos entre as consultas à revisão da config no Mongo (FA-05): cada réplica relê e troca o runtime
+    # quando outra grava. Sem efeito com "yaml" (a API não grava; o reload é manual).
+    config_revision_poll_seconds: float = DEFAULT_CONFIG_REVISION_POLL_SECONDS
 
     def __post_init__(self) -> None:
         """``config_store`` só ``mongo`` ou ``yaml``; ``yaml`` exige caminho.
@@ -138,6 +145,7 @@ class AppConfig:
             dynamic_provider_specs=_dynamic_provider_specs(),
             config_store=config_store,
             config_yaml_path=config_yaml_path,
+            config_revision_poll_seconds=_config_revision_poll_seconds(),
         )
         config._validate()
         return config
@@ -273,6 +281,20 @@ def _dynamic_provider_specs() -> tuple[str, ...]:
             )
         targets.append(entry)
     return tuple(targets)
+
+
+def _config_revision_poll_seconds() -> float:
+    """``CONFIG_REVISION_POLL_SECONDS`` (vazio = 2): número finito maior que zero."""
+    raw = (os.getenv("CONFIG_REVISION_POLL_SECONDS") or "").strip()
+    if not raw:
+        return DEFAULT_CONFIG_REVISION_POLL_SECONDS
+    try:
+        value = float(raw)
+    except ValueError:
+        value = math.nan
+    if not (math.isfinite(value) and value > 0):
+        raise ValueError("CONFIG_REVISION_POLL_SECONDS deve ser um número de segundos maior que zero")
+    return value
 
 
 def _config_store() -> tuple[ConfigStoreName, str | None]:

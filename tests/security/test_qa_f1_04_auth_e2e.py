@@ -21,11 +21,13 @@ from starlette.routing import Route, WebSocketRoute
 from starlette.testclient import TestClient
 from starlette.types import ASGIApp
 
+from src.application.use_cases.config_admin_use_case import ConfigAdmin
 from src.infrastructure.config.app_config import API_KEY_MIN_LENGTH
 from src.infrastructure.runtime.agno import AgnoRuntime
 from src.infrastructure.web.api_key_auth import RouteAccess, classify_route
 from src.infrastructure.web.app_factory import AppFactory
 from tests.fakes import FakeChatModel, loopback_client
+from tests.fakes.admin_config_app import read_only_config_admin
 from tests.fakes.runtime import FakeAgentRuntime
 from tests.fakes.session_db import fake_session_db
 from tests.fakes.web import agno_runtime, mount_agent_os
@@ -756,8 +758,8 @@ def _lifespan_client(monkeypatch: pytest.MonkeyPatch, env: dict[str, str]) -> tu
         def get_agent_runtime(self) -> AgnoRuntime:
             return runtime
 
-        def get_config_admin(self) -> None:
-            return None
+        def get_config_admin(self) -> ConfigAdmin:
+            return read_only_config_admin()
 
         def get_config_schema(self) -> None:
             return None
@@ -782,8 +784,8 @@ def test_lifespan_real_monta_o_agentos_com_a_auth_ativa(monkeypatch: pytest.Monk
         assert client.get("/agents").status_code == 401
         assert client.get("/agents", headers=_bearer(RUN_KEY)).status_code == 200
         assert client.post("/admin/refresh-cache", headers=_bearer(RUN_KEY)).status_code == 403
-        # FA-04: alias do /admin/config/reload; o container falso não tem o caso de uso de config.
-        assert client.post("/admin/refresh-cache", headers=_bearer(ADMIN_KEY)).status_code == 503
+        # FA-04: alias do /admin/config/reload; o container falso tem o caso de uso de um store vazio só leitura.
+        assert client.post("/admin/refresh-cache", headers=_bearer(ADMIN_KEY)).status_code == 200
         assert client.get("/metrics/cache", headers=_bearer(ADMIN_KEY)).json() == {"agents": 1}
         run = client.post("/agents/agente-1/runs", data={"message": "oi", "stream": "false"}, headers=_bearer(RUN_KEY))
         assert run.json()["content"] == "resposta do agente"

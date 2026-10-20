@@ -1,4 +1,6 @@
-"""FA-02/FA-04, segurança das rotas ``/admin/config`` e do reload: authz (só a chave admin), injeção e eco de valor.
+"""FA-02/FA-04/FA-05, segurança das rotas ``/admin/config``, do reload e do histórico.
+
+Authz (só a chave admin), injeção e eco de valor.
 
 Borda real (CORS + auth) com repositórios em memória (``tests/fakes/admin_config_app.py``).
 """
@@ -27,6 +29,8 @@ ROUTES = [
     ("PUT", "/tools/cep"),
     ("DELETE", "/tools/cep"),
     ("POST", "/reload"),  # FA-04
+    ("GET", "/agents/a1/history"),  # FA-05
+    ("POST", "/agents/a1/history/0/restore"),
 ]
 PASTED_VALUE = "sk-valor-de-teste-que-parece-segredo-123456"
 

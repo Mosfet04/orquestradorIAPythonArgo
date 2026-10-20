@@ -6,6 +6,7 @@ container -> entidades -> ``runtime.mount``/``start`` e, no shutdown, ``runtime.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from collections.abc import AsyncIterator, Sequence
@@ -32,6 +33,7 @@ from src.infrastructure.web.api_key_auth import (
     ApiKeys,
     resolve_api_keys,
 )
+from src.infrastructure.web.config_revision_poll import poll_config_revision, track_config_revision
 from src.infrastructure.web.metrics_middleware import MetricsMiddleware
 
 # CORS explícito (nada de "*"): o que o AgentOS/os.agno.com e o AG-UI usam. O Starlette
@@ -289,9 +291,11 @@ class AppFactory:
 
     @asynccontextmanager
     async def _lifespan(self, app: FastAPI) -> AsyncIterator[None]:
-        """Container -> telemetria -> entidades -> runtime (rotas e lifespans do AgentOS).
+        """Container -> telemetria -> entidades -> runtime (rotas e lifespans do AgentOS) -> poll da config.
 
-        Shutdown, também depois de falha parcial no startup: flush da telemetria primeiro (o fechamento
+        O poll da revisão da config (FA-05, ``config_revision_poll.py``) só existe com o store Mongo e segue as
+        escritas das outras réplicas. Shutdown, também depois de falha parcial no startup: o poll é parado
+        antes de tudo (nenhuma troca durante o fechamento), depois o flush da telemetria (o fechamento
         do runtime pode demorar e o orquestrador matar o processo), depois o runtime (uma vez) e o
         container. Falha dentro de ``DependencyContainer.create_async`` é fechada por ele mesmo (o
         container só existe aqui quando a inicialização terminou).
@@ -308,18 +312,25 @@ class AppFactory:
         self._lifespan_ran = True
         startup_start = time.perf_counter()
         runtime: AgnoRuntime | None = None
+        poll: asyncio.Task[None] | None = None
         try:
             self._logger.info("Lifespan: iniciando...")
             container = await self._ensure_container()
             # Lidos pelas rotas /admin/config e /admin/schema (src/presentation/routes/).
-            app.state.config_admin = container.get_config_admin()
+            admin = container.get_config_admin()
+            app.state.config_admin = admin
             app.state.config_schema = container.get_config_schema()
             setup_telemetry(container.config)
 
+            # Antes da carga: o poll só relê o que outra réplica gravar depois dela.
+            await track_config_revision(admin, self._logger)
             agents, teams = await self._load_all_entities(container)
             runtime = container.get_agent_runtime()
             self._try_mount_runtime(app, runtime, agents, teams)
             await runtime.start()
+            if admin.audit is not None:  # store YAML: sem revisão a seguir (reload manual)
+                interval = container.config.config_revision_poll_seconds
+                poll = asyncio.create_task(poll_config_revision(admin, interval, self._logger))
 
             self._record_startup_metrics(startup_start, agents, teams)
             yield
@@ -330,6 +341,10 @@ class AppFactory:
             )
             raise
         finally:
+            if poll is not None:
+                # Antes de fechar o runtime: nenhuma troca durante o shutdown (wait não re-levanta o cancel).
+                poll.cancel()
+                await asyncio.wait({poll})
             try:
                 shutdown_telemetry()
             finally:

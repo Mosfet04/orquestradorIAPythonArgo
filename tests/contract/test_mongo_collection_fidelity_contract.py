@@ -182,6 +182,20 @@ async def test_find_one_and_replace_com_upsert_devolve_o_documento_novo(collecti
     assert await collection.count_documents({}) == 1
 
 
+async def test_find_one_and_update_com_inc_e_upsert_cria_e_depois_incrementa(collection: Any) -> None:
+    """O contador da revisão da config (FA-05): o primeiro ``$inc`` cria o documento com o valor 1."""
+    created = await collection.find_one_and_update(
+        {"_id": "contador"}, {"$inc": {"n": 1}}, upsert=True, return_document=ReturnDocument.AFTER
+    )
+    before = await collection.find_one_and_update({"_id": "contador"}, {"$inc": {"n": 1}}, upsert=True)
+    missing = await collection.find_one_and_update({"_id": "outro"}, {"$inc": {"n": 1}})
+
+    assert created == {"_id": "contador", "n": 1}
+    assert before == {"_id": "contador", "n": 1}
+    assert missing is None
+    assert await collection.find({}).to_list(length=None) == [{"_id": "contador", "n": 2}]
+
+
 async def test_insert_one_gera_id_no_documento_e_repetido_no_indice_unico_levanta_duplicate_key(
     collection: Any,
 ) -> None:

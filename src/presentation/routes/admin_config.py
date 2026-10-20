@@ -12,6 +12,12 @@ acrescenta ao documento pode voltar no corpo (a UI reenvia o que leu) e é desca
 Troca a quente (FA-04): a escrita só grava se a config monta no runtime (senão 422 com o tipo do erro, sem
 o texto) e a resposta leva no header ``Runtime-Revision`` a revisão do runtime que já serve a mudança.
 ``POST /admin/config/reload`` relê o store e troca (store YAML, recuperação manual).
+
+Auditoria (FA-05): cada escrita é registrada em nome do id da chave que o ``ApiKeyAuthMiddleware`` pôs em
+``request.state.api_key_id`` (``admin``; ``local-dev`` no modo dev local), nunca a chave. ``GET .../{id}/history``
+lista as escritas do id (documento e diff como a API os mostra, header mascarado) e ``POST
+.../{id}/history/{version}/restore`` (com ``If-Match`` da versão atual) volta o id ao documento daquela versão,
+pelo mesmo caminho do ``PUT``.
 """
 
 from __future__ import annotations
@@ -34,6 +40,7 @@ from src.application.use_cases.config_admin_use_case import (
     InvalidConfig,
 )
 from src.application.use_cases.config_change import ConfigNotBuildable
+from src.domain.repositories.config_audit import ConfigAuditEntry
 from src.domain.repositories.versioning import ConfigStoreReadOnly, ConfigVersionConflict, Versioned
 
 DEFAULT_PAGE_SIZE = 50
@@ -95,15 +102,36 @@ async def _json_object(request: Request) -> dict[str, object]:
     return body
 
 
+def _version(raw: str) -> int | None:
+    """Versão em texto (só dígitos ASCII, curta); ``None`` se não for uma."""
+    if not (raw.isascii() and raw.isdigit() and len(raw) <= _MAX_VERSION_DIGITS):
+        return None
+    return int(raw)
+
+
 def _if_match(request: Request) -> int:
     """Versão do ``If-Match`` (``"3"`` ou ``3``). Ausente: 428; não é versão: 412 (não casa com nenhuma)."""
     raw = request.headers.get("if-match")
     if raw is None:
         raise HTTPException(428, "If-Match obrigatório com o ETag (versão) lido")
-    tag = raw.strip().removeprefix('"').removesuffix('"')
-    if not (tag.isascii() and tag.isdigit() and len(tag) <= _MAX_VERSION_DIGITS):
+    version = _version(raw.strip().removeprefix('"').removesuffix('"'))
+    if version is None:
         raise HTTPException(412, "Versão divergente: releia a config")
-    return int(tag)
+    return version
+
+
+def _actor(request: Request) -> str:
+    """Id da chave que o ``ApiKeyAuthMiddleware`` autenticou; sem ele, nada é gravado (401)."""
+    actor = getattr(request.state, "api_key_id", None)
+    if not isinstance(actor, str):
+        raise HTTPException(401, "unauthorized")
+    return actor
+
+
+def _page(request: Request) -> tuple[int, int]:
+    """``offset`` e ``limit`` da query (422 fora da faixa)."""
+    offset = _query_int(request, "offset", 0, 0, 10**9)
+    return offset, _query_int(request, "limit", DEFAULT_PAGE_SIZE, 1, MAX_PAGE_SIZE)
 
 
 def _query_int(request: Request, name: str, default: int, minimum: int, maximum: int) -> int:
@@ -128,6 +156,16 @@ def _body(item: Versioned[ConfigDocument]) -> ConfigDocument:
 
 def _item(item: Versioned[ConfigDocument], status_code: int = 200) -> JSONResponse:
     return JSONResponse(_body(item), status_code=status_code, headers={"ETag": f'"{item.version}"'})
+
+
+def _history_item(entry: ConfigAuditEntry) -> dict[str, object]:
+    return {
+        "version": entry.version,
+        "actor": entry.actor,
+        "at": entry.at.isoformat(),
+        "diff": {name: {"before": change.before, "after": change.after} for name, change in entry.diff.items()},
+        "document": entry.document,
+    }
 
 
 def _written(written: ConfigWrite, status_code: int = 200) -> JSONResponse:
@@ -157,8 +195,7 @@ def _add_routes(kind: ConfigKind) -> None:
 
     @router.get(f"/{kind}", name=f"list_{kind}")
     async def list_configs(request: Request) -> Response:
-        offset = _query_int(request, "offset", 0, 0, 10**9)
-        limit = _query_int(request, "limit", DEFAULT_PAGE_SIZE, 1, MAX_PAGE_SIZE)
+        offset, limit = _page(request)
         items = await _editor(request, kind).list_all()
         page = [_body(item) for item in items[offset : offset + limit]]
         return JSONResponse({"items": page, "total": len(items), "offset": offset, "limit": limit})
@@ -173,7 +210,8 @@ def _add_routes(kind: ConfigKind) -> None:
     @router.post(f"/{kind}", name=f"create_{kind}", status_code=201)
     async def create_config(request: Request) -> Response:
         try:
-            return _written(await _editor(request, kind).create(await _json_object(request)), status_code=201)
+            body = await _json_object(request)
+            return _written(await _editor(request, kind).create(body, actor=_actor(request)), status_code=201)
         except _USE_CASE_ERRORS as exc:
             return _error(exc)
 
@@ -182,7 +220,9 @@ def _add_routes(kind: ConfigKind) -> None:
         expected_version = _if_match(request)
         try:
             body = await _json_object(request)
-            return _written(await _editor(request, kind).replace(entity_id, body, expected_version))
+            return _written(
+                await _editor(request, kind).replace(entity_id, body, expected_version, actor=_actor(request))
+            )
         except _USE_CASE_ERRORS as exc:
             return _error(exc)
 
@@ -191,11 +231,31 @@ def _add_routes(kind: ConfigKind) -> None:
         expected_version = _if_match(request)
         hard = _hard(request)
         editor = _editor(request, kind)
+        actor = _actor(request)
         try:
             if hard:
-                revision = await editor.remove(entity_id, expected_version)
+                revision = await editor.remove(entity_id, expected_version, actor=actor)
                 return Response(status_code=204, headers={RUNTIME_REVISION_HEADER: str(revision)})
-            return _written(await editor.deactivate(entity_id, expected_version))
+            return _written(await editor.deactivate(entity_id, expected_version, actor=actor))
+        except _USE_CASE_ERRORS as exc:
+            return _error(exc)
+
+    @router.get(f"/{kind}/{{entity_id}}/history", name=f"history_{kind}")
+    async def config_history(request: Request, entity_id: str) -> Response:
+        offset, limit = _page(request)
+        entries = await _editor(request, kind).history(entity_id)
+        page = [_history_item(entry) for entry in entries[offset : offset + limit]]
+        return JSONResponse({"items": page, "total": len(entries), "offset": offset, "limit": limit})
+
+    @router.post(f"/{kind}/{{entity_id}}/history/{{version}}/restore", name=f"restore_{kind}")
+    async def restore_config(request: Request, entity_id: str, version: str) -> Response:
+        expected_version = _if_match(request)
+        restored = _version(version)
+        try:
+            if restored is None:
+                raise ConfigNotFound(entity_id)
+            editor = _editor(request, kind)
+            return _written(await editor.restore(entity_id, restored, expected_version, actor=_actor(request)))
         except _USE_CASE_ERRORS as exc:
             return _error(exc)
 

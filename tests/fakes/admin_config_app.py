@@ -2,8 +2,9 @@
 
 ``admin_world`` cria o app pelo ``AppFactory`` com os routers de ``src/presentation`` e põe no
 ``app.state`` o caso de uso montado como o container monta (``build_config_admin``, mappers reais do
-store, troca a quente sobre o ``FakeAgentRuntime``) e o schema do registry recebido (``build_config_schema``;
-default: os built-ins). Sem lifespan: o ``httpx.ASGITransport`` não o dispara. Chaves são valores de teste.
+store, troca a quente sobre o ``FakeAgentRuntime``, diário de escritas do container sobre o Mongo falso) e
+o schema do registry recebido (``build_config_schema``; default: os built-ins). Sem lifespan: o
+``httpx.ASGITransport`` não o dispara. Chaves são valores de teste.
 """
 
 from __future__ import annotations
@@ -30,10 +31,12 @@ from src.domain.repositories.tool_repository import IToolRepository
 from src.infrastructure.dependency_injection import build_config_admin, build_config_schema
 from src.infrastructure.providers import ProviderRegistry
 from src.infrastructure.providers.builtins import BUILTIN_PROVIDERS
+from src.infrastructure.repositories.mongo_config_audit_log import MongoConfigAuditLog
 from src.infrastructure.web.app_factory import AppFactory
 from src.presentation.routes.admin_config import router as admin_config_router
 from src.presentation.routes.admin_schema import router as admin_schema_router
 from tests.fakes.logger import RecordingLogger
+from tests.fakes.mongo import FakeMotorClient
 from tests.fakes.repositories import (
     InMemoryAgentConfigRepository,
     InMemoryTeamConfigRepository,
@@ -93,6 +96,20 @@ def agent_body(agent_id: str, **extra: Any) -> dict[str, Any]:
     return body
 
 
+def tool_body(**extra: Any) -> dict[str, Any]:
+    """Corpo da tool ``cep`` (sem parâmetros declarados); ``extra`` troca ou acrescenta campos (ex.: ``headers``)."""
+    body: dict[str, Any] = {
+        "id": "cep",
+        "name": "cep",
+        "description": "Busca CEP",
+        "route": "https://api.example.invalid/{cep}",
+        "http_method": "GET",
+        "parameters": [],
+    }
+    body.update(extra)
+    return body
+
+
 def team_body(team_id: str, member_ids: list[str]) -> dict[str, Any]:
     return {"id": team_id, "nome": team_id, "factory_ia_model": "ollama", "model": "qwen3", "member_ids": member_ids}
 
@@ -128,16 +145,36 @@ def fake_runtime_swap(
     )
 
 
+def fake_audit_log(database: Any = None) -> MongoConfigAuditLog:
+    """Diário de escritas do container (FA-05) sobre o Mongo falso; ``database`` compartilhado = mesmo Mongo."""
+    return MongoConfigAuditLog(database if database is not None else FakeMotorClient()["agno"])
+
+
 def fake_config_admin(
     agents: IAgentConfigRepository,
     teams: ITeamConfigRepository,
     tools: IToolRepository,
     logger: RecordingLogger,
     runtime: AgentRuntime | None = None,
+    audit: MongoConfigAuditLog | None = None,
 ) -> ConfigAdmin:
-    """``build_config_admin`` com a troca a quente sobre ``runtime`` (default: um ``FakeAgentRuntime`` novo)."""
+    """``build_config_admin`` com a troca a quente sobre ``runtime`` (default: um ``FakeAgentRuntime`` novo).
+
+    ``audit`` é o diário das escritas (default: um novo, num Mongo falso só dele).
+    """
     return build_config_admin(
-        agents, teams, tools, logger, runtime=fake_runtime_swap(agents, teams, runtime), writable=True
+        agents, teams, tools, logger, runtime=fake_runtime_swap(agents, teams, runtime), audit=audit or fake_audit_log()
+    )
+
+
+def read_only_config_admin() -> ConfigAdmin:
+    """Caso de uso sem diário (store só leitura, como o YAML) sobre repositórios vazios.
+
+    Para os containers falsos que só sobem o lifespan: sem diário, ele não lê revisão nem liga o poll.
+    """
+    agents, teams = InMemoryAgentConfigRepository(), InMemoryTeamConfigRepository()
+    return build_config_admin(
+        agents, teams, InMemoryToolRepository(), RecordingLogger(), runtime=fake_runtime_swap(agents, teams), audit=None
     )
 
 
@@ -150,6 +187,8 @@ class AdminWorld:
     app: FastAPI
     client: httpx.AsyncClient
     runtime: FakeAgentRuntime
+    audit_db: Any
+    """Database falso do diário (``config_audit``, ``config_revision``): o que ficou gravado, cru."""
 
 
 def admin_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -181,9 +220,11 @@ async def admin_world(
     team_repo = InMemoryTeamConfigRepository(teams)
     tool_repo = InMemoryToolRepository(tools)
     runtime = runtime or FakeAgentRuntime()
+    audit_db = FakeMotorClient()["agno"]
+    audit = fake_audit_log(audit_db)
     app = AppFactory().create_app(routers=[admin_config_router, admin_schema_router])
-    app.state.config_admin = fake_config_admin(agent_repo, team_repo, tool_repo, logger, runtime)
+    app.state.config_admin = fake_config_admin(agent_repo, team_repo, tool_repo, logger, runtime, audit)
     app.state.config_schema = build_config_schema(providers or ProviderRegistry(BUILTIN_PROVIDERS), writable=True)
     transport = httpx.ASGITransport(app=app, client=LOOPBACK_CLIENT)
     async with httpx.AsyncClient(transport=transport, base_url=LOOPBACK_BASE_URL) as client:
-        yield AdminWorld(agent_repo, team_repo, tool_repo, logger, app, client, runtime)
+        yield AdminWorld(agent_repo, team_repo, tool_repo, logger, app, client, runtime, audit_db)

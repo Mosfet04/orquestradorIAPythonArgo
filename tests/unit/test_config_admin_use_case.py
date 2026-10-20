@@ -20,7 +20,7 @@ from src.domain.entities.agent_config import AgentConfig
 from src.domain.repositories.versioning import ConfigVersionConflict, Versioned
 from src.infrastructure.dependency_injection import build_config_admin
 from src.infrastructure.repositories.config_documents import entity_document
-from tests.fakes.admin_config_app import agent, agent_body, fake_runtime_swap, team, tool
+from tests.fakes.admin_config_app import agent, agent_body, fake_audit_log, fake_runtime_swap, team, tool
 from tests.fakes.logger import RecordingLogger
 from tests.fakes.repositories import (
     InMemoryAgentConfigRepository,
@@ -67,7 +67,7 @@ def _admin(
         tools or InMemoryToolRepository(),
         logger or RecordingLogger(),
         runtime=fake_runtime_swap(agents, teams),
-        writable=True,
+        audit=fake_audit_log(),
     )
 
 
@@ -79,7 +79,7 @@ async def test_criacao_que_perde_a_corrida_vira_ja_existe():
     admin = _admin(_LosesCreationRace())
 
     with pytest.raises(ConfigAlreadyExists):
-        await admin.agents.create(agent_body("a1"))
+        await admin.agents.create(agent_body("a1"), actor="admin")
 
 
 async def test_documento_recusado_pela_entidade_diz_o_campo_e_loga_so_o_campo_e_o_tipo_de_config():
@@ -87,7 +87,7 @@ async def test_documento_recusado_pela_entidade_diz_o_campo_e_loga_so_o_campo_e_
     admin = _admin(logger=logger)
 
     with pytest.raises(InvalidConfig) as caught:
-        await admin.agents.create(agent_body("a1", nome=["valor-recusado"]))
+        await admin.agents.create(agent_body("a1", nome=["valor-recusado"]), actor="admin")
 
     assert (caught.value.field, caught.value.indexes) == ("nome", ())
     assert str(caught.value) == "Configuração inválida"
@@ -107,13 +107,13 @@ async def test_recusa_do_mapper_sem_campo_conhecido_vira_422_sem_campo():
         logger,
         asyncio.Lock(),
         fake_runtime_swap(agents, teams),
-        writable=True,
+        audit=fake_audit_log(),
         tools=tools,
         teams=teams,
     )
 
     with pytest.raises(InvalidConfig) as caught:
-        await editor.create(agent_body("a1"))
+        await editor.create(agent_body("a1"), actor="admin")
 
     assert (caught.value.field, caught.value.indexes) == (None, ())
     assert "valor" not in repr(logger.records)
@@ -125,7 +125,7 @@ async def test_item_de_tools_ids_que_nao_e_texto_e_recusado_na_posicao_do_corpo_
     admin = _admin(logger=logger, tools=InMemoryToolRepository([tool("cep")]))
 
     with pytest.raises(InvalidConfig) as caught:
-        await admin.agents.create(agent_body("a1", tools_ids=[123, "cep", "fantasma"]))
+        await admin.agents.create(agent_body("a1", tools_ids=[123, "cep", "fantasma"]), actor="admin")
 
     assert (caught.value.field, caught.value.indexes) == ("tools_ids", (0,))
     assert [r.level for r in logger.records] == ["warning"]
@@ -135,7 +135,7 @@ async def test_tools_ids_inexistente_aponta_a_posicao_no_corpo():
     admin = _admin(tools=InMemoryToolRepository([tool("cep")]))
 
     with pytest.raises(InvalidConfig) as caught:
-        await admin.agents.create(agent_body("a1", tools_ids=["cep", "fantasma"]))
+        await admin.agents.create(agent_body("a1", tools_ids=["cep", "fantasma"]), actor="admin")
 
     assert (caught.value.field, caught.value.indexes) == ("tools_ids", (1,))
 
@@ -146,7 +146,7 @@ async def test_chave_de_operador_em_qualquer_nivel_e_recusada_com_log_sem_a_chav
     admin = _admin(agents, logger)
 
     with pytest.raises(InvalidConfig) as caught:
-        await admin.agents.create(agent_body("a1", rag_config={"active": True, "nested": [{"$ne": 1}]}))
+        await admin.agents.create(agent_body("a1", rag_config={"active": True, "nested": [{"$ne": 1}]}), actor="admin")
 
     assert caught.value.field is None
     assert _refusals(logger) == [("warning", {"kind": "agents", "refusal": "InvalidConfig", "field": None})]
@@ -170,7 +170,7 @@ async def test_valor_que_o_json_da_resposta_nao_serializa_e_recusado_sem_gravar(
     admin = _admin(agents, logger)
 
     with pytest.raises(InvalidConfig) as caught:
-        await admin.agents.create(agent_body("a1", **unserializable))
+        await admin.agents.create(agent_body("a1", **unserializable), actor="admin")
 
     assert caught.value.field is None
     assert await agents.list_all() == []
@@ -185,9 +185,9 @@ async def test_recusas_de_conflito_versao_e_uso_logam_o_tipo_sem_id():
     )
 
     for attempt in (
-        admin.agents.create(agent_body("a1")),
-        admin.agents.replace("a1", agent_body("a1"), 4),
-        admin.agents.remove("a1", 0),
+        admin.agents.create(agent_body("a1"), actor="admin"),
+        admin.agents.replace("a1", agent_body("a1"), 4, actor="admin"),
+        admin.agents.remove("a1", 0, actor="admin"),
     ):
         with pytest.raises((ConfigAlreadyExists, ConfigVersionConflict, ConfigInUse)):
             await attempt
@@ -213,11 +213,16 @@ async def test_mascara_com_troca_de_origem_da_route_e_recusada():
         "https://api.example.invalid:99999/cep/{cep}",  # porta que nem parseia
     ):
         with pytest.raises(InvalidConfig) as caught:
-            await admin.tools.replace("cep", {**shown, "route": route}, 0)
+            await admin.tools.replace("cep", {**shown, "route": route}, 0, actor="admin")
         assert caught.value.field == "headers"
-    updated = await admin.tools.replace("cep", {**shown, "route": "https://api.example.invalid/v2/{cep}"}, 0)
+    updated = await admin.tools.replace(
+        "cep", {**shown, "route": "https://api.example.invalid/v2/{cep}"}, 0, actor="admin"
+    )
     with_new_value = await admin.tools.replace(
-        "cep", {**shown, "route": "https://outro.example.invalid/x", "headers": {"Authorization": "novo"}}, 1
+        "cep",
+        {**shown, "route": "https://outro.example.invalid/x", "headers": {"Authorization": "novo"}},
+        1,
+        actor="admin",
     )
 
     assert updated.item.version == 1 and with_new_value.item.version == 2
@@ -232,11 +237,11 @@ async def test_alteracao_com_id_repetido_valida_e_mantem_o_header_do_documento_d
     admin = _admin(tools=tools)
     masked = {**(await admin.tools.get("cep")).entity, "description": "alterado"}
 
-    replaced = await admin.tools.replace("cep", masked, 0)
+    replaced = await admin.tools.replace("cep", masked, 0, actor="admin")
     with pytest.raises(ConfigVersionConflict):
-        await admin.tools.replace("cep", masked, 5)
+        await admin.tools.replace("cep", masked, 5, actor="admin")
     with pytest.raises(ConfigNotFound):
-        await admin.tools.replace("outro", masked, 0)
+        await admin.tools.replace("outro", masked, 0, actor="admin")
 
     assert replaced.item.version == 1
     stored = [(i.entity.description, i.entity.headers, i.version) for i in await tools.list_all()]
@@ -252,8 +257,8 @@ async def test_remocao_concorrente_com_alteracao_de_legado_nao_ressuscita_o_docu
     admin = _admin(agents)
 
     results = await asyncio.gather(
-        admin.agents.remove("a1", 0),
-        admin.agents.replace("a1", agent_body("a1", prompt="alterado"), 0),
+        admin.agents.remove("a1", 0, actor="admin"),
+        admin.agents.replace("a1", agent_body("a1", prompt="alterado"), 0, actor="admin"),
         return_exceptions=True,
     )
 
@@ -267,8 +272,8 @@ async def test_criacao_e_remocao_concorrentes_nao_deixam_referencia_para_tool_re
     admin = _admin(_YieldingAgents(), tools=tools)
 
     results = await asyncio.gather(
-        admin.agents.create(agent_body("a1", tools_ids=["cep"])),
-        admin.tools.remove("cep", 0),
+        admin.agents.create(agent_body("a1", tools_ids=["cep"]), actor="admin"),
+        admin.tools.remove("cep", 0, actor="admin"),
         return_exceptions=True,
     )
 
@@ -283,7 +288,7 @@ async def test_criacao_grava_a_versao_1_e_devolve_o_documento_em_snake_case():
 
     body = agent_body("a1")
     body["factoryIaModel"] = body.pop("factory_ia_model").replace("ollama", "openai")
-    created = await admin.agents.create(body)
+    created = await admin.agents.create(body, actor="admin")
 
     assert created.item.version == 1
     assert created.item.entity["factory_ia_model"] == "openai"
