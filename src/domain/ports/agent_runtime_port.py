@@ -1,4 +1,4 @@
-"""Porta do runtime de agentes (F2-04): monta Agent/Team a partir da configuração.
+"""Porta do runtime de agentes (F2-04): monta Agent/Team a partir da configuração e troca os servidos (FA-04).
 
 Fronteira do framework de agentes (hoje o Agno, em ``src/infrastructure/runtime/agno/``). Tem
 uma implementação só, por exceção à regra de "porta só com 2+ implementações": sem ela,
@@ -37,7 +37,7 @@ class TeamHandle(Protocol):
 
 
 class AgentRuntime(ABC):
-    """Monta uma entidade por vez.
+    """Monta uma entidade por vez e troca as entidades servidas (FA-04).
 
     A política de carga (id repetido, isolamento de falha, paralelismo e log) é dos casos de uso.
     """
@@ -58,4 +58,17 @@ class AgentRuntime(ABC):
         Membro ausente de ``agents`` é ignorado; nenhum membro achado é falha (``ValueError``).
         Síncrono e com I/O bloqueante (segredo ``file:``, DNS do destino do modelo): no caminho
         async, chame via ``asyncio.to_thread``. Falha sobe sem log, como em ``build_agent``.
+        """
+
+    @property
+    @abstractmethod
+    def revision(self) -> int:
+        """Revisão das entidades servidas: 0 = as do startup; cada ``swap`` soma 1."""
+
+    @abstractmethod
+    def swap(self, agents: Sequence[AgentHandle], teams: Sequence[TeamHandle]) -> int:
+        """Passa a servir ``agents`` e ``teams`` (handles deste runtime) no lugar dos atuais; devolve a revisão nova.
+
+        Atômica para quem lê: o request seguinte vê o conjunto novo inteiro; o run em andamento termina com a
+        instância que já pegou. Síncrona e sem I/O (nada intercala no event loop); falha sobe antes de trocar.
         """

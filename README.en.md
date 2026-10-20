@@ -196,7 +196,7 @@ ollama pull qwen3 && ollama pull nomic-embed-text                       # Ollama
 $COMPOSE exec ollama ollama pull qwen3 && $COMPOSE exec ollama ollama pull nomic-embed-text   # compose service
 ```
 
-The seed has no RAG agent. Create one (in mongo-express or `mongosh`) and restart the app (agents are built at startup):
+The seed has no RAG agent. Create one (with `POST /admin/config/agents`, or in mongo-express/`mongosh` followed by `POST /admin/config/reload`; see [Administrative Routes](#administrative-routes-custom)):
 
 ```javascript
 // $COMPOSE exec mongodb mongosh -u <MONGO_ROOT_USERNAME> -p --authenticationDatabase admin agno
@@ -635,7 +635,7 @@ OTEL_SERVICE_NAME=orquestrador-ia
 # AGNO_TELEMETRY=false         # the app assumes false when unset (Agent/Team/AgentOS already use telemetry=False)
 ```
 
-> **CORS**: methods `GET, POST, PUT, PATCH, DELETE, OPTIONS` and headers `Authorization, Content-Type, X-API-Key` (plus the CORS-safelisted ones); no response header is exposed. AgentOS gets the same origin list; the app CORS is re-applied after mounting (even if mounting fails) and is always the outermost middleware, so Agno's default origins are not added.
+> **CORS**: methods `GET, POST, PUT, PATCH, DELETE, OPTIONS` and headers `Authorization, Content-Type, X-API-Key` (plus the CORS-safelisted ones); exposed response headers: `Deprecation`, `Link`, `ETag` and `Runtime-Revision`. AgentOS gets the same origin list; the app CORS is re-applied after mounting (even if mounting fails) and is always the outermost middleware, so Agno's default origins are not added.
 
 > **Agno telemetry**: an explicit `AGNO_TELEMETRY=true` turns Agent/Team telemetry back on (Agno 2.5.8 lets the variable override `telemetry=False`); AgentOS stays off. Known residue: evals created by the AgentOS `/eval-runs` route (`agno/os/routers/evals/utils.py`) use Agno's default `telemetry=True` and ignore `AGNO_TELEMETRY`; to be revisited in F3 (Agno 3.x).
 
@@ -659,7 +659,7 @@ Every route requires an API key, except `GET /livez` and the CORS preflight (`OP
 
 ```bash
 curl -H "Authorization: Bearer $API_KEY_RUN" http://localhost:7777/agents
-curl -X POST -H "X-API-Key: $API_KEY_ADMIN" http://localhost:7777/admin/refresh-cache
+curl -X POST -H "X-API-Key: $API_KEY_ADMIN" http://localhost:7777/admin/config/reload
 ```
 
 ---
@@ -706,7 +706,7 @@ AG-UI details (F1-08):
 - `user_id` still comes from `forwardedProps.user_id` (see [Smart Memory](#smart-memory)); a non-string value is dropped (the run proceeds without `user_id`; an entity with user memory refuses it).
 - `GET /config` does not list AG-UI (its `interfaces` list is empty): use `POST /agui/{id}` with the ids from `GET /agents` and `GET /teams`.
 - Cancelling an AG-UI run: `POST /agents/{id}/runs/{runId}/cancel` (or `/teams/...`) while it is in progress. Before it starts or after it finishes the answer is 404 and the request is not stored: cancelling before the start does not pre-cancel a future run with that `runId`. A `runId` that already belongs to an in-progress run is replaced by a server UUID (use the events' `runId`); two simultaneous requests with the same `runId` can still collide. Runs have no owner yet: any run key can cancel an in-progress run whose `runId` it knows (binding to the credential is F5).
-- In the browser, `Deprecation` and `Link` are the only response headers exposed by CORS.
+- In the browser, the response headers exposed by CORS are `Deprecation` and `Link` (deprecated aliases) and `ETag` and `Runtime-Revision` (config writes, read by the playground).
 
 ### Administrative Routes (custom)
 
@@ -715,9 +715,10 @@ Except `/livez` (public), they require the admin key.
 | Method | Route | Description |
 |--------|-------|-------------|
 | `GET` | `/livez` | Minimal public (no key) liveness (`{"status":"ok"}`), no dependencies; HEALTHCHECK target |
-| `GET` | `/admin/health` | Detailed health check (MongoDB + memory + OTLP): 200 when `healthy`, **503** when anything is `unhealthy`/`error`; the body never carries exception text (details go to the log, by type) |
+| `GET` | `/admin/health` | Detailed health check (MongoDB + memory + OTLP): 200 when `healthy`, **503** when anything is `unhealthy`/`error`; the body never carries exception text (details go to the log, by type). Includes `runtime_revision`: the revision of the served entities (0 = the startup ones; each hot swap adds 1) |
 | `GET` | `/metrics/cache` | Agent cache statistics |
-| `POST` | `/admin/refresh-cache` | Reloads the internal agent/team cache (the one in `/metrics/cache`) from the config (MongoDB or the YAML file, see `CONFIG_STORE`); an invalid document becomes an error log. The cache is only replaced after agents and teams load: if the reload fails (MongoDB down, broken YAML), the previous cache stays, the error is logged (type only) and the route answers 500. It does **not** change what AgentOS and AG-UI serve: a new, changed or removed agent/team only takes effect after restarting the application (hot reload is out of scope) |
+| `POST` | `/admin/config/reload` | Re-reads the config (MongoDB or the YAML file, see `CONFIG_STORE`), builds every active agent and team and swaps what AgentOS, AG-UI and cancel serve, without a restart: `{"runtime_revision": N}`. It is the path for the YAML store (edited file) and for manual recovery (document written straight to MongoDB). An invalid document becomes an error log and is left out, as at startup; if reading fails (MongoDB down, broken YAML), the previous runtime keeps serving, the error goes to the log (type only) and the route answers 500 |
+| `POST` | `/admin/refresh-cache` | **Deprecated**: alias of `POST /admin/config/reload` (same response, with `Deprecation: true` and a `Link` to the new route). It no longer reloads the `/metrics/cache` cache, which stays the startup one |
 | `GET` | `/admin/config/{agents,teams,tools}` | Paginated list (`?offset=0&limit=50`, max 200) of every document, inactive ones included: `{"items": [...], "total", "offset", "limit"}`; each item carries its `version` |
 | `GET` | `/admin/config/{kind}/{id}` | The id's document (snake_case) with `version`; `ETag: "<version>"` header. Tool header values come out as `***` |
 | `POST` | `/admin/config/{kind}` | Creates (201, version 1). Validated by the entities, stricter than reading: a wrong type, a missing provider (`factory_ia_model`), a non-text item in `tools_ids`/`member_ids`, an unknown `http_method` or parameter type are refused instead of corrected; so is a key the document does not have (a typo such as `promt`, or the camelCase `apiKeyRef`/`baseUrl`/`modelParams`, at the root or in `rag_config`), with the key in `field` (or `unknown_key` when it is not an identifier of up to 64 characters). 422 with `field` (and `indexes`, positions in the body), without echoing the value; `tools_ids` and `member_ids` must exist (422); existing id or YAML store: 409; body over 1 MiB: 413 |
@@ -725,7 +726,7 @@ Except `/livez` (public), they require the admin key.
 | `DELETE` | `/admin/config/{kind}/{id}` | Deactivates (`active: false`); `?hard=true` removes it. Requires `If-Match`. Tool or agent in use: 409 with `used_by` |
 | `GET` | `/admin/schema` | What the UI can offer, built from the running code: `providers.chat`/`providers.embedder` (registry ids and aliases, `PLUGIN_ALLOWLIST` plugins included, each with its accepted `model_params` and `requires_base_url`), `team.mode`, `tool.http_method`, `tool.parameter_type`, `rag_config.search_strategy`, `api_key_ref.formats` (`env:<PROVEDOR>_API_KEY`, `file:<caminho em SECRETS_DIR>`) and `config_store.writable` (`false` with the YAML store). No environment or secret value |
 
-The `/admin/config` routes write to the store (MongoDB; YAML answers 409 on writes) but do **not** yet change what AgentOS and AG-UI serve: the change applies on the next restart (hot swap is FA-04). A key starting with `$` at any level of the body, nesting deeper than 32 levels, a non-finite number (`NaN`, `Infinity`, `1e999`) or text with a lone surrogate (`"\ud800"`) is refused (422). Writes are serialized within the process; across replicas only `If-Match` applies. Each refusal is logged as a warning with the config kind and the refusal type, never the id or the value.
+Writes through `/admin/config` are served without a restart (hot swap, FA-04): an agent or team write builds every active agent and team with the change applied, and only then saves and swaps what AgentOS (`/agents/{id}`, `/teams/{id}`, runs), AG-UI (`/agui/{id}`) and cancel serve. If the changed entity does not build (e.g. a provider refused by the factory), nothing is saved, the previous runtime keeps serving and the response is 422 `{"detail": "Configuração não monta no runtime", "error_type": "<error type>"}` (the error text only goes to the log). A tool is saved first and then everything is built (agent building reads the tools from the store, and a failing tool does not take the agent down). The write response (`POST`, `PUT`, `DELETE`) carries the `Runtime-Revision` header with the revision that already serves the change (the body stays the document). An entity created after startup answers on AgentOS and AG-UI; deactivated or removed, 404 on both. A run in progress (streaming included) finishes with the pre-swap instance; old instances are released when their runs end. AgentOS is mounted even with no active entity at startup, to serve the ones created later. The YAML store answers 409 to every write, before validating the body or building any entity: edit the file and call `POST /admin/config/reload`. A key starting with `$` at any level of the body, nesting deeper than 32 levels, a non-finite number (`NaN`, `Infinity`, `1e999`) or text with a lone surrogate (`"\ud800"`) is refused (422). Writes and reload are serialized within the process (each build sees what the previous ones saved); across replicas only `If-Match` applies, and each replica only serves the changes made on it (or after a `reload`). Each refusal is logged as a warning with the config kind and the refusal type, never the id or the value. Known limitations (closing the replaced instances is FA-05): each write rebuilds every RAG agent, and each one opens a vector db Mongo client that is never closed; on Mongo, building a RAG agent before saving already touches its collection (index repair, re-embedding, document insert), even if the save then fails, so a `PUT` that changes the embedder or the `doc_name` alters the collection of the agent still being served; AgentOS `/knowledge` lists only the startup knowledge bases (a RAG agent created later does not show up, a removed one stays).
 
 ### Interactive Documentation
 
@@ -950,7 +951,7 @@ db.agents_config.insertOne({
 });
 ```
 
-Then restart the application: routes (`/agents/{id}`, `/agui/{id}`...) and the served instances are built at startup. The same applies to changing or deactivating an agent/team. `POST /admin/refresh-cache` only reloads the internal cache (`/metrics/cache`) and does not apply the change to what is being served (hot reload is out of scope).
+Then call `POST /admin/config/reload` (or restart the application) to serve the document written straight to the database. The same applies to changing or deactivating an agent/team. Through the API (`/admin/config`), the swap happens on the write itself.
 
 ### Configuration in a YAML file (`CONFIG_STORE=yaml`)
 
@@ -963,8 +964,8 @@ CONFIG_YAML_PATH=config.example.yaml   # relative = from the working directory
 
 - **Format**: a mapping with the `agents`, `teams` and `tools` sections (all optional; any other top-level key stops the app from starting), each a list of documents **in the same format as the collections** (same mapper, same validation). [`config.example.yaml`](config.example.yaml) has the same content as the `mongo-init/init-db.js` seed (equivalence test in `tests/integration/test_config_store_equivalence.py`).
 - **Same semantics as MongoDB**: only `active: true` (boolean) is loaded; an invalid document is skipped with a log (see [Invalid documents](#invalid-documents)); repeated id: the first one in file order wins; agents reference tools by `tools_ids` and teams reference agents by `member_ids`. Never put secrets in the file: model keys only through `api_key_ref`.
-- **Reading**: PyYAML's safe loader (`CSafeLoader` with libyaml; no Python object tags), off the event loop. The config is queried at startup and on `POST /admin/refresh-cache` (no automatic reload), and the file is only re-read when it changes (inode, size and modification time; swapping a ConfigMap's symlink also counts); concurrent queries wait for a single read.
-- **Refused** (the app does not start; on refresh, the previous cache stays), with a message that only gives line/column, never the content: invalid YAML; anchors and aliases (`&`/`*`, including the `<<: *x` merge key: not supported, which also closes the "billion laughs" exponential expansion); a repeated key in a mapping (two `agents` sections, a field twice: PyYAML would silently keep the last one); nesting deeper than 64 levels; a value YAML cannot build (e.g. an impossible unquoted date, `2024-13-45`). A section item that is not an object is an invalid document (logged once per file read).
+- **Reading**: PyYAML's safe loader (`CSafeLoader` with libyaml; no Python object tags), off the event loop. The config is queried at startup and on `POST /admin/config/reload` (no automatic reload), and the file is only re-read when it changes (inode, size and modification time; swapping a ConfigMap's symlink also counts); concurrent queries wait for a single read.
+- **Refused** (the app does not start; on reload, the previous runtime keeps serving), with a message that only gives line/column, never the content: invalid YAML; anchors and aliases (`&`/`*`, including the `<<: *x` merge key: not supported, which also closes the "billion laughs" exponential expansion); a repeated key in a mapping (two `agents` sections, a field twice: PyYAML would silently keep the last one); nesting deeper than 64 levels; a value YAML cannot build (e.g. an impossible unquoted date, `2024-13-45`). A section item that is not an object is an invalid document (logged once per file read).
 - **Startup validation**: `CONFIG_STORE` only `mongo` or `yaml`; with `yaml`, `CONFIG_YAML_PATH` is required and must point to a readable regular file (a symlink is fine, like a Kubernetes ConfigMap's). The file belongs to the operator, like `.env`: it is not confined to a directory.
 - **MongoDB is still required**: sessions, user memory, RAG chunks and the document tree live there; only the config collections are no longer read.
 - **Docker**: the container root is read-only; mount the file, e.g. `volumes: ["./config.yaml:/app/config.yaml:ro"]` with `CONFIG_YAML_PATH=/app/config.yaml` (`docker-compose.yml` passes `CONFIG_STORE` and `CONFIG_YAML_PATH` through).
@@ -1177,7 +1178,7 @@ tests/
    - Fetches active agent configs from MongoDB
    - For each config, `AgentFactoryService` creates an `agno.Agent` with model, tools, knowledge, and memory
    - Then `GetActiveTeamsUseCase` fetches active team configs and `TeamFactoryService` creates `agno.Team` with agents as members
-5. Created agents and teams are passed to `AgnoRuntime.mount` (`src/infrastructure/runtime/agno/runtime.py`), which creates `AgentOS(agents, teams, base_app)` (REST + SSE routes on FastAPI) and mounts the app's own AG-UI router (`POST /agui/{id}` per entity, `src/infrastructure/runtime/agno/agui_router.py`); `AppFactory` reinstalls CORS and auth outermost and `runtime.start()` opens the AgentOS lifespans (closed by `runtime.close()` on shutdown, before the container)
+5. Created agents and teams are passed to `AgnoRuntime.mount` (`src/infrastructure/runtime/agno/runtime.py`), which creates `AgentOS(agents, teams, base_app)` (REST + SSE routes on FastAPI) and mounts the app's own AG-UI router (`POST /agui/{id}` per entity, `src/infrastructure/runtime/agno/agui_router.py`); `AppFactory` reinstalls CORS and auth outermost and `runtime.start()` opens the AgentOS lifespans (closed by `runtime.close()` on shutdown, before the container). Afterwards, each write through `/admin/config` and each `POST /admin/config/reload` builds the entities again and calls `AgnoRuntime.swap`, which replaces the served ones (FA-04)
 6. Server is ready on port 7777
 
 ### Implemented Patterns

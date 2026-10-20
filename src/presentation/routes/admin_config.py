@@ -8,6 +8,10 @@ acima de ``MAX_BODY_BYTES`` é 413, contado na leitura do stream (vale também s
 ``PUT`` e ``DELETE`` exigem ``If-Match`` com a versão lida (ausente: 428; outra versão: 412).
 ``DELETE`` é lógico (``active: false``); ``?hard=true`` remove o documento. O ``version`` que a resposta
 acrescenta ao documento pode voltar no corpo (a UI reenvia o que leu) e é descartado: vale o ``If-Match``.
+
+Troca a quente (FA-04): a escrita só grava se a config monta no runtime (senão 422 com o tipo do erro, sem
+o texto) e a resposta leva no header ``Runtime-Revision`` a revisão do runtime que já serve a mudança.
+``POST /admin/config/reload`` relê o store e troca (store YAML, recuperação manual).
 """
 
 from __future__ import annotations
@@ -26,8 +30,10 @@ from src.application.use_cases.config_admin_use_case import (
     ConfigInUse,
     ConfigKind,
     ConfigNotFound,
+    ConfigWrite,
     InvalidConfig,
 )
+from src.application.use_cases.config_change import ConfigNotBuildable
 from src.domain.repositories.versioning import ConfigStoreReadOnly, ConfigVersionConflict, Versioned
 
 DEFAULT_PAGE_SIZE = 50
@@ -37,10 +43,12 @@ MAX_BODY_BYTES = 1024 * 1024
 _MAX_VERSION_DIGITS = 18
 # Chave da versão no documento que a API mostra (não é campo da entidade).
 _VERSION = "version"
+RUNTIME_REVISION_HEADER = "Runtime-Revision"
 
 # Recusa do caso de uso ou da porta -> (status, texto fixo); nunca o texto da exceção.
 _REFUSALS: dict[type[Exception], tuple[int, str]] = {
     InvalidConfig: (422, "Configuração inválida"),
+    ConfigNotBuildable: (422, "Configuração não monta no runtime"),
     ConfigNotFound: (404, "Config não encontrada"),
     ConfigAlreadyExists: (409, "Já existe config com este id"),
     ConfigInUse: (409, "Config em uso"),
@@ -52,12 +60,17 @@ _USE_CASE_ERRORS = tuple(_REFUSALS)
 router = APIRouter(prefix="/admin/config", tags=["admin-config"])
 
 
-def _editor(request: Request, kind: ConfigKind) -> ConfigEditorOfAnyKind:
-    """Editor do tipo, do caso de uso que o lifespan pôs em ``app.state.config_admin``."""
+def _admin(request: Request) -> ConfigAdmin:
+    """Caso de uso que o lifespan pôs em ``app.state.config_admin``; sem ele, 503."""
     admin = getattr(request.app.state, "config_admin", None)
     if not isinstance(admin, ConfigAdmin):
         raise HTTPException(503, "Administração da configuração indisponível")
-    return admin.editor(kind)
+    return admin
+
+
+def _editor(request: Request, kind: ConfigKind) -> ConfigEditorOfAnyKind:
+    """Editor do tipo."""
+    return _admin(request).editor(kind)
 
 
 async def _limited_body(request: Request) -> bytes:
@@ -117,6 +130,12 @@ def _item(item: Versioned[ConfigDocument], status_code: int = 200) -> JSONRespon
     return JSONResponse(_body(item), status_code=status_code, headers={"ETag": f'"{item.version}"'})
 
 
+def _written(written: ConfigWrite, status_code: int = 200) -> JSONResponse:
+    response = _item(written.item, status_code)
+    response.headers[RUNTIME_REVISION_HEADER] = str(written.runtime_revision)
+    return response
+
+
 def _error(exc: Exception) -> JSONResponse:
     """Resposta de uma recusa do caso de uso ou da porta (``_REFUSALS``), com onde e quem, sem valor."""
     status_code, detail = next(refusal for kind, refusal in _REFUSALS.items() if isinstance(exc, kind))
@@ -128,6 +147,8 @@ def _error(exc: Exception) -> JSONResponse:
             body["indexes"] = list(exc.indexes)
     if isinstance(exc, ConfigInUse):
         body["used_by"] = exc.used_by
+    if isinstance(exc, ConfigNotBuildable):
+        body["error_type"] = exc.error_type
     return JSONResponse(body, status_code=status_code)
 
 
@@ -152,7 +173,7 @@ def _add_routes(kind: ConfigKind) -> None:
     @router.post(f"/{kind}", name=f"create_{kind}", status_code=201)
     async def create_config(request: Request) -> Response:
         try:
-            return _item(await _editor(request, kind).create(await _json_object(request)), status_code=201)
+            return _written(await _editor(request, kind).create(await _json_object(request)), status_code=201)
         except _USE_CASE_ERRORS as exc:
             return _error(exc)
 
@@ -161,7 +182,7 @@ def _add_routes(kind: ConfigKind) -> None:
         expected_version = _if_match(request)
         try:
             body = await _json_object(request)
-            return _item(await _editor(request, kind).replace(entity_id, body, expected_version))
+            return _written(await _editor(request, kind).replace(entity_id, body, expected_version))
         except _USE_CASE_ERRORS as exc:
             return _error(exc)
 
@@ -172,12 +193,18 @@ def _add_routes(kind: ConfigKind) -> None:
         editor = _editor(request, kind)
         try:
             if hard:
-                await editor.remove(entity_id, expected_version)
-                return Response(status_code=204)
-            return _item(await editor.deactivate(entity_id, expected_version))
+                revision = await editor.remove(entity_id, expected_version)
+                return Response(status_code=204, headers={RUNTIME_REVISION_HEADER: str(revision)})
+            return _written(await editor.deactivate(entity_id, expected_version))
         except _USE_CASE_ERRORS as exc:
             return _error(exc)
 
 
 for _kind in get_args(ConfigKind):
     _add_routes(_kind)
+
+
+@router.post("/reload", name="reload_config")
+async def reload_config(request: Request) -> JSONResponse:
+    """Relê o store, monta todas as entidades ativas e troca o runtime; devolve a revisão nova."""
+    return JSONResponse({"runtime_revision": await _admin(request).reload()})

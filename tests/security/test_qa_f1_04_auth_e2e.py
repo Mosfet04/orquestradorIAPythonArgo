@@ -26,6 +26,7 @@ from src.infrastructure.runtime.agno import AgnoRuntime
 from src.infrastructure.web.api_key_auth import RouteAccess, classify_route
 from src.infrastructure.web.app_factory import AppFactory
 from tests.fakes import FakeChatModel, loopback_client
+from tests.fakes.runtime import FakeAgentRuntime
 from tests.fakes.session_db import fake_session_db
 from tests.fakes.web import agno_runtime, mount_agent_os
 
@@ -305,7 +306,8 @@ def test_varredura_toda_rota_real_respeita_a_classe(sweep_apps: dict[str, FastAP
     ("method", "path", "admin_statuses"),
     [
         ("GET", "/admin/health", {200}),
-        ("POST", "/admin/refresh-cache", {200}),
+        # FA-04: alias do /admin/config/reload; sem o caso de uso no app.state (sem lifespan), 503 próprio.
+        ("POST", "/admin/refresh-cache", {503}),
         ("GET", "/metrics/cache", {200}),
         # F2-08: o AgentOS tem o db de sessões (db=). O migrate do agno 2.5.8 não funciona com Mongo
         # (get_latest_schema_version sem table_name, no MongoDb síncrono também): 207 com a falha.
@@ -342,7 +344,9 @@ def test_admin_health_devolve_o_corpo_so_para_admin(build_app: Callable[..., Fas
         async def check_async(self) -> dict[str, object]:
             return unhealthy
 
-    factory._container = SimpleNamespace(health_service=_Health())  # type: ignore[assignment]
+    factory._container = SimpleNamespace(  # type: ignore[assignment]
+        health_service=_Health(), get_agent_runtime=FakeAgentRuntime
+    )
     import os
 
     for name in _ENV_NAMES:
@@ -358,7 +362,7 @@ def test_admin_health_devolve_o_corpo_so_para_admin(build_app: Callable[..., Fas
     ok = client.get("/admin/health", headers=_bearer(ADMIN_KEY))
 
     assert forbidden.status_code == 403 and forbidden.json() == {"detail": "forbidden"}
-    assert ok.status_code == 503 and ok.json() == unhealthy
+    assert ok.status_code == 503 and ok.json() == {**unhealthy, "runtime_revision": 0}
 
 
 # ── /livez público, com e sem chaves ─────────────────────────────────
@@ -726,9 +730,6 @@ class _Controller:
     def get_cache_stats(self) -> dict[str, int]:
         return {"agents": len(self._agents)}
 
-    async def refresh_agents(self) -> None:
-        return None
-
 
 def _lifespan_client(monkeypatch: pytest.MonkeyPatch, env: dict[str, str]) -> tuple[TestClient, AppFactory]:
     from src.infrastructure import dependency_injection as di
@@ -781,7 +782,8 @@ def test_lifespan_real_monta_o_agentos_com_a_auth_ativa(monkeypatch: pytest.Monk
         assert client.get("/agents").status_code == 401
         assert client.get("/agents", headers=_bearer(RUN_KEY)).status_code == 200
         assert client.post("/admin/refresh-cache", headers=_bearer(RUN_KEY)).status_code == 403
-        assert client.post("/admin/refresh-cache", headers=_bearer(ADMIN_KEY)).json() == {"status": "cache_refreshed"}
+        # FA-04: alias do /admin/config/reload; o container falso não tem o caso de uso de config.
+        assert client.post("/admin/refresh-cache", headers=_bearer(ADMIN_KEY)).status_code == 503
         assert client.get("/metrics/cache", headers=_bearer(ADMIN_KEY)).json() == {"agents": 1}
         run = client.post("/agents/agente-1/runs", data={"message": "oi", "stream": "false"}, headers=_bearer(RUN_KEY))
         assert run.json()["content"] == "resposta do agente"

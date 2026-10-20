@@ -39,7 +39,9 @@
     ],
     "expose_headers": [
      "Deprecation",
-     "Link"
+     "ETag",
+     "Link",
+     "Runtime-Revision"
     ]
    }
   ],
@@ -1114,7 +1116,9 @@
     ],
     "expose_headers": [
      "Deprecation",
-     "Link"
+     "ETag",
+     "Link",
+     "Runtime-Revision"
     ]
    }
   ],

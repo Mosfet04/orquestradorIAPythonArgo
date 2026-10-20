@@ -1,4 +1,4 @@
-"""FA-02, segurança das rotas ``/admin/config``: authz (só a chave admin), injeção de operador e eco de valor.
+"""FA-02/FA-04, segurança das rotas ``/admin/config`` e do reload: authz (só a chave admin), injeção e eco de valor.
 
 Borda real (CORS + auth) com repositórios em memória (``tests/fakes/admin_config_app.py``).
 """
@@ -26,6 +26,7 @@ ROUTES = [
     ("GET", "/tools/cep"),
     ("PUT", "/tools/cep"),
     ("DELETE", "/tools/cep"),
+    ("POST", "/reload"),  # FA-04
 ]
 PASTED_VALUE = "sk-valor-de-teste-que-parece-segredo-123456"
 
@@ -44,6 +45,7 @@ async def test_nenhuma_rota_nova_aceita_a_chave_run_nem_request_sem_chave(
     assert with_run.json() == {"detail": "forbidden"}
     assert anonymous.status_code == 401
     assert [(i.entity.nome, i.version) for i in await world.agents.list_all()] == [("Agente a1", 0)]
+    assert world.runtime.revision == 0  # nada trocado no runtime
 
 
 @pytest.mark.parametrize(

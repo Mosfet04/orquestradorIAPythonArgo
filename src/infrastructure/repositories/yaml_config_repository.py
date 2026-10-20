@@ -12,8 +12,8 @@ por ``_id``; só ``active: true`` entra nas listagens; documento inválido isola
 Leitura: ``yaml`` com o loader seguro (``CSafeLoader`` quando o PyYAML tem a libyaml; sem tags de
 objeto Python), fora do event loop. O arquivo é relido só quando muda (``st_ino``, ``st_size`` e
 ``st_mtime_ns`` de ``os.stat``, que segue symlink: a troca de um ConfigMap invalida); consultas
-concorrentes esperam um parse só. Sem watcher nem hot-reload: a config é consultada no startup e no
-``POST /admin/refresh-cache``. Só leitura: ``save``/``delete`` levantam ``ConfigStoreReadOnly`` sem
+concorrentes esperam um parse só. Sem watcher nem recarga automática: a config é consultada no startup e no
+``POST /admin/config/reload``. Só leitura: ``save``/``delete`` levantam ``ConfigStoreReadOnly`` sem
 tocar o arquivo (FA-01); ``list_all`` traz a ``version`` do documento (sem ela, 0). Recusados, com
 ``YamlConfigError`` (mensagem nossa, só linha/coluna, nunca trecho do arquivo): YAML inválido,
 âncora/alias (não suportados: também fecham a expansão exponencial), chave repetida num mapeamento,

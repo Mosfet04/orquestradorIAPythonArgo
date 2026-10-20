@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from src.application.use_cases.config_admin_use_case import ConfigAdmin
 from src.infrastructure.web.app_factory import AppFactory
 
 
@@ -17,8 +18,8 @@ def mock_container():
     controller.get_agents = AsyncMock(return_value=[])
     controller.get_cache_stats = MagicMock(return_value={"hits": 0, "misses": 0})
     controller.warm_up_cache = AsyncMock()
-    controller.refresh_agents = AsyncMock()
     container.get_orquestrador_controller.return_value = controller
+    container.get_agent_runtime.return_value.revision = 0
     container.health_service = None
     container.cleanup = AsyncMock()
     return container
@@ -41,7 +42,7 @@ class TestAppFactory:
         async with AsyncClient(transport=transport, base_url="http://127.0.0.1:7777") as client:
             resp = await client.get("/admin/health")
             assert resp.status_code == 200
-            assert resp.json()["status"] == "healthy"
+            assert resp.json() == {"status": "healthy", "runtime_revision": 0}
 
     async def test_cache_metrics_endpoint(self, mock_container):
         factory = AppFactory()
@@ -57,12 +58,14 @@ class TestAppFactory:
         factory = AppFactory()
         factory._container = mock_container
         app = factory.create_app()
+        # O lifespan põe o caso de uso de config no app.state; sem ele (ASGITransport), à mão.
+        app.state.config_admin = MagicMock(spec=ConfigAdmin, reload=AsyncMock(return_value=1))
 
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://127.0.0.1:7777") as client:
             resp = await client.post("/admin/refresh-cache")
             assert resp.status_code == 200
-            assert resp.json()["status"] == "cache_refreshed"
+            assert resp.json() == {"runtime_revision": 1}
 
 
 # ── helpers ────────────────────────────────────────────────────────

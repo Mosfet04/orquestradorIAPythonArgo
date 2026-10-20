@@ -321,7 +321,7 @@ def test_fora_do_modo_dev_local_o_plugin_nao_ganha_loopback(
     with TestClient(app, **LOCAL, headers=headers) as http:  # type: ignore[arg-type]
         listed = http.get("/agents")
 
-    assert listed.status_code == 404  # sem agente válido o AgentOS não monta a rota
+    assert listed.status_code == 200 and listed.json() == []  # sem agente válido, AgentOS vazio (FA-04)
     assert result.created == []
     assert "MODEL_BASE_URL_ALLOWLIST" in result.failures()["loopback"]["reason"]
 

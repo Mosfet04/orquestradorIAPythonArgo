@@ -270,7 +270,7 @@ def _spy_agent_os(mp: pytest.MonkeyPatch, result: Booted) -> None:
 
 
 def _exercise(http: TestClient, result: Booted) -> None:
-    """Lista, detalha, roda cada entidade (sem e com ``user_id``) e recarrega o cache."""
+    """Lista, detalha, roda cada entidade (sem e com ``user_id``) e recarrega (``/admin/refresh-cache``)."""
     result.agents = http.get("/agents").json()
     result.teams = http.get("/teams").json()
     result.agent_details = {a["id"]: http.get(f"/agents/{a['id']}").json() for a in result.agents}
@@ -451,10 +451,10 @@ def test_doc_name_hostil_desativa_o_rag_so_do_agente_dele(boot: Booted) -> None:
 # ── cache do controller com os handles ──────────────────────────────────────────────────────────
 
 
-def test_cache_do_controller_conta_entidades_e_o_refresh_recarrega_sem_perder_nada(boot: Booted) -> None:
+def test_cache_do_controller_conta_entidades_e_o_refresh_troca_o_runtime_sem_perder_nada(boot: Booted) -> None:
+    """FA-04: o refresh é alias do reload (troca o runtime); o cache do controller fica o do startup."""
     assert boot.cache_boot["agents"]["agent_count"] == len(LOADED_AGENTS)
     assert boot.cache_boot["teams"]["team_count"] == len(LOADED_TEAMS)
-    assert boot.refresh == (200, {"status": "cache_refreshed"})
+    assert boot.refresh == (200, {"runtime_revision": 1})
     assert boot.cache_after["agents"]["agent_count"] == len(LOADED_AGENTS)
     assert boot.cache_after["teams"]["team_count"] == len(LOADED_TEAMS)
-    assert boot.cache_after["agents"]["hit_count"] == 0  # cache novo depois do refresh

@@ -15,9 +15,10 @@ from typing import Any
 
 import pytest
 
+from src.application.use_cases.config_admin_use_case import RuntimeSwap
 from src.application.use_cases.get_active_agents_use_case import GetActiveAgentsUseCase
 from src.application.use_cases.get_active_teams_use_case import GetActiveTeamsUseCase
-from src.infrastructure.dependency_injection import HealthService
+from src.infrastructure.dependency_injection import HealthService, build_config_admin
 from src.infrastructure.logging.logger_adapter import StructlogLoggerAdapter
 from src.infrastructure.repositories import mongo_base
 from src.infrastructure.repositories.mongo_agent_config_repository import MongoAgentConfigRepository
@@ -115,18 +116,21 @@ class _Env:
             session_db=session_db,
         )
         self.runtime = runtime
+        agent_repo = MongoAgentConfigRepository(connection_string=CONN, logger=logger)
+        team_repo = MongoTeamConfigRepository(connection_string=CONN, logger=logger)
+        agents_use_case = GetActiveAgentsUseCase(runtime, agent_repo, logger)
+        teams_use_case = GetActiveTeamsUseCase(runtime, team_repo, logger)
         self.controller = OrquestradorController(
-            get_active_agents_use_case=GetActiveAgentsUseCase(
-                runtime,
-                MongoAgentConfigRepository(connection_string=CONN, logger=logger),
-                logger,
-            ),
-            get_active_teams_use_case=GetActiveTeamsUseCase(
-                runtime,
-                MongoTeamConfigRepository(connection_string=CONN, logger=logger),
-                logger,
-            ),
-            logger=logger,
+            get_active_agents_use_case=agents_use_case, get_active_teams_use_case=teams_use_case, logger=logger
+        )
+        # Como o container monta (FA-04): o /admin/refresh-cache é alias do reload do caso de uso de config.
+        self.config_admin = build_config_admin(
+            agent_repo,
+            team_repo,
+            InMemoryToolRepository(),
+            logger,
+            runtime=RuntimeSwap(runtime, agents_use_case, teams_use_case, logger),
+            writable=True,
         )
 
     def app(self, monkeypatch: pytest.MonkeyPatch) -> tuple[AppFactory, Any]:
@@ -137,6 +141,7 @@ class _Env:
         app = factory.create_app()
         controller = self.controller
         runtime = self.runtime
+        config_admin = self.config_admin
 
         class _Mongo:
             class admin:
@@ -154,7 +159,7 @@ class _Env:
                 health_service=HealthService(_Mongo(), self.logger),  # type: ignore[arg-type]
                 get_orquestrador_controller=lambda: controller,
                 get_agent_runtime=lambda: runtime,
-                get_config_admin=lambda: None,
+                get_config_admin=lambda: config_admin,
                 get_config_schema=lambda: None,
             )
             return factory._container
@@ -274,8 +279,8 @@ def test_startup_com_todos_os_documentos_invalidos_sobe_sem_agentes_e_responde_l
     assert health.status_code == 200 and health.json()["status"] == "healthy"
     assert stats.json()["agents"]["agent_count"] == 0
     assert stats.json()["teams"]["team_count"] == 0
-    assert agents.status_code == 404  # AgentOS não montado: só os endpoints admin
-    assert refresh.status_code == 200
+    assert agents.status_code == 200 and agents.json() == []  # AgentOS montado vazio (FA-04)
+    assert refresh.status_code == 200 and refresh.json() == {"runtime_revision": 1}
     assert ignored_at_startup == 7  # 4 agentes + 3 teams, cada um logado uma vez no startup
     assert len([r for r in _errors(env.logger) if r.message.endswith("inválido ignorado")]) == 14  # + o refresh
 
@@ -310,7 +315,7 @@ def test_refresh_cache_com_documento_novo_invalido_nao_derruba_o_app_nem_o_cache
 
     assert before["agents"]["agent_count"] == after["agents"]["agent_count"] == 2
     assert before["teams"]["team_count"] == after["teams"]["team_count"] == 1
-    assert refresh.status_code == 200 and refresh.json() == {"status": "cache_refreshed"}
+    assert refresh.status_code == 200 and refresh.json() == {"runtime_revision": 1}
     assert _ids(agents) == ["valido-1", "valido-2"]
     assert run.status_code == 200
     # nenhum inválido no startup; o refresh ignora os 2 agentes e o team novos, com log de cada um
@@ -318,20 +323,20 @@ def test_refresh_cache_com_documento_novo_invalido_nao_derruba_o_app_nem_o_cache
     assert len(ignored) == 3
 
 
-def test_refresh_cache_nao_faz_hot_reload_de_rota_documentado_no_readme(monkeypatch: pytest.MonkeyPatch):
-    """Agente novo e válido entra no cache, mas só aparece nas rotas após reiniciar (README)."""
+def test_refresh_cache_troca_as_rotas_sem_restart(monkeypatch: pytest.MonkeyPatch):
+    """FA-04: alias do ``POST /admin/config/reload``; o agente novo aparece nas rotas sem reiniciar (README)."""
     env = _Env(monkeypatch, [_agent("valido-1")], [])
     _, app = env.app(monkeypatch)
 
     with loopback_client(app, raise_server_exceptions=False) as client:
         env.agents.docs.append(_agent("novo"))
         refresh = client.post("/admin/refresh-cache")
-        cache = client.get("/metrics/cache").json()
         agents = client.get("/agents")
+        run = client.post("/agents/novo/runs", data={"message": "oi", "stream": "false"})
 
-    assert refresh.status_code == 200
-    assert cache["agents"]["agent_count"] == 2
-    assert _ids(agents) == ["valido-1"]
+    assert refresh.status_code == 200 and refresh.json() == {"runtime_revision": 1}
+    assert _ids(agents) == ["novo", "valido-1"]
+    assert run.status_code == 200
 
 
 def test_refresh_cache_com_falha_do_banco_responde_erro_sem_texto_de_excecao(monkeypatch: pytest.MonkeyPatch):

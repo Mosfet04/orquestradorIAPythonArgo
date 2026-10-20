@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Sequence
 
+from src.application.use_cases.config_change import ConfigChange, ConfigNotBuildable
 from src.domain.entities.team_config import TeamConfig
 from src.domain.ports import AgentHandle, AgentRuntime, ILogger, InvalidModelConfigError, TeamHandle
 from src.domain.repositories.team_config_repository import ITeamConfigRepository
@@ -27,20 +28,26 @@ class GetActiveTeamsUseCase:
         self._repository = team_config_repository
         self._logger = logger
 
-    async def execute(self, agents: Sequence[AgentHandle]) -> list[TeamHandle]:
+    async def execute(
+        self, agents: Sequence[AgentHandle], change: ConfigChange[TeamConfig] | None = None
+    ) -> list[TeamHandle]:
         """Busca configs de teams e cria instâncias usando os agentes fornecidos.
 
         Args:
             agents: Agentes já montados pelo mesmo runtime (membros potenciais).
+            change: Mudança da escrita pela API (FA-04), aplicada à config ativa; se o team alterado não
+                monta, ``ConfigNotBuildable`` depois de logar as falhas.
 
         Returns:
             Teams prontos para servir.
         """
-        configs = self._unique_ids(await self._repository.get_active_teams())
+        active = await self._repository.get_active_teams()
+        configs = self._unique_ids(change.applied(active) if change is not None else active)
         if not configs:
             return []
 
         teams: list[TeamHandle] = []
+        refusal: ConfigNotBuildable | None = None
         for config in configs:
             try:
                 # A criação do modelo pode ler segredo (file:) e resolver DNS: fora do loop.
@@ -57,6 +64,10 @@ class GetActiveTeamsUseCase:
                     error_type=type(exc).__name__,
                     **reason,
                 )
+                if change is not None and config.id == change.entity_id:
+                    refusal = ConfigNotBuildable(type(exc).__name__)
+        if refusal is not None:
+            raise refusal
         return teams
 
     def _unique_ids(self, configs: list[TeamConfig]) -> list[TeamConfig]:

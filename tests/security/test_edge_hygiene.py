@@ -16,6 +16,7 @@ from starlette.testclient import TestClient
 from src.infrastructure.dependency_injection import HealthService
 from src.infrastructure.web.app_factory import AppFactory
 from tests.fakes import FakeChatModel, RecordingLogger, loopback_client
+from tests.fakes.runtime import FakeAgentRuntime
 from tests.fakes.web import mount_agent_os
 
 # Texto que só existe na exceção do driver: não pode chegar ao cliente HTTP.
@@ -35,10 +36,13 @@ class _MongoClientDown:
 
 
 class _HealthOnlyContainer:
-    """Container mínimo: o endpoint de health só usa ``health_service``."""
+    """Container mínimo: o endpoint de health só usa ``health_service`` e a revisão do runtime."""
 
     def __init__(self, health_service: HealthService) -> None:
         self.health_service = health_service
+
+    def get_agent_runtime(self) -> FakeAgentRuntime:
+        return FakeAgentRuntime()
 
     async def cleanup(self) -> None:
         return None
@@ -217,9 +221,12 @@ def test_cors_reaplicado_mesmo_se_a_montagem_do_agentos_falhar(monkeypatch: pyte
     assert denied.status_code == 400
 
 
-def test_cors_expoe_so_o_sinal_de_deprecated_do_agui(build_app: Callable[..., FastAPI]):
-    """F1-08: só ``Deprecation`` e ``Link`` (alias ``POST /agui``) ficam legíveis no navegador."""
+def test_cors_expoe_so_o_sinal_de_deprecated_e_as_versoes_da_config(build_app: Callable[..., FastAPI]):
+    """Legíveis no navegador: ``Deprecation`` e ``Link`` (aliases, F1-08) e ``ETag``/``Runtime-Revision``.
+
+    O playground cross-origin lê o ``ETag`` (``If-Match`` da escrita, FA-02) e o ``Runtime-Revision`` (FA-04).
+    """
     response = loopback_client(build_app()).get("/livez", headers={"Origin": "https://os.agno.com"})
 
     assert response.headers["access-control-allow-origin"] == "https://os.agno.com"
-    assert response.headers["access-control-expose-headers"] == "Deprecation, Link"
+    assert response.headers["access-control-expose-headers"] == "Deprecation, Link, ETag, Runtime-Revision"

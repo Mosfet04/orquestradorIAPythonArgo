@@ -5,9 +5,10 @@ fixa a rota em ``/agui`` (com várias entidades só a primeira respondia; o Agen
 as repetidas), põe ``Access-Control-Allow-Origin: *`` na resposta SSE e deixa o erro do run
 sumir (o conversor do agno não mapeia ``RunError``). Aqui:
 
-- a entidade sai de um registro montado no startup (agentes antes de teams; id
-  inexistente = 404). ``POST /agui`` continua como alias **deprecated** da primeira
-  entidade, com ``Deprecation: true`` e ``Link`` para a rota nova;
+- a entidade sai, a cada request, do registro das entidades servidas (``ServedEntities``,
+  trocado a quente pelo FA-04; agentes antes de teams; id inexistente = 404). ``POST /agui``
+  continua como alias **deprecated** da primeira entidade servida, com ``Deprecation: true`` e
+  ``Link`` para a rota nova (sem nenhuma, 404);
 - a resposta SSE não leva header CORS: quem decide é o ``CORSMiddleware`` do app;
 - falha do run (``RunError``/``TeamRunError`` ou ``RunCancelled`` do próprio run, ou
   exceção) vira ``RUN_ERROR`` no lugar do ``RUN_FINISHED``, com mensagem curta: a de um
@@ -29,13 +30,12 @@ from __future__ import annotations
 
 import re
 import uuid
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator
 from typing import cast
 from urllib.parse import quote
 
 from ag_ui.core import BaseEvent, EventType, RunAgentInput, RunErrorEvent, RunStartedEvent
 from ag_ui.encoder import EventEncoder
-from agno.agent import Agent
 from agno.os.interfaces.agui.utils import (
     async_stream_agno_response_as_agui_events,
     convert_agui_messages_to_agno_messages,
@@ -53,6 +53,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 from src.domain.ports import ILogger
+from src.infrastructure.runtime.agno.served_entities import Entity, ServedEntities
 
 AGUI_PATH = "/agui"
 _RUN_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,64}")
@@ -62,8 +63,8 @@ _CHECK_ERROR_TYPES = frozenset({"input_check_error", "output_check_error"})
 _MAX_ERROR_MESSAGE = 300
 _GENERIC_ERROR = "Falha ao executar o run; detalhes no log do servidor."
 _CANCELLED = "Run cancelado."
+_ENTITY_NOT_FOUND = "entidade não encontrada"
 
-Entity = Agent | Team
 AgnoEvent = RunOutputEvent | TeamRunOutputEvent
 _FAILURE_EVENTS = (AgentRunErrorEvent, TeamRunErrorEvent, AgentRunCancelledEvent, TeamRunCancelledEvent)
 
@@ -75,9 +76,8 @@ def resolve_run_id(candidate: str) -> str:
     return str(uuid.uuid4())
 
 
-def build_agui_router(agents: Sequence[Agent], teams: Sequence[Team], logger: ILogger) -> APIRouter:
-    """Router com ``POST /agui/{entity_id}`` e o alias deprecated ``POST /agui``."""
-    entities = _register(agents, teams, logger)
+def build_agui_router(served: ServedEntities, logger: ILogger) -> APIRouter:
+    """Router com ``POST /agui/{entity_id}`` e o alias deprecated ``POST /agui``, sobre as entidades servidas."""
     router = APIRouter(tags=["AGUI"])
     encoder = EventEncoder()
 
@@ -109,27 +109,22 @@ def build_agui_router(agents: Sequence[Agent], teams: Sequence[Team], logger: IL
 
     @router.post(AGUI_PATH + "/{entity_id}", name="agui_run_entity")
     async def run_entity(entity_id: str, run_input: RunAgentInput) -> StreamingResponse:
-        entity = entities.get(entity_id)
+        entity = served.by_id.get(entity_id)
         if entity is None:
-            raise HTTPException(status_code=404, detail="entidade não encontrada")
+            raise HTTPException(status_code=404, detail=_ENTITY_NOT_FOUND)
         return stream(entity_id, entity, run_input)
 
-    if entities:
-        default_id = next(iter(entities))
+    @router.post(AGUI_PATH, name="agui_run_default", deprecated=True)
+    async def run_default(run_input: RunAgentInput) -> StreamingResponse:
+        default = next(iter(served.by_id.items()), None)
+        if default is None:
+            raise HTTPException(status_code=404, detail=_ENTITY_NOT_FOUND)
+        default_id, entity = default
+        response = stream(default_id, entity, run_input)
+        response.headers["Deprecation"] = "true"
         # Id vem da config (pode ter caractere fora de latin-1): no header vai como URI.
-        successor_link = f'<{AGUI_PATH}/{quote(default_id, safe="")}>; rel="successor-version"'
-        logger.info(
-            "AG-UI montado por entidade; POST /agui é alias deprecated da primeira",
-            entity_ids=list(entities),
-            default_entity_id=default_id,
-        )
-
-        @router.post(AGUI_PATH, name="agui_run_default", deprecated=True)
-        async def run_default(run_input: RunAgentInput) -> StreamingResponse:
-            response = stream(default_id, entities[default_id], run_input)
-            response.headers["Deprecation"] = "true"
-            response.headers["Link"] = successor_link
-            return response
+        response.headers["Link"] = f'<{AGUI_PATH}/{quote(default_id, safe="")}>; rel="successor-version"'
+        return response
 
     @router.get("/status", name="agui_status")
     async def status() -> dict[str, str]:
@@ -137,22 +132,6 @@ def build_agui_router(agents: Sequence[Agent], teams: Sequence[Team], logger: IL
         return {"status": "available"}
 
     return router
-
-
-def _register(agents: Sequence[Agent], teams: Sequence[Team], logger: ILogger) -> dict[str, Entity]:
-    """Registro id -> entidade, agentes antes de teams; id repetido fica com o primeiro."""
-    entities: dict[str, Entity] = {}
-    candidates: list[Entity] = [*agents, *teams]
-    for entity in candidates:
-        entity_id = entity.id
-        if not isinstance(entity_id, str) or not entity_id:
-            logger.warning("Entidade sem id não exposta no AG-UI", entity_name=str(entity.name))
-            continue
-        if entity_id in entities:
-            logger.warning("Id de entidade repetido; AG-UI expõe só a primeira", entity_id=entity_id)
-            continue
-        entities[entity_id] = entity
-    return entities
 
 
 async def _run_events(

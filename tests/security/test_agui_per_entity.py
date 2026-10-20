@@ -142,7 +142,7 @@ def test_navegador_de_origem_permitida_le_o_sinal_de_deprecated(mount: Callable[
     allowed = mounted.client.post("/agui", json=_body(), headers={"Origin": ALLOWED, **RUN})
     denied = mounted.client.post("/agui", json=_body(), headers={"Origin": DENIED, **RUN})
 
-    assert allowed.headers["access-control-expose-headers"] == "Deprecation, Link"
+    assert allowed.headers["access-control-expose-headers"] == "Deprecation, Link, ETag, Runtime-Revision"
     assert allowed.headers["deprecation"] == "true"
     # O Starlette põe Expose-Headers em toda resposta com Origin; sem ACAO o navegador o ignora.
     assert "access-control-allow-origin" not in denied.headers

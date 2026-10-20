@@ -11,6 +11,11 @@ alterar e remover agem no documento do id na versão lida (``If-Match``), e a po
 (leitura e gravação sem intercalar, num processo) e cada recusa vira um aviso no log, sem id nem valor.
 Valores de header de tool saem mascarados; na escrita, o valor mascarado mantém o gravado, desde que
 a ``route`` siga na mesma origem.
+
+Troca a quente (FA-04): cada escrita de agente ou team monta todas as entidades ativas com a mudança
+(``RuntimeSwap.build``), só então grava e troca as servidas pelo runtime; se a entidade alterada não monta,
+``ConfigNotBuildable`` e nada é gravado. Tool é lida do store pela montagem do agente (e nunca o derruba):
+grava antes e depois monta e troca. A troca roda dentro da trava de escrita, como o ``reload``.
 """
 
 from __future__ import annotations
@@ -20,17 +25,20 @@ import dataclasses
 import math
 import re
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import ClassVar, Generic, Literal, TypeVar
 from urllib.parse import urlsplit
 
+from src.application.use_cases.config_change import ConfigChange, ConfigNotBuildable
+from src.application.use_cases.get_active_agents_use_case import GetActiveAgentsUseCase
+from src.application.use_cases.get_active_teams_use_case import GetActiveTeamsUseCase
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.team_config import TeamConfig
 from src.domain.entities.tool import Tool
 from src.domain.entities.validation import InvalidField
-from src.domain.ports import ILogger
+from src.domain.ports import AgentHandle, AgentRuntime, ILogger, TeamHandle
 from src.domain.repositories.agent_config_repository import IAgentConfigRepository
 from src.domain.repositories.team_config_repository import ITeamConfigRepository
 from src.domain.repositories.tool_repository import IToolRepository
@@ -46,6 +54,7 @@ ConfigDocument = dict[str, object]
 """Documento de config como a API o mostra (o formato que o ``parse`` lê de volta)."""
 
 E = TypeVar("E", AgentConfig, TeamConfig, Tool)
+R = TypeVar("R")
 
 MASKED_VALUE = "***"
 # Config real tem poucos níveis (tool > parameters > parâmetro > default_value); muito além disso só
@@ -92,12 +101,66 @@ class ConfigInUse(Exception):
 
 _WRITE_REFUSALS = (
     InvalidConfig,
+    ConfigNotBuildable,
     ConfigNotFound,
     ConfigAlreadyExists,
     ConfigInUse,
     ConfigVersionConflict,
     ConfigStoreReadOnly,
 )
+
+
+@dataclass(frozen=True)
+class ConfigWrite:
+    """Escrita feita: o documento como a API o mostra e a revisão do runtime que já serve a mudança."""
+
+    item: Versioned[ConfigDocument]
+    runtime_revision: int
+
+
+@dataclass(frozen=True)
+class RuntimeBuild:
+    """Entidades montadas, prontas para a troca."""
+
+    agents: list[AgentHandle]
+    teams: list[TeamHandle]
+
+
+class RuntimeSwap:
+    """Monta todas as entidades ativas (com a mudança da escrita, se houver) e troca as servidas (FA-04).
+
+    A montagem é a dos casos de uso do startup (um por id, falha isolada e logada), fora do caminho de
+    request: só quem escreve espera. A troca é da porta (``AgentRuntime.swap``), atômica para quem lê.
+    """
+
+    def __init__(
+        self, runtime: AgentRuntime, agents: GetActiveAgentsUseCase, teams: GetActiveTeamsUseCase, logger: ILogger
+    ) -> None:
+        self._runtime = runtime
+        self._agents = agents
+        self._teams = teams
+        self._logger = logger
+
+    async def build(
+        self, *, agent: ConfigChange[AgentConfig] | None = None, team: ConfigChange[TeamConfig] | None = None
+    ) -> RuntimeBuild:
+        """Entidades da config ativa do store com a mudança; ``ConfigNotBuildable`` se a alterada não monta."""
+        agents = await self._agents.execute(agent)
+        return RuntimeBuild(agents, await self._teams.execute(agents, team))
+
+    def swap(self, build: RuntimeBuild) -> int:
+        """Passa a servir ``build``; devolve a revisão nova do runtime."""
+        return self._runtime.swap(build.agents, build.teams)
+
+    async def reload(self) -> int:
+        """Relê o store, monta e troca; devolve a revisão nova. Falha loga só o tipo e sobe (o runtime segue)."""
+        try:
+            return self.swap(await self.build())
+        except Exception as exc:
+            self._logger.error(
+                "Falha ao recarregar a config; o runtime anterior segue servindo", error_type=type(exc).__name__
+            )
+            raise
 
 
 def _unserializable(value: object) -> bool:
@@ -168,12 +231,17 @@ class ConfigEditor(ABC, Generic[E]):
         dump: Callable[[E], ConfigDocument],
         logger: ILogger,
         write_lock: asyncio.Lock,
+        runtime: RuntimeSwap,
+        *,
+        writable: bool,
     ) -> None:
         self._repository: VersionedConfigRepository[E] = repository
         self._parse: Callable[[Mapping[str, object]], E] = parse
         self._dump: Callable[[E], ConfigDocument] = dump
         self._logger = logger
         self._write_lock = write_lock
+        self._runtime = runtime
+        self._writable = writable
 
     async def list_all(self) -> list[Versioned[ConfigDocument]]:
         """Todos os documentos (inativos inclusive), na ordem estável do store."""
@@ -186,21 +254,18 @@ class ConfigEditor(ABC, Generic[E]):
             raise ConfigNotFound(entity_id)
         return self._shown(found)
 
-    async def create(self, body: Mapping[str, object]) -> Versioned[ConfigDocument]:
+    async def create(self, body: Mapping[str, object]) -> ConfigWrite:
         """Cria o documento na versão 1; ``ConfigAlreadyExists`` se o id já tiver documento."""
         async with self._writing():
             entity = await self._checked(self._parsed(body), None)
             if await self._find(entity.id) is not None:
                 raise ConfigAlreadyExists(entity.id)
             try:
-                version = await self._repository.save(entity, 0)
+                return await self._saved(entity, 0)
             except ConfigVersionConflict:
                 raise ConfigAlreadyExists(entity.id) from None
-            return self._shown(Versioned(entity, version))
 
-    async def replace(
-        self, entity_id: str, body: Mapping[str, object], expected_version: int
-    ) -> Versioned[ConfigDocument]:
+    async def replace(self, entity_id: str, body: Mapping[str, object], expected_version: int) -> ConfigWrite:
         """Substitui o documento do id; o ``id`` do corpo, se vier, tem de ser o mesmo."""
         async with self._writing():
             current = await self._current(entity_id, expected_version)
@@ -209,23 +274,51 @@ class ConfigEditor(ABC, Generic[E]):
             entity = await self._checked(self._parsed({**body, "id": entity_id}), current.entity)
             return await self._saved(entity, expected_version)
 
-    async def deactivate(self, entity_id: str, expected_version: int) -> Versioned[ConfigDocument]:
+    async def deactivate(self, entity_id: str, expected_version: int) -> ConfigWrite:
         """Remoção lógica (``active: false``); ``ConfigInUse`` se alguém usa a entidade."""
         async with self._writing():
             current = await self._current(entity_id, expected_version)
             await self._ensure_unused(entity_id)
             return await self._saved(dataclasses.replace(current.entity, active=False), expected_version)
 
-    async def remove(self, entity_id: str, expected_version: int) -> None:
-        """Remove o documento; ``ConfigInUse`` se alguém usa a entidade."""
+    async def remove(self, entity_id: str, expected_version: int) -> int:
+        """Remove o documento; ``ConfigInUse`` se alguém usa a entidade. Devolve a revisão do runtime."""
         async with self._writing():
             await self._current(entity_id, expected_version)
             await self._ensure_unused(entity_id)
-            await self._repository.delete(entity_id, expected_version)
+            _, revision = await self._published(
+                entity_id, None, lambda: self._repository.delete(entity_id, expected_version)
+            )
+            return revision
 
     @abstractmethod
     async def _checked(self, entity: E, current: E | None) -> E:
         """Confere o que depende de outros documentos (referências, segredos mantidos)."""
+
+    async def _built(self, entity_id: str, entity: E | None) -> RuntimeBuild | None:
+        """Entidades montadas com a mudança, antes de gravar; ``None`` = montar só depois de gravar.
+
+        ``entity`` é o documento do id depois da escrita (``None`` se removido).
+        """
+        return None
+
+    async def _published(self, entity_id: str, entity: E | None, write: Callable[[], Awaitable[R]]) -> tuple[R, int]:
+        """Monta (``_built``), grava (``write``) e troca o runtime; devolve o resultado e a revisão nova.
+
+        Montagem recusada (``ConfigNotBuildable``) não grava nada. Falha depois de gravar deixa o runtime
+        anterior servindo: loga só o tipo do erro e sobe (o ``POST /admin/config/reload`` recupera).
+        """
+        build = await self._built(entity_id, entity)
+        result = await write()
+        try:
+            return result, self._runtime.swap(build if build is not None else await self._runtime.build())
+        except Exception as exc:
+            self._logger.error(
+                "Config gravada, mas o runtime não foi trocado; use POST /admin/config/reload",
+                kind=self.kind,
+                error_type=type(exc).__name__,
+            )
+            raise
 
     async def _users(self, entity_id: str) -> dict[str, list[str]]:
         """Tipo -> ids dos documentos que referenciam ``entity_id``."""
@@ -236,9 +329,15 @@ class ConfigEditor(ABC, Generic[E]):
 
     @asynccontextmanager
     async def _writing(self) -> AsyncIterator[None]:
-        """Uma escrita por vez (trava comum aos editores) e um aviso por recusa, sem id nem valor."""
+        """Uma escrita por vez (trava comum aos editores) e um aviso por recusa, sem id nem valor.
+
+        Store só leitura recusa antes de ler o corpo ou montar: a montagem tem efeito colateral (o RAG de
+        um agente repara o índice e insere na coleção vetorial dele), que a recusa da gravação não desfaz.
+        """
         async with self._write_lock:
             try:
+                if not self._writable:
+                    raise ConfigStoreReadOnly()
                 yield
             except _WRITE_REFUSALS as exc:
                 field = exc.field if isinstance(exc, InvalidConfig) else None
@@ -280,9 +379,11 @@ class ConfigEditor(ABC, Generic[E]):
         if used_by:
             raise ConfigInUse(used_by)
 
-    async def _saved(self, entity: E, expected_version: int) -> Versioned[ConfigDocument]:
-        version = await self._repository.save(entity, expected_version)
-        return self._shown(Versioned(entity, version))
+    async def _saved(self, entity: E, expected_version: int) -> ConfigWrite:
+        version, revision = await self._published(
+            entity.id, entity, lambda: self._repository.save(entity, expected_version)
+        )
+        return ConfigWrite(self._shown(Versioned(entity, version)), revision)
 
     def _shown(self, item: Versioned[E]) -> Versioned[ConfigDocument]:
         return Versioned(self._document(item.entity), item.version)
@@ -300,17 +401,23 @@ class AgentConfigEditor(ConfigEditor[AgentConfig]):
         dump: Callable[[AgentConfig], ConfigDocument],
         logger: ILogger,
         write_lock: asyncio.Lock,
+        runtime: RuntimeSwap,
         *,
+        writable: bool,
         tools: IToolRepository,
         teams: ITeamConfigRepository,
     ) -> None:
-        super().__init__(repository, parse, dump, logger, write_lock)
+        super().__init__(repository, parse, dump, logger, write_lock, runtime, writable=writable)
         self._tools = tools
         self._teams = teams
 
     async def _checked(self, entity: AgentConfig, current: AgentConfig | None) -> AgentConfig:
         _require_known(entity.tools_ids or [], _ids(await self._tools.list_all()), "tools_ids")
         return entity
+
+    async def _built(self, entity_id: str, entity: AgentConfig | None) -> RuntimeBuild:
+        """Se o agente não monta, nada é gravado."""
+        return await self._runtime.build(agent=ConfigChange(entity_id, entity))
 
     async def _users(self, entity_id: str) -> dict[str, list[str]]:
         teams = await self._teams.list_all()
@@ -329,19 +436,29 @@ class TeamConfigEditor(ConfigEditor[TeamConfig]):
         dump: Callable[[TeamConfig], ConfigDocument],
         logger: ILogger,
         write_lock: asyncio.Lock,
+        runtime: RuntimeSwap,
         *,
+        writable: bool,
         agents: IAgentConfigRepository,
     ) -> None:
-        super().__init__(repository, parse, dump, logger, write_lock)
+        super().__init__(repository, parse, dump, logger, write_lock, runtime, writable=writable)
         self._agents = agents
 
     async def _checked(self, entity: TeamConfig, current: TeamConfig | None) -> TeamConfig:
         _require_known(entity.member_ids, _ids(await self._agents.list_all()), "member_ids")
         return entity
 
+    async def _built(self, entity_id: str, entity: TeamConfig | None) -> RuntimeBuild:
+        """Se o team não monta, nada é gravado."""
+        return await self._runtime.build(team=ConfigChange(entity_id, entity))
+
 
 class ToolConfigEditor(ConfigEditor[Tool]):
-    """Tools: headers saem mascarados; uma tool nas ``tools_ids`` de um agente não é removida."""
+    """Tools: headers saem mascarados; uma tool nas ``tools_ids`` de um agente não é removida.
+
+    Monta só depois de gravar (``_built`` padrão): a montagem do agente lê as tools do store, e tool que
+    falha não derruba o agente.
+    """
 
     kind = "tools"
 
@@ -352,10 +469,12 @@ class ToolConfigEditor(ConfigEditor[Tool]):
         dump: Callable[[Tool], ConfigDocument],
         logger: ILogger,
         write_lock: asyncio.Lock,
+        runtime: RuntimeSwap,
         *,
+        writable: bool,
         agents: IAgentConfigRepository,
     ) -> None:
-        super().__init__(repository, parse, dump, logger, write_lock)
+        super().__init__(repository, parse, dump, logger, write_lock, runtime, writable=writable)
         self._agents = agents
 
     async def _checked(self, entity: Tool, current: Tool | None) -> Tool:
@@ -392,11 +511,21 @@ ConfigEditorOfAnyKind = ConfigEditor[AgentConfig] | ConfigEditor[TeamConfig] | C
 
 @dataclass(frozen=True)
 class ConfigAdmin:
-    """Os três editores de config, um por tipo (o que a borda HTTP recebe), com a mesma trava de escrita."""
+    """Os três editores de config, um por tipo (o que a borda HTTP recebe), com a mesma trava de escrita.
+
+    ``runtime`` e ``write_lock`` são os mesmos dos editores: o ``reload`` espera a vez das escritas.
+    """
 
     agents: AgentConfigEditor
     teams: TeamConfigEditor
     tools: ToolConfigEditor
+    runtime: RuntimeSwap
+    write_lock: asyncio.Lock
+
+    async def reload(self) -> int:
+        """Relê o store, monta e troca o runtime (YAML editado à mão, recuperação manual); devolve a revisão."""
+        async with self.write_lock:
+            return await self.runtime.reload()
 
     def editor(self, kind: ConfigKind) -> ConfigEditorOfAnyKind:
         """O editor do tipo."""

@@ -13,13 +13,14 @@ from src.application.use_cases.config_admin_use_case import (
     ConfigAlreadyExists,
     ConfigInUse,
     ConfigNotFound,
+    ConfigWrite,
     InvalidConfig,
 )
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.repositories.versioning import ConfigVersionConflict, Versioned
 from src.infrastructure.dependency_injection import build_config_admin
 from src.infrastructure.repositories.config_documents import entity_document
-from tests.fakes.admin_config_app import agent, agent_body, team, tool
+from tests.fakes.admin_config_app import agent, agent_body, fake_runtime_swap, team, tool
 from tests.fakes.logger import RecordingLogger
 from tests.fakes.repositories import (
     InMemoryAgentConfigRepository,
@@ -58,11 +59,15 @@ def _admin(
     teams: InMemoryTeamConfigRepository | None = None,
     tools: InMemoryToolRepository | None = None,
 ):
+    agents = agents or InMemoryAgentConfigRepository()
+    teams = teams or InMemoryTeamConfigRepository()
     return build_config_admin(
-        agents or InMemoryAgentConfigRepository(),
-        teams or InMemoryTeamConfigRepository(),
+        agents,
+        teams,
         tools or InMemoryToolRepository(),
         logger or RecordingLogger(),
+        runtime=fake_runtime_swap(agents, teams),
+        writable=True,
     )
 
 
@@ -94,9 +99,17 @@ async def test_recusa_do_mapper_sem_campo_conhecido_vira_422_sem_campo():
         raise TypeError("detalhe que cita o valor")
 
     logger = RecordingLogger()
-    repos = (InMemoryTeamConfigRepository(), InMemoryToolRepository())
+    agents, teams, tools = InMemoryAgentConfigRepository(), InMemoryTeamConfigRepository(), InMemoryToolRepository()
     editor = AgentConfigEditor(
-        InMemoryAgentConfigRepository(), parse, entity_document, logger, asyncio.Lock(), tools=repos[1], teams=repos[0]
+        agents,
+        parse,
+        entity_document,
+        logger,
+        asyncio.Lock(),
+        fake_runtime_swap(agents, teams),
+        writable=True,
+        tools=tools,
+        teams=teams,
     )
 
     with pytest.raises(InvalidConfig) as caught:
@@ -207,7 +220,7 @@ async def test_mascara_com_troca_de_origem_da_route_e_recusada():
         "cep", {**shown, "route": "https://outro.example.invalid/x", "headers": {"Authorization": "novo"}}, 1
     )
 
-    assert updated.version == 1 and with_new_value.version == 2
+    assert updated.item.version == 1 and with_new_value.item.version == 2
     assert [i.entity.headers for i in await tools.list_all()] == [{"Authorization": "novo"}]
 
 
@@ -225,7 +238,7 @@ async def test_alteracao_com_id_repetido_valida_e_mantem_o_header_do_documento_d
     with pytest.raises(ConfigNotFound):
         await admin.tools.replace("outro", masked, 0)
 
-    assert replaced.version == 1
+    assert replaced.item.version == 1
     stored = [(i.entity.description, i.entity.headers, i.version) for i in await tools.list_all()]
     assert stored == [
         ("Busca endereço", {"Authorization": "do-primeiro"}, 1),
@@ -244,7 +257,7 @@ async def test_remocao_concorrente_com_alteracao_de_legado_nao_ressuscita_o_docu
         return_exceptions=True,
     )
 
-    assert results[0] is None
+    assert results[0] == 1  # revisão do runtime depois da remoção
     assert isinstance(results[1], ConfigNotFound)
     assert await agents.list_all() == []
 
@@ -259,7 +272,7 @@ async def test_criacao_e_remocao_concorrentes_nao_deixam_referencia_para_tool_re
         return_exceptions=True,
     )
 
-    assert isinstance(results[0], Versioned)
+    assert isinstance(results[0], ConfigWrite)
     assert isinstance(results[1], ConfigInUse)
     assert [i.entity.id for i in await tools.list_all()] == ["cep"]
 
@@ -272,7 +285,7 @@ async def test_criacao_grava_a_versao_1_e_devolve_o_documento_em_snake_case():
     body["factoryIaModel"] = body.pop("factory_ia_model").replace("ollama", "openai")
     created = await admin.agents.create(body)
 
-    assert created.version == 1
-    assert created.entity["factory_ia_model"] == "openai"
-    assert "factoryIaModel" not in created.entity
+    assert created.item.version == 1
+    assert created.item.entity["factory_ia_model"] == "openai"
+    assert "factoryIaModel" not in created.item.entity
     assert [(i.entity.factory_ia_model, i.version) for i in await agents.list_all()] == [("openai", 1)]

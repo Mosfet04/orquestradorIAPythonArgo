@@ -12,10 +12,11 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from src.application.use_cases.config_admin_use_case import ConfigAdmin
 from src.domain.ports import AgentHandle, TeamHandle
 from src.infrastructure.config.app_config import AppConfig
 from src.infrastructure.dependency_injection import DependencyContainer
@@ -37,7 +38,11 @@ from src.infrastructure.web.metrics_middleware import MetricsMiddleware
 # soma os headers CORS-safelisted (Accept, Accept-Language, Content-Language, Content-Type).
 _CORS_ALLOW_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
 _CORS_ALLOW_HEADERS = ("Authorization", "Content-Type", "X-API-Key")
-_CORS_EXPOSE_HEADERS = ("Deprecation", "Link")
+# Legíveis no navegador: o sinal dos aliases deprecated e as versões que o playground lê da escrita de
+# config (``ETag`` = versão do documento, ``Runtime-Revision`` = revisão do runtime; admin_config.py).
+_CORS_EXPOSE_HEADERS = ("Deprecation", "Link", "ETag", "Runtime-Revision")
+# Sucessor do /admin/refresh-cache (rota da apresentação, src/presentation/routes/admin_config.py).
+_RELOAD_PATH = "/admin/config/reload"
 
 # Rotas fora do tracing. O OTel faz re.search em ``scheme://<Host><path>`` (sem query;
 # opentelemetry/instrumentation/asgi/__init__.py, get_host_port_url_tuple): a regex
@@ -162,12 +167,14 @@ class AppFactory:
             return {"status": "ok"}
 
         @app.get("/admin/health")
-        async def health_check() -> Any:
+        async def health_check() -> JSONResponse:
+            """Checks do health service e a revisão das entidades servidas (``runtime_revision``, FA-04)."""
+            body: dict[str, Any] = {"status": "healthy"}
             if self._container and self._container.health_service:
-                result = await self._container.health_service.check_async()
-                status_code = 200 if result.get("status") == "healthy" else 503
-                return JSONResponse(result, status_code=status_code)
-            return {"status": "healthy"}
+                body = await self._container.health_service.check_async()
+            if self._container:
+                body = {**body, "runtime_revision": self._container.get_agent_runtime().revision}
+            return JSONResponse(body, status_code=200 if body.get("status") == "healthy" else 503)
 
         @app.get("/metrics/cache")
         async def cache_metrics() -> dict[str, Any]:
@@ -176,13 +183,17 @@ class AppFactory:
                 return ctrl.get_cache_stats()
             return {"status": "no_cache"}
 
-        @app.post("/admin/refresh-cache")
-        async def refresh_cache() -> dict[str, str]:
-            if self._container:
-                ctrl = self._container.get_orquestrador_controller()
-                await ctrl.refresh_agents()
-                return {"status": "cache_refreshed"}
-            return {"status": "no_cache"}
+        @app.post("/admin/refresh-cache", deprecated=True)
+        async def refresh_cache(request: Request) -> JSONResponse:
+            """Alias deprecated de ``POST /admin/config/reload`` (FA-04): relê o store e troca o runtime."""
+            admin = getattr(request.app.state, "config_admin", None)
+            if not isinstance(admin, ConfigAdmin):
+                return JSONResponse({"detail": "Administração da configuração indisponível"}, status_code=503)
+            revision = await admin.reload()
+            return JSONResponse(
+                {"runtime_revision": revision},
+                headers={"Deprecation": "true", "Link": f'<{_RELOAD_PATH}>; rel="successor-version"'},
+            )
 
     # ── lifespan ────────────────────────────────────────────────────
 
@@ -344,17 +355,11 @@ class AppFactory:
         agents: Sequence[AgentHandle],
         teams: Sequence[TeamHandle],
     ) -> None:
-        """Monta o runtime no app se houver agentes ou teams.
+        """Monta o runtime no app, mesmo sem agentes nem teams: os criados depois pela API são trocados a quente.
 
         Falha deixa a borda, o admin e o que a montagem já tiver posto (falha depois do
         ``get_app()`` deixa as rotas do AgentOS sem os lifespans dele).
         """
-        if not agents and not teams:
-            self._logger.info(
-                "Nenhum agente ou team ativo — rodando só endpoints admin"
-            )
-            return
-
         try:
             self._mount_runtime(app, runtime, agents, teams)
         except Exception as exc:  # noqa: BLE001 - o app sobe sem rotas de agente; logado

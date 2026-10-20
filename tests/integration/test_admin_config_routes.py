@@ -12,21 +12,28 @@ from pathlib import Path
 import pytest
 
 from src.domain.entities.agent_config import AgentConfig
+from src.domain.ports import InvalidModelConfigError
 from src.domain.repositories.versioning import ConfigVersionConflict
-from src.infrastructure.dependency_injection import build_config_admin
 from src.presentation.routes.admin_config import router as admin_config_router
-from tests.fakes.admin_config_app import ADMIN, admin_world, agent, agent_body, team, tool
+from tests.fakes.admin_config_app import (
+    ADMIN,
+    admin_world,
+    agent,
+    agent_body,
+    fake_config_admin,
+    if_match,
+    served_ids,
+    team,
+    tool,
+)
 from tests.fakes.repositories import InMemoryAgentConfigRepository
+from tests.fakes.runtime import FakeAgentRuntime
 from tests.fakes.yaml_world import ADMIN as YAML_ADMIN
 from tests.fakes.yaml_world import yaml_app
 
 BASE = "/admin/config"
 TEAM_BODY = {"id": "t1", "nome": "T", "factory_ia_model": "ollama", "model": "qwen3", "member_ids": ["a1"]}
 MIB = 1024 * 1024
-
-
-def _if_match(version: int) -> dict[str, str]:
-    return {**ADMIN, "If-Match": f'"{version}"'}
 
 
 async def test_post_cria_e_get_devolve_o_documento_com_etag_igual_a_versao(monkeypatch: pytest.MonkeyPatch):
@@ -71,9 +78,9 @@ async def test_get_de_id_inexistente_responde_404(monkeypatch: pytest.MonkeyPatc
     async with admin_world(monkeypatch) as world:
         responses = [
             await world.client.get(f"{BASE}/tools/nada", headers=ADMIN),
-            await world.client.put(f"{BASE}/tools/nada", json={}, headers=_if_match(0)),
-            await world.client.delete(f"{BASE}/tools/nada", headers=_if_match(0)),
-            await world.client.delete(f"{BASE}/tools/nada", params={"hard": "true"}, headers=_if_match(0)),
+            await world.client.put(f"{BASE}/tools/nada", json={}, headers=if_match(0)),
+            await world.client.delete(f"{BASE}/tools/nada", headers=if_match(0)),
+            await world.client.delete(f"{BASE}/tools/nada", params={"hard": "true"}, headers=if_match(0)),
         ]
 
     assert [r.status_code for r in responses] == [404, 404, 404, 404]
@@ -83,10 +90,10 @@ async def test_put_sem_if_match_428_divergente_412_e_certo_grava_a_proxima_versa
     async with admin_world(monkeypatch, agents=[agent("a1")]) as world:
         body = agent_body("a1", prompt="novo prompt")
         missing = await world.client.put(f"{BASE}/agents/a1", json=body, headers=ADMIN)
-        stale = await world.client.put(f"{BASE}/agents/a1", json=body, headers=_if_match(7))
+        stale = await world.client.put(f"{BASE}/agents/a1", json=body, headers=if_match(7))
         garbage = await world.client.put(f"{BASE}/agents/a1", json=body, headers={**ADMIN, "If-Match": "abc"})
-        ok = await world.client.put(f"{BASE}/agents/a1", json=body, headers=_if_match(0))
-        again = await world.client.put(f"{BASE}/agents/a1", json=body, headers=_if_match(0))
+        ok = await world.client.put(f"{BASE}/agents/a1", json=body, headers=if_match(0))
+        again = await world.client.put(f"{BASE}/agents/a1", json=body, headers=if_match(0))
 
     assert (missing.status_code, stale.status_code, garbage.status_code) == (428, 412, 412)
     assert ok.status_code == 200
@@ -98,7 +105,7 @@ async def test_put_sem_if_match_428_divergente_412_e_certo_grava_a_proxima_versa
 
 async def test_put_com_id_do_corpo_diferente_da_rota_responde_422(monkeypatch: pytest.MonkeyPatch):
     async with admin_world(monkeypatch, agents=[agent("a1")]) as world:
-        response = await world.client.put(f"{BASE}/agents/a1", json=agent_body("a2"), headers=_if_match(0))
+        response = await world.client.put(f"{BASE}/agents/a1", json=agent_body("a2"), headers=if_match(0))
 
     assert response.status_code == 422
     assert response.json()["field"] == "id"
@@ -177,7 +184,7 @@ async def test_corpo_acima_do_teto_responde_413_com_ou_sem_content_length(monkey
     async with admin_world(monkeypatch, agents=[agent("a1")]) as world:
         declared = await world.client.post(f"{BASE}/agents", json=agent_body("a2", prompt="x" * MIB), headers=ADMIN)
         chunked = await world.client.put(
-            f"{BASE}/agents/a1", content=_chunks(2 * MIB), headers={**_if_match(0), "Content-Type": "application/json"}
+            f"{BASE}/agents/a1", content=_chunks(2 * MIB), headers={**if_match(0), "Content-Type": "application/json"}
         )
         just_below = await world.client.post(
             f"{BASE}/agents", json=agent_body("a3", prompt="x" * (MIB - 1024)), headers=ADMIN
@@ -193,9 +200,9 @@ async def test_remover_tool_ou_agente_em_uso_responde_409_com_quem_usa(monkeypat
     async with admin_world(
         monkeypatch, agents=seeded_agents, teams=[team("t1", ["a1"])], tools=[tool("cep")]
     ) as world:
-        tool_soft = await world.client.delete(f"{BASE}/tools/cep", headers=_if_match(0))
-        tool_hard = await world.client.delete(f"{BASE}/tools/cep", params={"hard": "true"}, headers=_if_match(0))
-        agent_hard = await world.client.delete(f"{BASE}/agents/a1", params={"hard": "true"}, headers=_if_match(0))
+        tool_soft = await world.client.delete(f"{BASE}/tools/cep", headers=if_match(0))
+        tool_hard = await world.client.delete(f"{BASE}/tools/cep", params={"hard": "true"}, headers=if_match(0))
+        agent_hard = await world.client.delete(f"{BASE}/agents/a1", params={"hard": "true"}, headers=if_match(0))
 
     assert tool_soft.status_code == tool_hard.status_code == 409
     assert tool_hard.json() == {"detail": "Config em uso", "used_by": {"agents": ["a1", "a2"]}}
@@ -207,10 +214,10 @@ async def test_remover_tool_ou_agente_em_uso_responde_409_com_quem_usa(monkeypat
 async def test_delete_soft_desativa_e_hard_remove(monkeypatch: pytest.MonkeyPatch):
     async with admin_world(monkeypatch, agents=[agent("a1"), agent("a2")]) as world:
         missing = await world.client.delete(f"{BASE}/agents/a1", headers=ADMIN)
-        soft = await world.client.delete(f"{BASE}/agents/a1", headers=_if_match(0))
-        hard_stale = await world.client.delete(f"{BASE}/agents/a2", params={"hard": "true"}, headers=_if_match(3))
-        hard = await world.client.delete(f"{BASE}/agents/a2", params={"hard": "true"}, headers=_if_match(0))
-        bad_flag = await world.client.delete(f"{BASE}/agents/a1", params={"hard": "sim"}, headers=_if_match(1))
+        soft = await world.client.delete(f"{BASE}/agents/a1", headers=if_match(0))
+        hard_stale = await world.client.delete(f"{BASE}/agents/a2", params={"hard": "true"}, headers=if_match(3))
+        hard = await world.client.delete(f"{BASE}/agents/a2", params={"hard": "true"}, headers=if_match(0))
+        bad_flag = await world.client.delete(f"{BASE}/agents/a1", params={"hard": "sim"}, headers=if_match(1))
 
     assert missing.status_code == 428
     assert soft.status_code == 200
@@ -228,9 +235,9 @@ async def test_get_de_tool_mascara_headers_e_put_com_mascara_mantem_o_valor_grav
         listed = await world.client.get(f"{BASE}/tools", headers=ADMIN)
         fetched = await world.client.get(f"{BASE}/tools/cep", headers=ADMIN)
         body = {**fetched.json(), "description": "nova descrição"}
-        updated = await world.client.put(f"{BASE}/tools/cep", json=body, headers=_if_match(0))
+        updated = await world.client.put(f"{BASE}/tools/cep", json=body, headers=if_match(0))
         unknown = await world.client.put(
-            f"{BASE}/tools/cep", json={**body, "headers": {"X-Outro": "***"}}, headers=_if_match(1)
+            f"{BASE}/tools/cep", json={**body, "headers": {"X-Outro": "***"}}, headers=if_match(1)
         )
 
     assert fetched.json()["headers"] == {"Authorization": "***"}
@@ -264,8 +271,8 @@ async def test_tool_criada_com_header_em_texto_grava_o_valor_e_devolve_mascarado
 
 async def test_team_nao_e_referenciado_e_sai_com_soft_e_hard_delete(monkeypatch: pytest.MonkeyPatch):
     async with admin_world(monkeypatch, agents=[agent("a1")], teams=[team("t1", ["a1"])]) as world:
-        soft = await world.client.delete(f"{BASE}/teams/t1", headers=_if_match(0))
-        hard = await world.client.delete(f"{BASE}/teams/t1", params={"hard": "true"}, headers=_if_match(1))
+        soft = await world.client.delete(f"{BASE}/teams/t1", headers=if_match(0))
+        hard = await world.client.delete(f"{BASE}/teams/t1", params={"hard": "true"}, headers=if_match(1))
 
     assert (soft.status_code, soft.json()["active"], hard.status_code) == (200, False, 204)
     assert await world.teams.list_all() == []
@@ -333,8 +340,8 @@ class _StaleAgents(InMemoryAgentConfigRepository):
 async def test_subclasse_de_recusa_responde_o_status_da_recusa_e_nao_500(monkeypatch: pytest.MonkeyPatch):
     async with admin_world(monkeypatch) as world:
         stale = _StaleAgents([agent("a1")])
-        world.app.state.config_admin = build_config_admin(stale, world.teams, world.tools, world.logger)
-        response = await world.client.put(f"{BASE}/agents/a1", json=agent_body("a1"), headers=_if_match(0))
+        world.app.state.config_admin = fake_config_admin(stale, world.teams, world.tools, world.logger)
+        response = await world.client.put(f"{BASE}/agents/a1", json=agent_body("a1"), headers=if_match(0))
 
     assert response.status_code == 412
     assert response.json() == {"detail": "Versão divergente: releia a config"}
@@ -357,17 +364,89 @@ agents:
 def test_pilha_completa_com_store_yaml_lista_pelo_container_e_recusa_escrita_com_409(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
-    with yaml_app(monkeypatch, tmp_path, YAML_CONFIG, routers=[admin_config_router]) as (_, path, http):
+    with yaml_app(monkeypatch, tmp_path, YAML_CONFIG, routers=[admin_config_router]) as (world, path, http):
         before = path.read_bytes()
         listed = http.get(f"{BASE}/agents", headers=YAML_ADMIN)
         created = http.post(f"{BASE}/agents", json=agent_body("novo"), headers=YAML_ADMIN)
         updated = http.put(
-            f"{BASE}/agents/y1", json=agent_body("y1"), headers={**YAML_ADMIN, "If-Match": '"0"'}
+            f"{BASE}/agents/y1", json=agent_body("y1", model="m-nao-montado"), headers={**YAML_ADMIN, "If-Match": '"0"'}
         )
+        invalid = http.put(f"{BASE}/agents/y1", json={"promt": "x"}, headers={**YAML_ADMIN, "If-Match": '"0"'})
         removed = http.delete(f"{BASE}/agents/y1", params={"hard": "true"}, headers={**YAML_ADMIN, "If-Match": "0"})
 
     assert listed.status_code == 200
     assert [(item["id"], item["version"]) for item in listed.json()["items"]] == [("y1", 0)]
-    assert (created.status_code, updated.status_code, removed.status_code) == (409, 409, 409)
+    statuses = (created.status_code, updated.status_code, invalid.status_code, removed.status_code)
+    assert statuses == (409, 409, 409, 409)
+    assert "m-nao-montado" not in world.models  # recusa antes de montar: a montagem tem efeito colateral (RAG)
     assert created.json() == {"detail": "O store de configuração é somente leitura"}
     assert path.read_bytes() == before
+
+
+# ── troca a quente (FA-04) ──────────────────────────────────────────
+
+
+async def test_escrita_responde_a_revisao_do_runtime_que_ja_serve_a_mudanca(monkeypatch: pytest.MonkeyPatch):
+    async with admin_world(monkeypatch, agents=[agent("a1")]) as world:
+        created = await world.client.post(f"{BASE}/teams", json=TEAM_BODY, headers=ADMIN)
+        served_after_create = served_ids(world.runtime)
+        updated = await world.client.put(
+            f"{BASE}/agents/a1", json=agent_body("a1", prompt="novas"), headers=if_match(0)
+        )
+        removed = await world.client.delete(f"{BASE}/teams/t1", params={"hard": "true"}, headers=if_match(1))
+
+    assert (created.status_code, created.headers["Runtime-Revision"]) == (201, "1")
+    assert served_after_create == (["a1"], ["t1"])
+    assert (updated.status_code, updated.headers["Runtime-Revision"]) == (200, "2")
+    assert "runtime_revision" not in updated.json()  # o corpo segue o documento (ciclo GET -> PUT da UI)
+    assert (removed.status_code, removed.headers["Runtime-Revision"]) == (204, "3")
+    assert served_ids(world.runtime) == (["a1"], [])
+
+
+async def test_config_que_nao_monta_responde_422_com_o_tipo_do_erro_sem_gravar_nem_trocar(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    runtime = FakeAgentRuntime(failures={"a2": InvalidModelConfigError("texto-do-provider-nao-sai")})
+    async with admin_world(monkeypatch, agents=[agent("a1")], runtime=runtime) as world:
+        refused = await world.client.post(f"{BASE}/agents", json=agent_body("a2"), headers=ADMIN)
+        missing = await world.client.get(f"{BASE}/agents/a2", headers=ADMIN)
+
+    assert refused.status_code == 422
+    assert refused.json() == {"detail": "Configuração não monta no runtime", "error_type": "InvalidModelConfigError"}
+    assert "texto-do-provider-nao-sai" not in refused.text
+    assert missing.status_code == 404
+    assert runtime.revision == 0
+
+
+async def test_reload_rele_o_store_e_troca_o_runtime(monkeypatch: pytest.MonkeyPatch):
+    async with admin_world(monkeypatch, agents=[agent("a1")]) as world:
+        await world.agents.save(agent("a2"), 0)  # gravado por fora da API
+        reloaded = await world.client.post(f"{BASE}/reload", headers=ADMIN)
+
+    assert (reloaded.status_code, reloaded.json()) == (200, {"runtime_revision": 1})
+    assert served_ids(world.runtime) == (["a1", "a2"], [])
+
+
+async def test_reload_sem_o_caso_de_uso_no_estado_do_app_responde_503(monkeypatch: pytest.MonkeyPatch):
+    async with admin_world(monkeypatch) as world:
+        del world.app.state.config_admin
+        response = await world.client.post(f"{BASE}/reload", headers=ADMIN)
+
+    assert (response.status_code, response.json()) == (503, {"detail": "Administração da configuração indisponível"})
+
+
+@pytest.mark.usefixtures("offline_knowledge")
+def test_pilha_completa_com_store_yaml_o_reload_serve_o_arquivo_editado(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    with yaml_app(monkeypatch, tmp_path, YAML_CONFIG, routers=[admin_config_router]) as (_, path, http):
+        before = http.get("/agents", headers=YAML_ADMIN).json()
+        path.write_text(YAML_CONFIG.replace("y1", "y2"), encoding="utf-8")
+        reloaded = http.post(f"{BASE}/reload", headers=YAML_ADMIN)
+        after = http.get("/agents", headers=YAML_ADMIN).json()
+        health = http.get("/admin/health", headers=YAML_ADMIN).json()
+
+    assert [a["id"] for a in before] == ["y1"]
+    assert (reloaded.status_code, reloaded.json()) == (200, {"runtime_revision": 1})
+    assert [a["id"] for a in after] == ["y2"]
+    assert health["runtime_revision"] == 1

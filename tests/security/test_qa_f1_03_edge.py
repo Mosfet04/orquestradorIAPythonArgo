@@ -26,6 +26,7 @@ from src.infrastructure.config.app_config import AppConfig
 from src.infrastructure.dependency_injection import HealthService
 from src.infrastructure.web.app_factory import AppFactory
 from tests.fakes import FakeChatModel, RecordingLogger, loopback_client
+from tests.fakes.runtime import FakeAgentRuntime
 from tests.fakes.web import mount_agent_os
 
 REPO = Path(__file__).resolve().parents[2]
@@ -278,6 +279,10 @@ class _MongoOk:
 class _Container:
     def __init__(self, service: HealthService) -> None:
         self.health_service = service
+        self.runtime = FakeAgentRuntime()
+
+    def get_agent_runtime(self) -> FakeAgentRuntime:
+        return self.runtime
 
     async def cleanup(self) -> None:
         return None
@@ -300,6 +305,7 @@ def test_health_com_mongo_ok_responde_200(monkeypatch: pytest.MonkeyPatch):
     body = response.json()
     assert body["status"] == "healthy"
     assert body["checks"]["mongodb"] == {"status": "healthy"}
+    assert body["runtime_revision"] == 0
 
 
 def test_health_excecao_inesperada_num_check_vira_503_sem_texto(monkeypatch: pytest.MonkeyPatch):

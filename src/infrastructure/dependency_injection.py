@@ -12,6 +12,7 @@ from src.application.services.knowledge_search_factory import KnowledgeSearchFac
 from src.application.use_cases.config_admin_use_case import (
     AgentConfigEditor,
     ConfigAdmin,
+    RuntimeSwap,
     TeamConfigEditor,
     ToolConfigEditor,
 )
@@ -192,11 +193,16 @@ def build_config_admin(
     teams: ITeamConfigRepository,
     tools: IToolRepository,
     logger: ILogger,
+    *,
+    runtime: RuntimeSwap,
+    writable: bool,
 ) -> ConfigAdmin:
-    """Administração da config (FA-02) sobre os repositórios do store.
+    """Administração da config (FA-02) sobre os repositórios do store, com a troca a quente do runtime (FA-04).
 
     O corpo passa pelo mapper do store no modo estrito (recusa o que a leitura legada tolera) e os três
-    editores dividem uma trava de escrita (as referências cruzam os tipos).
+    editores e o ``reload`` dividem uma trava de escrita (as referências cruzam os tipos e cada escrita monta
+    o runtime com a config que as anteriores gravaram). ``writable``: ``False`` com o store YAML (toda escrita
+    responde 409 antes de montar).
     """
     lock = asyncio.Lock()
     return ConfigAdmin(
@@ -206,15 +212,33 @@ def build_config_admin(
             entity_document,
             logger,
             lock,
+            runtime,
+            writable=writable,
             tools=tools,
             teams=teams,
         ),
         teams=TeamConfigEditor(
-            teams, lambda doc: map_team_document(doc, logger, strict=True), entity_document, logger, lock, agents=agents
+            teams,
+            lambda doc: map_team_document(doc, logger, strict=True),
+            entity_document,
+            logger,
+            lock,
+            runtime,
+            writable=writable,
+            agents=agents,
         ),
         tools=ToolConfigEditor(
-            tools, lambda doc: map_tool_document(doc, strict=True), entity_document, logger, lock, agents=agents
+            tools,
+            lambda doc: map_tool_document(doc, strict=True),
+            entity_document,
+            logger,
+            lock,
+            runtime,
+            writable=writable,
+            agents=agents,
         ),
+        runtime=runtime,
+        write_lock=lock,
     )
 
 
@@ -275,15 +299,23 @@ class DependencyContainer:
             search_factory=search_factory,
         )
 
-        self._config_admin = build_config_admin(agent_config_repo, team_config_repo, tool_repo, self._logger)
-        self._config_schema = build_config_schema(providers, writable=self.config.config_store != "yaml")
-
         agents_use_case = GetActiveAgentsUseCase(
             runtime, agent_config_repo, self._logger
         )
         teams_use_case = GetActiveTeamsUseCase(
             runtime, team_config_repo, self._logger
         )
+
+        writable = self.config.config_store != "yaml"
+        self._config_admin = build_config_admin(
+            agent_config_repo,
+            team_config_repo,
+            tool_repo,
+            self._logger,
+            runtime=RuntimeSwap(runtime, agents_use_case, teams_use_case, self._logger),
+            writable=writable,
+        )
+        self._config_schema = build_config_schema(providers, writable=writable)
 
         self._controller = OrquestradorController(
             get_active_agents_use_case=agents_use_case,
@@ -417,7 +449,7 @@ class DependencyContainer:
         return self._controller
 
     def get_config_admin(self) -> ConfigAdmin:
-        """Caso de uso das rotas ``/admin/config``; ``RuntimeError`` se o container não foi inicializado."""
+        """Caso de uso das rotas ``/admin/config`` e do reload; ``RuntimeError`` se o container não foi inicializado."""
         if self._config_admin is None:
             raise RuntimeError("Container não inicializado: chame create_async() antes")
         return self._config_admin

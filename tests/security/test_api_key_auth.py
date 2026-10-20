@@ -504,7 +504,8 @@ def test_modo_dev_local_recusa_host_fora_do_loopback(dev_app: FastAPI, host: str
 def test_modo_dev_local_libera_acesso_local(dev_app: FastAPI):
     client = loopback_client(dev_app)
 
-    assert client.post("/admin/refresh-cache").json() == {"status": "no_cache"}
+    # Resposta da própria rota (sem o caso de uso de config no app.state, 503), não da autenticação.
+    assert client.post("/admin/refresh-cache").json() == {"detail": "Administração da configuração indisponível"}
     assert [a["id"] for a in client.get("/agents").json()] == ["agente-1"]
 
 
@@ -542,7 +543,7 @@ def test_modo_dev_local_aceita_origem_permitida_mesmo_cross_site(dev_app: FastAP
 
     response = client.post("/admin/refresh-cache", headers={"Origin": ALLOWED, "Sec-Fetch-Site": "cross-site"})
 
-    assert response.status_code == 200 and response.json() == {"status": "no_cache"}
+    assert response.status_code == 503 and response.json() == {"detail": "Administração da configuração indisponível"}
     assert response.headers["access-control-allow-origin"] == ALLOWED
 
 

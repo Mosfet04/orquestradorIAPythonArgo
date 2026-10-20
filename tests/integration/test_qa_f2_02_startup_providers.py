@@ -120,7 +120,7 @@ def failures(result: Any) -> dict[str, dict[str, Any]]:
 
 
 def agent_ids(result: Any) -> list[str]:
-    """Ids em /agents; sem nenhum agente o AgentOS não monta a rota (404 com ``detail``)."""
+    """Ids em /agents (sem nenhum agente, o AgentOS sobe vazio: FA-04)."""
     return sorted(a["id"] for a in result.agents) if isinstance(result.agents, list) else []
 
 

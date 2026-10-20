@@ -292,21 +292,6 @@ async def test_falha_ao_carregar_teams_cai_no_cache_expirado_ou_em_lista_vazia(e
     assert await env.controller.get_teams() is teams  # com cache expirado: serve o expirado
 
 
-async def test_refresh_recria_agentes_e_teams_com_handles_novos_e_zera_o_hit_count(env: _Env) -> None:
-    old_agents = await env.controller.get_agents()
-    await env.controller.get_teams()
-    await env.controller.get_agents()
-
-    await env.controller.refresh_agents()
-
-    new_agents = await env.controller.get_agents()
-    assert new_agents is not old_agents and [a.id for a in new_agents] == ["a1", "a2"]
-    stats = env.controller.get_cache_stats()
-    assert stats["agents"]["agent_count"] == 2 and stats["teams"]["team_count"] == 1
-    assert stats["agents"]["hit_count"] == 1  # só o get_agents depois do refresh
-    assert "Cache de agentes e teams atualizado" in env.logger.messages("info")
-
-
 async def test_chamadas_concorrentes_com_cache_frio_nao_corrompem_e_ficam_consistentes(env: _Env) -> None:
     results = await asyncio.gather(*(env.controller.get_agents() for _ in range(5)))
 

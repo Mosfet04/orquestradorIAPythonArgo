@@ -118,3 +118,24 @@ async def test_config_de_modelo_recusada_no_team_sobe_como_invalid_model_config_
 
     with pytest.raises(InvalidModelConfigError):
         await asyncio.to_thread(impl.runtime.build_team, impl.refused_team, agents)
+
+
+# ── troca a quente (FA-04) ──────────────────────────────────────────
+
+
+async def test_revisao_comeca_em_zero_e_cada_troca_soma_um(impl: Implementation):
+    agents = [await impl.runtime.build_agent(_agent("a1"))]
+    team = await asyncio.to_thread(impl.runtime.build_team, _team("t1", ["a1"]), agents)
+
+    assert impl.runtime.revision == 0
+    assert impl.runtime.swap(agents, [team]) == 1
+    assert impl.runtime.swap([], []) == 2
+    assert impl.runtime.revision == 2
+
+
+async def test_segunda_troca_com_handle_novo_do_mesmo_id_e_aceita_e_soma_a_revisao(impl: Implementation):
+    first = [await impl.runtime.build_agent(_agent("a1"))]
+    impl.runtime.swap(first, [])
+    second = [await impl.runtime.build_agent(_agent("a1")), await impl.runtime.build_agent(_agent("a2"))]
+
+    assert impl.runtime.swap(second, []) == 2
