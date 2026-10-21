@@ -283,6 +283,12 @@ def _agent(data: Document, logger: ILogger, strict: bool) -> AgentConfig:
         model_params=data.get("model_params"),
         base_url=data.get("base_url"),
         api_key_ref=data.get("api_key_ref"),
+        # FA-07 (só snake_case): ausente é o default da entidade; o tipo e a faixa ela valida nos dois modos.
+        markdown=data.get("markdown", AgentConfig.markdown),
+        add_history_to_context=data.get("add_history_to_context", AgentConfig.add_history_to_context),
+        num_history_runs=data.get("num_history_runs", AgentConfig.num_history_runs),
+        add_datetime_to_context=data.get("add_datetime_to_context", AgentConfig.add_datetime_to_context),
+        reasoning=data.get("reasoning", AgentConfig.reasoning),
     )
 
 
@@ -293,7 +299,8 @@ def map_team_document(data: Document, logger: ILogger, *, strict: bool = False) 
     (``member_ids``, ``user_memory_active``, ``summary_active``). Ainda lê o legado
     camelCase (``memberIds``, ``userMemoryActive``, ``summaryActive``) e
     ``factory_ia_model``; com as duas grafias no documento, vale a snake_case.
-    Opcionais (F2-01, só snake_case): ``model_params``, ``base_url``, ``api_key_ref``.
+    Opcionais (F2-01, só snake_case): ``model_params``, ``base_url``, ``api_key_ref``; e (FA-07, só
+    snake_case) ``markdown`` e ``add_history_to_context``.
     Item de ``member_ids`` que não é texto é descartado com log (``_text_ids``, que cita a chave
     lida); sem nenhum membro de texto, o ``TeamConfig`` recusa o documento, como sempre.
     """
@@ -323,6 +330,9 @@ def _team(data: Document, logger: ILogger, strict: bool) -> TeamConfig:
         model_params=data.get("model_params"),
         base_url=data.get("base_url"),
         api_key_ref=data.get("api_key_ref"),
+        # FA-07 (só snake_case): ausente é o default da entidade, que valida o tipo nos dois modos.
+        markdown=data.get("markdown", TeamConfig.markdown),
+        add_history_to_context=data.get("add_history_to_context", TeamConfig.add_history_to_context),
     )
 
 

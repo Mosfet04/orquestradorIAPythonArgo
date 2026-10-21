@@ -23,6 +23,7 @@ from src.domain.entities.team_config import TeamConfig
 from src.domain.entities.tool import HttpMethod, ParameterType, Tool, ToolParameter
 from src.domain.ports.summary_generator_port import ISummaryGenerator
 from src.infrastructure.parsers.text_document_parser import TextDocumentParser
+from src.infrastructure.repositories.config_documents import map_agent_document, map_team_document
 from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService
 from src.infrastructure.runtime.agno.http_tool_factory import HttpToolFactory
 from src.infrastructure.runtime.agno.session_db import create_session_db
@@ -281,6 +282,115 @@ async def test_kwargs_do_team_batem_com_o_golden(agno_calls: AgnoCalls, golden: 
             "log_warnings_errors": assembly.problems(),  # type: ignore[dict-item]
         },
     )
+
+
+# FA-07: documento legado (sem os campos de execução) passa pelo mapper do store e gera o mesmo golden.
+LEGACY_AGENT_DOCUMENT = {
+    "id": "minimo",
+    "nome": "Agente minimo",
+    "factoryIaModel": "openai",
+    "model": "gpt-4o-mini",
+    "descricao": "Descrição de minimo",
+    "prompt": "Você é o minimo.",
+    "active": True,
+}
+LEGACY_TEAM_DOCUMENTS = [
+    {
+        "id": "time-roteador",
+        "nome": "Time Roteador",
+        "factoryIaModel": "openai",
+        "model": "gpt-4o",
+        "memberIds": ["minimo", "com-tools", "fantasma"],
+        "mode": "route",
+        "descricao": "Roteia para o especialista",
+        "prompt": "Escolha o membro certo.",
+    },
+    {
+        "id": "time-coordenador",
+        "nome": "Time Coordenador",
+        "factory_ia_model": "anthropic",
+        "model": "claude-x",
+        "member_ids": ["com-tools"],
+        "mode": "coordinate",
+        "userMemoryActive": False,
+        "summary_active": True,
+    },
+]
+
+
+@pytest.mark.usefixtures("workdir")
+async def test_documento_legado_sem_campos_de_execucao_gera_os_kwargs_do_golden(
+    agno_calls: AgnoCalls, golden: GoldenSnapshot
+):
+    assembly = _Assembly.build()
+    config = map_agent_document(LEGACY_AGENT_DOCUMENT, assembly.logger)
+
+    await assembly.agents.create_agent(config)
+
+    golden.check(
+        "agent_minimo",
+        {
+            "Agent": agno_calls.of("Agent"),
+            "Team": agno_calls.of("Team"),
+            "knowledge_inserts": agno_calls.knowledge_inserts,
+            "factory_calls": assembly.factory_calls(),
+            "log_warnings_errors": assembly.problems(),  # type: ignore[dict-item]
+        },
+    )
+
+
+@pytest.mark.usefixtures("workdir")
+async def test_documentos_legados_de_team_sem_campos_de_execucao_geram_os_kwargs_do_golden(
+    agno_calls: AgnoCalls, golden: GoldenSnapshot
+):
+    assembly = _Assembly.build()
+    members = [
+        await assembly.agents.create_agent(AGENT_SCENARIOS["agent_minimo"]),
+        await assembly.agents.create_agent(AGENT_SCENARIOS["agent_com_tools"]),
+    ]
+
+    for document in LEGACY_TEAM_DOCUMENTS:
+        assembly.teams.create_team(map_team_document(document, assembly.logger), members)
+
+    golden.check(
+        "team",
+        {
+            "Team": agno_calls.of("Team"),
+            "factory_calls": assembly.factory_calls(),
+            "log_warnings_errors": assembly.problems(),  # type: ignore[dict-item]
+        },
+    )
+
+
+@pytest.mark.usefixtures("workdir")
+async def test_campos_de_execucao_do_documento_chegam_aos_kwargs(agno_calls: AgnoCalls):
+    assembly = _Assembly.build()
+    options = {
+        "markdown": False,
+        "add_history_to_context": False,
+        "add_datetime_to_context": False,
+        "num_history_runs": 12,
+        "reasoning": True,
+    }
+    agent = await assembly.agents.create_agent(_agent("opcoes", **options))
+
+    assembly.teams.create_team(
+        TeamConfig(
+            id="time-opcoes",
+            nome="Time Opções",
+            factory_ia_model="openai",
+            model="gpt-4o",
+            member_ids=["opcoes"],
+            markdown=False,
+            add_history_to_context=False,
+        ),
+        [agent],
+    )
+
+    [agent_kwargs] = agno_calls.of("Agent")
+    [team_kwargs] = agno_calls.of("Team")
+    assert {key: agent_kwargs[key] for key in options} == options  # type: ignore[index]
+    assert (team_kwargs["markdown"], team_kwargs["add_history_to_context"]) == (False, False)  # type: ignore[index]
 
 
 @pytest.mark.usefixtures("workdir")

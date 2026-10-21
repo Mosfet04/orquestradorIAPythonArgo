@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 
 from src.application.use_cases.config_schema import ConfigSchema, ProviderOption
+from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.model_config import parse_secret_ref
 from src.domain.entities.team_config import TeamConfig
 from src.domain.entities.validation import InvalidField
@@ -90,7 +91,7 @@ def test_provider_registrado_depois_aparece_no_schema_sem_mudar_o_montador() -> 
 def test_enumeracoes_sao_as_das_entidades() -> None:
     schema = _schema()
 
-    assert schema["team"] == {"mode": ["route", "coordinate", "broadcast", "tasks"]}
+    assert schema["team"]["mode"] == ["route", "coordinate", "broadcast", "tasks"]
     assert schema["tool"] == {
         "http_method": ["GET", "POST", "PUT", "DELETE", "PATCH"],
         "parameter_type": ["string", "integer", "float", "boolean", "object", "array"],
@@ -123,3 +124,35 @@ def test_formatos_de_referencia_de_segredo_preenchidos_sao_aceitos_pelo_dominio(
 def test_config_store_gravavel_ou_so_leitura(writable: bool) -> None:
     assert _schema(writable=writable)["config_store"] == {"writable": writable}
 
+
+def test_campos_de_execucao_com_tipo_default_e_faixa_da_entidade() -> None:
+    """FA-07: o que a montagem fixava; o default é o da entidade (o comportamento de antes)."""
+    schema = _schema()
+
+    assert schema["agent"] == {
+        "markdown": {"type": "boolean", "default": True},
+        "add_history_to_context": {"type": "boolean", "default": True},
+        "add_datetime_to_context": {"type": "boolean", "default": True},
+        "num_history_runs": {"type": "integer", "default": 5, "minimum": 1, "maximum": 50},
+        "reasoning": {"type": "boolean", "default": False},
+    }
+    assert {key: value for key, value in schema["team"].items() if key != "mode"} == {
+        "markdown": {"type": "boolean", "default": True},
+        "add_history_to_context": {"type": "boolean", "default": True},
+    }
+
+
+def test_faixa_de_num_history_runs_do_schema_e_a_que_a_entidade_aceita() -> None:
+    entry = _schema()["agent"]["num_history_runs"]
+
+    def agent(runs: object) -> AgentConfig:
+        return AgentConfig(
+            id="a", nome="A", factory_ia_model="ollama", model="m", descricao=None, prompt="p",
+            num_history_runs=runs,  # type: ignore[arg-type]
+        )
+
+    assert [agent(runs).num_history_runs for runs in (entry["minimum"], entry["maximum"])] == [1, 50]
+    for runs in (entry["minimum"] - 1, entry["maximum"] + 1):
+        with pytest.raises(InvalidField) as caught:
+            agent(runs)
+        assert caught.value.field == "num_history_runs"

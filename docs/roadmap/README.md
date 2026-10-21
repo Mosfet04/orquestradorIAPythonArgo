@@ -50,7 +50,7 @@ Ordem de execução = numeração. Cada item passa por `/dev-cycle <item> --comm
 | FA-04 | concluído |
 | FA-05 | concluído |
 | FA-06 | concluído |
-| FA-07 | pendente |
+| FA-07 | concluído |
 
 ## Molde de item (lido pelo `/dev-cycle`)
 

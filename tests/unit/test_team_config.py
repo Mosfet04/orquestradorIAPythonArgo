@@ -119,3 +119,27 @@ def test_descricao_com_outro_tipo_e_recusada(value):
 @pytest.mark.parametrize("value", [None, "", "texto"])
 def test_descricao_opcional_aceita_none_e_texto(value):
     assert TeamConfig(**_valid_kwargs(descricao=value)).descricao == value
+
+
+# FA-07: o que a montagem fixava no ``agno.Team`` vira campo opcional, com o default de antes.
+_TEAM_FLAGS = ("markdown", "add_history_to_context")
+
+
+def test_campos_de_execucao_ausentes_tem_o_default_do_comportamento_anterior():
+    config = TeamConfig(**_valid_kwargs())
+
+    assert (config.markdown, config.add_history_to_context) == (True, True)
+
+
+@pytest.mark.parametrize("field", _TEAM_FLAGS)
+@pytest.mark.parametrize("value", [1, 0, "false", "valor-recebido-x", None])
+def test_flag_de_execucao_so_aceita_bool(field, value):
+    with pytest.raises(InvalidField) as raised:
+        TeamConfig(**_valid_kwargs(**{field: value}))
+    assert raised.value.field == field
+    assert "valor-recebido-x" not in str(raised.value)
+
+
+@pytest.mark.parametrize("field", _TEAM_FLAGS)
+def test_flag_de_execucao_aceita_os_dois_valores(field):
+    assert [getattr(TeamConfig(**_valid_kwargs(**{field: v})), field) for v in (True, False)] == [True, False]

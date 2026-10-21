@@ -64,8 +64,10 @@ async def test_schema_descreve_enumeracoes_segredo_por_referencia_e_store(monkey
         response = await world.client.get(SCHEMA, headers=ADMIN)
 
     schema = response.json()
-    assert set(schema) == {"providers", "team", "tool", "rag_config", "api_key_ref", "config_store"}
+    assert set(schema) == {"providers", "agent", "team", "tool", "rag_config", "api_key_ref", "config_store"}
     assert schema["team"]["mode"] == ["route", "coordinate", "broadcast", "tasks"]
+    assert schema["agent"]["num_history_runs"] == {"type": "integer", "default": 5, "minimum": 1, "maximum": 50}
+    assert schema["team"]["markdown"] == {"type": "boolean", "default": True}
     assert schema["tool"]["http_method"] == ["GET", "POST", "PUT", "DELETE", "PATCH"]
     assert schema["rag_config"]["search_strategy"] == ["semantic", "hierarchical"]
     assert schema["api_key_ref"] == {"formats": ["env:<PROVEDOR>_API_KEY", "file:<caminho em SECRETS_DIR>"]}

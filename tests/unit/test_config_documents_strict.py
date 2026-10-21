@@ -68,6 +68,12 @@ def _refusal(map_document: Any, doc: dict[str, Any]) -> InvalidField:
         ({**AGENT, "promt\nlevel=critical": 1}, "unknown_key", ()),
         ({**AGENT, "k" * 65: 1}, "unknown_key", ()),
         ({**AGENT, "rag_config": {"active": True, "chave com espaço": 1}}, "rag_config.unknown_key", ()),
+        ({**AGENT, "markdown": "false"}, "markdown", ()),
+        ({**AGENT, "reasoning": 1}, "reasoning", ()),
+        ({**AGENT, "add_datetime_to_context": None}, "add_datetime_to_context", ()),
+        ({**AGENT, "num_history_runs": PASTED_VALUE}, "num_history_runs", ()),
+        ({**AGENT, "num_history_runs": 0}, "num_history_runs", ()),
+        ({**AGENT, "numHistoryRuns": 3}, "numHistoryRuns", ()),
     ],
 )
 def test_agente_estrito_recusa_com_o_campo_o_que_a_leitura_coage(
@@ -92,6 +98,9 @@ def test_agente_estrito_recusa_com_o_campo_o_que_a_leitura_coage(
         ({**TEAM, "prompt": 1}, "prompt", ()),
         ({**TEAM, "user_memory_active": "sim"}, "user_memory_active", ()),
         ({**TEAM, "modelParams": {"t": 1}}, "modelParams", ()),
+        ({**TEAM, "markdown": 1}, "markdown", ()),
+        ({**TEAM, "add_history_to_context": "false"}, "add_history_to_context", ()),
+        ({**TEAM, "num_history_runs": 3}, "num_history_runs", ()),
     ],
 )
 def test_team_estrito_recusa_com_o_campo(doc: dict[str, Any], field: str, indexes: tuple[int, ...]):
@@ -180,3 +189,52 @@ def test_leitura_legada_continua_tolerante_com_o_que_a_escrita_recusa():
 
     assert (agent.factory_ia_model, agent.tools_ids, agent.active) == ("ollama", [], "false")
     assert (tool.name, tool.http_method, tool.parameters[0].type) == (123, HttpMethod.GET, ParameterType.STRING)
+
+
+# FA-07: campos de execução (antes fixos na montagem), só em snake_case, com o default de antes.
+AGENT_RUN_OPTIONS: dict[str, Any] = {
+    "markdown": False,
+    "add_history_to_context": False,
+    "add_datetime_to_context": False,
+    "num_history_runs": 12,
+    "reasoning": True,
+}
+TEAM_RUN_OPTIONS: dict[str, Any] = {"markdown": False, "add_history_to_context": False}
+
+
+def test_documento_sem_os_campos_de_execucao_mapeia_para_os_defaults_de_antes():
+    logger = RecordingLogger()
+
+    agent = map_agent_document(AGENT, logger)
+    team = map_team_document(TEAM, logger)
+
+    assert (agent.markdown, agent.add_history_to_context, agent.add_datetime_to_context) == (True, True, True)
+    assert (agent.num_history_runs, agent.reasoning) == (5, False)
+    assert (team.markdown, team.add_history_to_context) == (True, True)
+    assert map_agent_document(AGENT, logger, strict=True) == agent
+    assert map_team_document(TEAM, logger, strict=True) == team
+
+
+def test_campos_de_execucao_sao_lidos_e_gravados_em_snake_case():
+    logger = RecordingLogger()
+
+    agent = map_agent_document({**AGENT, **AGENT_RUN_OPTIONS}, logger, strict=True)
+    team = map_team_document({**TEAM, **TEAM_RUN_OPTIONS}, logger, strict=True)
+
+    assert {key: getattr(agent, key) for key in AGENT_RUN_OPTIONS} == AGENT_RUN_OPTIONS
+    assert {key: getattr(team, key) for key in TEAM_RUN_OPTIONS} == TEAM_RUN_OPTIONS
+    assert entity_document(agent).items() >= AGENT_RUN_OPTIONS.items()
+    assert entity_document(team).items() >= TEAM_RUN_OPTIONS.items()
+    assert map_agent_document(entity_document(agent), logger, strict=True) == agent
+    assert map_team_document(entity_document(team), logger, strict=True) == team
+
+
+@pytest.mark.parametrize(
+    "doc",
+    [{**AGENT, "num_history_runs": "5"}, {**AGENT, "reasoning": "false"}],
+)
+def test_leitura_tolerante_tambem_recusa_campo_de_execucao_invalido(doc: dict[str, Any]):
+    """Campo novo, sem documento legado a preservar: a entidade recusa nos dois modos (o repositório isola
+    o documento com log) em vez de deixar ``"false"`` ligar o raciocínio ou ``"5"`` quebrar o agno."""
+    with pytest.raises(InvalidField):
+        map_agent_document(doc, RecordingLogger())

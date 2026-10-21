@@ -40,3 +40,17 @@ def require_optional_text(value: object, field: str, label: str) -> None:
     """
     if value is not None and not isinstance(value, str):
         raise InvalidField(field, f"{label} deve ser texto")
+
+
+def require_bool(value: object, field: str) -> None:
+    """Exige ``bool``: ``1`` ou ``"false"`` (verdadeiro em Python) é ``InvalidField``, sem o valor."""
+    if not isinstance(value, bool):
+        raise InvalidField(field, f"{field} deve ser booleano")
+
+
+def require_int_in_range(value: object, field: str, minimum: int, maximum: int) -> None:
+    """Exige ``int`` (``bool`` não conta) entre ``minimum`` e ``maximum``; ``InvalidField`` sem o valor."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise InvalidField(field, f"{field} deve ser inteiro")
+    if not minimum <= value <= maximum:
+        raise InvalidField(field, f"{field} deve estar entre {minimum} e {maximum}")

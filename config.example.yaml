@@ -19,6 +19,10 @@
 #   env:<PROVEDOR>_API_KEY ou file:/caminho dentro de SECRETS_DIR).
 # Campos opcionais do modelo (agente, team e rag_config): model_params, base_url,
 # api_key_ref (ver README, "Providers de modelo").
+# Campos opcionais de execução (ausentes = o default entre parênteses): no agente,
+# markdown (true), add_history_to_context (true), num_history_runs (5; inteiro de
+# 1 a 50), add_datetime_to_context (true) e reasoning (false); no team, markdown
+# (true) e add_history_to_context (true). Booleano entre aspas invalida o documento.
 #
 # O arquivo é consultado no startup e no POST /admin/refresh-cache e relido só
 # quando muda (sem recarga automática). Âncoras/aliases (& e *) e chave repetida
