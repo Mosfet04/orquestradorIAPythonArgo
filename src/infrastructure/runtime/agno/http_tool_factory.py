@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
+from collections.abc import Mapping
 from typing import Any
 from urllib.parse import quote
 
 import httpx
 from agno.tools.function import Function
 
+from src.domain.entities.model_config import FILE_SCHEME, is_secret_ref
 from src.domain.entities.tool import HttpMethod, ParameterType, Tool, ToolParameter
 from src.domain.ports import ILogger, IToolFactory
+from src.infrastructure.config.secrets import DEFAULT_SECRETS_DIR, SecretResolutionError, resolve_secret
 
 # ParameterType -> tipo JSON Schema. ``float`` é o nome legado do Mongo para ``number``.
 _JSON_SCHEMA_TYPES: dict[ParameterType, str] = {
@@ -52,15 +56,22 @@ class HttpToolFactory(IToolFactory):
     parâmetro de rota e, em violação, devolve erro curto ao modelo sem chamar o upstream.
     Tool cuja rota tem ``{x}`` sem parâmetro ``x`` obrigatório é recusada na criação.
 
+    Header com valor por referência (``env:``/``file:``, FA-06) é resolvido a cada chamada (``file:``
+    fora do event loop), nunca na criação: rotação do segredo vale no request seguinte. Referência que
+    não resolve: o upstream não é chamado e o log leva só o nome do header e o tipo do erro. Redirect
+    nunca é seguido (``follow_redirects=False`` explícito): o destino é só o da ``route``.
+
     Falha de rede ou erro inesperado: o resultado devolvido leva só o tipo da exceção, nunca o
     texto (o do httpx/h11 pode citar um header inteiro, e o resultado vai ao contexto do LLM, ao
     cliente AG-UI, a ``agno_sessions`` e ao span). Resposta com status de erro devolve o corpo do
     upstream, que é dado da própria tool.
     """
 
-    def __init__(self, logger: ILogger, *, timeout: float = 30.0) -> None:
+    def __init__(self, logger: ILogger, *, timeout: float = 30.0, secrets_dir: str = DEFAULT_SECRETS_DIR) -> None:
+        """``secrets_dir``: raiz das referências ``file:`` (``SECRETS_DIR``)."""
         self._logger = logger
         self._timeout = timeout
+        self._secrets_dir = secrets_dir
 
     # ── IToolFactory ────────────────────────────────────────────────
 
@@ -92,6 +103,10 @@ class HttpToolFactory(IToolFactory):
     def _create_function(self, tool: Tool) -> Function:
         logger = self._logger
         timeout = self._timeout
+        secrets_dir = self._secrets_dir
+        configured_headers = tool.headers or {}
+        # Sem referência (o caso comum), a chamada não paga nada além da cópia de antes.
+        has_refs = any(is_secret_ref(value) for value in configured_headers.values())
 
         async def http_function(**kwargs: Any) -> str:
             """Executa a requisição HTTP para o tool."""
@@ -105,13 +120,24 @@ class HttpToolFactory(IToolFactory):
                 )
                 return f"Erro nos argumentos da tool {tool.id}: {exc}"
             try:
+                headers = (
+                    await _resolved_headers(configured_headers, secrets_dir) if has_refs else dict(configured_headers)
+                )
+            except _UnresolvedHeader as exc:
+                logger.error(
+                    "Header por referência da tool não resolvido; a chamada não saiu",
+                    tool_id=tool.id,
+                    header=exc.name,
+                    error_type=exc.error_type,
+                )
+                return f"Erro na tool {tool.id}: header por referência não resolvido ({exc.name})"
+            try:
                 # Montar a requisição também pode falhar (ex.: argumento de rota que o quote não
                 # codifica): dentro do try, para a falha ter log nosso e resultado sem o texto dela.
-                headers = (tool.headers or {}).copy()
                 headers.setdefault("Content-Type", "application/json")
                 url, remaining = _resolve_url(tool.route, arguments)
                 req_kwargs = _build_request_kwargs(tool, url, headers, remaining, timeout)
-                async with httpx.AsyncClient(verify=True) as client:
+                async with httpx.AsyncClient(verify=True, follow_redirects=False) as client:
                     response = await client.request(**req_kwargs)
                     response.raise_for_status()
                 logger.info(
@@ -203,6 +229,31 @@ class _ArgumentError(ValueError):
     def __init__(self, message: str, names: list[str]) -> None:
         super().__init__(message)
         self.names = names
+
+
+class _UnresolvedHeader(Exception):
+    """Referência de header que não resolveu: o nome do header e o tipo do erro (o texto cita variável ou caminho)."""
+
+    def __init__(self, name: str, error_type: str) -> None:
+        super().__init__("header por referência não resolvido")
+        self.name = name
+        self.error_type = error_type
+
+
+async def _resolved_headers(headers: Mapping[str, str], secrets_dir: str) -> dict[str, str]:
+    """Headers com cada referência trocada pelo valor agora; ``file:`` lê o arquivo fora do event loop."""
+    resolved: dict[str, str] = {}
+    for name, value in headers.items():
+        try:
+            if not is_secret_ref(value):
+                resolved[name] = value
+            elif value.startswith(f"{FILE_SCHEME}:"):
+                resolved[name] = await asyncio.to_thread(resolve_secret, value, secrets_dir=secrets_dir)
+            else:
+                resolved[name] = resolve_secret(value, secrets_dir=secrets_dir)  # env: sem I/O
+        except (SecretResolutionError, OSError) as exc:  # OSError: leitura do arquivo que falha no meio
+            raise _UnresolvedHeader(name, type(exc).__name__) from None
+    return resolved
 
 
 def _has_json_type(value: Any, expected: str) -> bool:

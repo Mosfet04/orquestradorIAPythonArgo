@@ -20,7 +20,7 @@ from src.domain.entities.agent_config import AgentConfig
 from src.domain.ports import InvalidModelConfigError
 from src.domain.repositories.versioning import ConfigStoreReadOnly, Versioned
 from src.infrastructure.dependency_injection import build_config_admin
-from tests.fakes.admin_config_app import agent, agent_body, fake_audit_log, fake_runtime_swap, team, tool
+from tests.fakes.admin_config_app import agent, agent_body, fake_audit_log, fake_runtime_swap, route_guard, team, tool
 from tests.fakes.config_stores import YamlBackend, agent_document
 from tests.fakes.logger import RecordingLogger
 from tests.fakes.repositories import (
@@ -85,6 +85,7 @@ class _Admin:
             self.logger,
             runtime=fake_runtime_swap(self.agents, self.teams, self.runtime),
             audit=fake_audit_log(),
+            route_guard=route_guard(),
         )
 
     def served(self) -> tuple[list[tuple[str, str]], list[str]]:
@@ -182,7 +183,8 @@ async def test_store_so_leitura_recusa_toda_escrita_antes_de_montar(tmp_path: Pa
     runtime = FakeAgentRuntime(failures={"a2": InvalidModelConfigError("x")})
     logger = RecordingLogger()
     admin = build_config_admin(
-        agents, teams, tools, logger, runtime=fake_runtime_swap(agents, teams, runtime), audit=None
+        agents, teams, tools, logger, runtime=fake_runtime_swap(agents, teams, runtime), audit=None,
+        route_guard=route_guard(),
     )
 
     writes: list[Callable[[], Awaitable[object]]] = [

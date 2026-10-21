@@ -20,7 +20,7 @@ from src.domain.entities.agent_config import AgentConfig
 from src.domain.repositories.versioning import ConfigVersionConflict, Versioned
 from src.infrastructure.dependency_injection import build_config_admin
 from src.infrastructure.repositories.config_documents import entity_document
-from tests.fakes.admin_config_app import agent, agent_body, fake_audit_log, fake_runtime_swap, team, tool
+from tests.fakes.admin_config_app import agent, agent_body, fake_audit_log, fake_runtime_swap, route_guard, team, tool
 from tests.fakes.logger import RecordingLogger
 from tests.fakes.repositories import (
     InMemoryAgentConfigRepository,
@@ -68,6 +68,7 @@ def _admin(
         logger or RecordingLogger(),
         runtime=fake_runtime_swap(agents, teams),
         audit=fake_audit_log(),
+        route_guard=route_guard(),
     )
 
 
@@ -210,7 +211,6 @@ async def test_mascara_com_troca_de_origem_da_route_e_recusada():
         "https://outro.example.invalid/cep/{cep}",
         "http://api.example.invalid/cep/{cep}",
         "https://api.example.invalid:8443/cep/{cep}",
-        "https://api.example.invalid:99999/cep/{cep}",  # porta que nem parseia
     ):
         with pytest.raises(InvalidConfig) as caught:
             await admin.tools.replace("cep", {**shown, "route": route}, 0, actor="admin")
@@ -220,13 +220,17 @@ async def test_mascara_com_troca_de_origem_da_route_e_recusada():
     )
     with_new_value = await admin.tools.replace(
         "cep",
-        {**shown, "route": "https://outro.example.invalid/x", "headers": {"Authorization": "novo"}},
+        {**shown, "route": "https://outro.example.invalid/x", "headers": {"X-Cliente": "novo"}},
         1,
         actor="admin",
     )
+    with pytest.raises(InvalidConfig) as unparsed:  # FA-06: a guarda de destino recusa antes da máscara
+        unparsed_port = "https://api.example.invalid:99999/cep/{cep}"
+        await admin.tools.replace("cep", {**shown, "route": unparsed_port}, 2, actor="admin")
 
     assert updated.item.version == 1 and with_new_value.item.version == 2
-    assert [i.entity.headers for i in await tools.list_all()] == [{"Authorization": "novo"}]
+    assert unparsed.value.field == "route"
+    assert [i.entity.headers for i in await tools.list_all()] == [{"X-Cliente": "novo"}]
 
 
 async def test_alteracao_com_id_repetido_valida_e_mantem_o_header_do_documento_da_versao_do_if_match():

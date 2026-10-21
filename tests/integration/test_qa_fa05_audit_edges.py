@@ -200,21 +200,21 @@ async def test_restaurar_tool_mantem_o_valor_de_header_gravado_agora_e_nao_o_da_
 ):
     old, now = "valor-antigo-do-header-aaaa", "valor-atual-do-header-bbbb"
     async with admin_world(monkeypatch) as world:
-        await world.client.post(f"{BASE}/tools", json=tool_body(headers={"X-Api-Key": old}), headers=ADMIN)
-        await world.client.put(f"{BASE}/tools/cep", json=tool_body(headers={"X-Api-Key": now}), headers=if_match(1))
+        await world.client.post(f"{BASE}/tools", json=tool_body(headers={"X-Cliente": old}), headers=ADMIN)
+        await world.client.put(f"{BASE}/tools/cep", json=tool_body(headers={"X-Cliente": now}), headers=if_match(1))
         restored = await world.client.post(f"{BASE}/tools/cep/history/1/restore", headers=if_match(2))
         stored = (await world.tools.list_all())[0]
 
     assert restored.status_code == 200
-    assert restored.json()["headers"] == {"X-Api-Key": "***"}
-    assert stored.entity.headers == {"X-Api-Key": now} and stored.version == 3
+    assert restored.json()["headers"] == {"X-Cliente": "***"}
+    assert stored.entity.headers == {"X-Cliente": now} and stored.version == 3
     assert old not in restored.text
 
 
 async def test_restaurar_tool_com_header_que_a_tool_atual_nao_tem_e_422_sem_gravar(monkeypatch: pytest.MonkeyPatch):
     async with admin_world(monkeypatch) as world:
         await world.client.post(
-            f"{BASE}/tools", json=tool_body(headers={"X-Api-Key": "segredo-1234567"}), headers=ADMIN
+            f"{BASE}/tools", json=tool_body(headers={"X-Cliente": "segredo-1234567"}), headers=ADMIN
         )
         await world.client.put(f"{BASE}/tools/cep", json=tool_body(), headers=if_match(1))  # tira o header
         before = await _audit_state(world)

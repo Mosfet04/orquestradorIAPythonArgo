@@ -40,21 +40,21 @@ async def test_header_adicionado_trocado_removido_e_tool_desativada_nunca_vazam_
 ):
     async with admin_world(monkeypatch) as world:
         writes = [
-            await world.client.post(f"{BASE}/tools", json=_tool(**{"X-Api-Key": CANARY_A}), headers=ADMIN),
+            await world.client.post(f"{BASE}/tools", json=_tool(**{"X-Cliente": CANARY_A}), headers=ADMIN),
             # adiciona um segundo header com segredo e mantém o primeiro mascarado
             await world.client.put(
                 f"{BASE}/tools/cep",
-                json=_tool(**{"X-Api-Key": "***", "Authorization": f"Bearer {CANARY_B}"}),
+                json=_tool(**{"X-Cliente": "***", "X-Sessao": f"Bearer {CANARY_B}"}),
                 headers=if_match(1),
             ),
             # troca o valor do segundo
             await world.client.put(
                 f"{BASE}/tools/cep",
-                json=_tool(**{"X-Api-Key": "***", "Authorization": f"Bearer {CANARY_C}"}),
+                json=_tool(**{"X-Cliente": "***", "X-Sessao": f"Bearer {CANARY_C}"}),
                 headers=if_match(2),
             ),
             # remove o primeiro
-            await world.client.put(f"{BASE}/tools/cep", json=_tool(Authorization="***"), headers=if_match(3)),
+            await world.client.put(f"{BASE}/tools/cep", json=_tool(**{"X-Sessao": "***"}), headers=if_match(3)),
             await world.client.delete(f"{BASE}/tools/cep", headers=if_match(4)),  # remoção lógica
             await world.client.post(f"{BASE}/tools/cep/history/2/restore", headers=if_match(5)),
         ]
@@ -68,8 +68,8 @@ async def test_header_adicionado_trocado_removido_e_tool_desativada_nunca_vazam_
         assert not any(canary in text for canary in CANARIES)
     removed = next(i for i in history.json()["items"] if i["version"] == 4)
     assert removed["diff"]["headers"] == {
-        "before": {"X-Api-Key": "***", "Authorization": "***"},
-        "after": {"Authorization": "***"},
+        "before": {"X-Cliente": "***", "X-Sessao": "***"},
+        "after": {"X-Sessao": "***"},
     }
 
 

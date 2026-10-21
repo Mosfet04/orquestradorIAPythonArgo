@@ -317,6 +317,31 @@ class TestModelBaseUrlAllowlist:
                 AppConfig.load()
 
 
+class TestToolRouteAllowlist:
+    """``TOOL_ROUTE_ALLOWLIST`` (FA-06): hosts do operador para a ``route`` de tool; mesmas regras da de modelo."""
+
+    def test_ausente_e_lista_vazia(self):
+        with patch.dict(os.environ, {}, clear=True):
+            assert AppConfig.load().tool_route_allowlist == ()
+
+    def test_normaliza_como_a_de_modelo_e_nao_se_mistura_com_ela(self):
+        env = {
+            "TOOL_ROUTE_ALLOWLIST": " API.Interna.example. , 10.0.0.5,[FD00:0::7]",
+            "MODEL_BASE_URL_ALLOWLIST": "gw.x",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            config = AppConfig.load()
+        assert config.tool_route_allowlist == ("api.interna.example", "10.0.0.5", "fd00::7")
+        assert config.model_base_url_allowlist == ("gw.x",)
+
+    def test_entrada_invalida_falha_no_startup_citando_so_a_variavel_e_a_posicao(self):
+        entry = "https://user:senha@api.interna.example"
+        with patch.dict(os.environ, {"TOOL_ROUTE_ALLOWLIST": f"ok.example.com,{entry}"}, clear=True):
+            with pytest.raises(ValueError, match="TOOL_ROUTE_ALLOWLIST inválida: entrada 2") as caught:
+                AppConfig.load()
+        assert "senha" not in str(caught.value)
+
+
 class TestPluginConfig:
     """F2-03: ``PLUGIN_ALLOWLIST``, ``ALLOW_DYNAMIC_IMPORT`` e ``DYNAMIC_PROVIDER_SPECS``."""
 

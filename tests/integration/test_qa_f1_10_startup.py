@@ -39,7 +39,7 @@ from tests.fakes import (
     RecordingLogger,
     loopback_client,
 )
-from tests.fakes.admin_config_app import fake_audit_log
+from tests.fakes.admin_config_app import fake_audit_log, route_guard
 from tests.fakes.logger import LoggedRecord
 from tests.fakes.session_db import fake_session_db
 
@@ -132,6 +132,7 @@ class _Env:
             logger,
             runtime=RuntimeSwap(runtime, agents_use_case, teams_use_case, logger),
             audit=fake_audit_log(),
+            route_guard=route_guard(),
         )
 
     def app(self, monkeypatch: pytest.MonkeyPatch) -> tuple[AppFactory, Any]:

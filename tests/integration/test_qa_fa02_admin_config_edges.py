@@ -40,7 +40,7 @@ from tests.fakes.repositories import (
     InMemoryTeamConfigRepository,
     InMemoryToolRepository,
 )
-from tests.fakes.startup_world import Events, startup_world
+from tests.fakes.startup_world import Events, assign_seed_ids, startup_world
 from tests.fakes.web import loopback_client
 
 BASE = "/admin/config"
@@ -303,7 +303,7 @@ async def test_ciclo_get_put_de_tool_com_parametros_post_e_headers_nao_muda_nada
             {"name": "q", "type": "string", "description": "consulta", "required": True},
             {"name": "n", "type": "integer", "description": "qtd", "required": False, "default_value": 3},
         ],
-        "headers": {"X-Api-Key": "valor-de-teste", "X-Outro": "outro-valor"},
+        "headers": {"X-Cliente": "valor-de-teste", "X-Outro": "outro-valor"},
     }
     async with admin_world(monkeypatch) as world:
         created = await world.client.post(f"{BASE}/tools", json=body, headers=ADMIN)
@@ -313,7 +313,7 @@ async def test_ciclo_get_put_de_tool_com_parametros_post_e_headers_nao_muda_nada
 
     assert created.status_code == 201 and replaced.status_code == 200
     assert second.json() == {**first.json(), "version": 2}
-    assert first.json()["headers"] == {"X-Api-Key": "***", "X-Outro": "***"}
+    assert first.json()["headers"] == {"X-Cliente": "***", "X-Outro": "***"}
     assert first.json()["http_method"] == "POST"
     stored = (await world.tools.list_all())[0].entity
     assert stored.headers == body["headers"] and [p.name for p in stored.parameters] == ["q", "n"]
@@ -449,22 +449,23 @@ async def test_hard_delete_de_tool_sem_uso_e_soft_delete_preserva_o_header_grava
 
 
 @pytest.mark.parametrize(
-    ("route", "status"),
+    ("route", "status", "field"),
     [
-        ("https://api.example.invalid/outro/caminho", 200),
-        ("https://API.Example.INVALID/cep/{cep}", 200),
-        ("http://api.example.invalid/cep/{cep}", 422),
-        ("https://api.example.invalid:8443/cep/{cep}", 422),
-        ("https://api.example.invalid:443/cep/{cep}", 422),
-        ("https://api.example.invalid.evil.example/cep", 422),
-        ("https://coletor.example.invalid/cep", 422),
-        ("https://api.example.invalid:99999999/cep", 422),
-        ("//api.example.invalid/cep", 422),
-        ("/cep/{cep}", 422),
+        ("https://api.example.invalid/outro/caminho", 200, None),
+        ("https://API.Example.INVALID/cep/{cep}", 200, None),
+        ("http://api.example.invalid/cep/{cep}", 422, "headers"),
+        ("https://api.example.invalid:8443/cep/{cep}", 422, "headers"),
+        ("https://api.example.invalid:443/cep/{cep}", 422, "headers"),
+        ("https://api.example.invalid.evil.example/cep", 422, "headers"),
+        ("https://coletor.example.invalid/cep", 422, "headers"),
+        # FA-06: a guarda de destino recusa a forma da route antes da máscara
+        ("https://api.example.invalid:99999999/cep", 422, "route"),
+        ("//api.example.invalid/cep", 422, "route"),
+        ("/cep/{cep}", 422, "route"),
     ],
 )
 async def test_header_mascarado_so_acompanha_a_mesma_origem_da_route(
-    monkeypatch: pytest.MonkeyPatch, route: str, status: int
+    monkeypatch: pytest.MonkeyPatch, route: str, status: int, field: str | None
 ):
     secret = "Bearer valor-de-teste-12345"  # noqa: S105  # valor de teste
     async with admin_world(monkeypatch, tools=[tool("cep", headers={"Authorization": secret})]) as world:
@@ -475,7 +476,7 @@ async def test_header_mascarado_so_acompanha_a_mesma_origem_da_route(
     assert secret not in response.text
     stored = (await world.tools.list_all())[0].entity
     if status == 422:
-        assert response.json() == {"detail": "Configuração inválida", "field": "headers"}
+        assert response.json() == {"detail": "Configuração inválida", "field": field}
         assert stored.route == "https://api.example.invalid/cep/{cep}"
     assert stored.headers == {"Authorization": secret}
 
@@ -635,8 +636,7 @@ def test_pilha_completa_com_store_mongo_cria_altera_e_remove_pelo_lifespan(monke
     with startup_world(Events(), agents=("a1",)):
         client = mongo_base.MongoClientFactory.get_client("qualquer")
         collections = client["qualquer"]
-        for doc in collections["agents_config"].docs:
-            doc.setdefault("_id", ObjectId())  # o Mongo real sempre tem; o seed do mundo falso não
+        assign_seed_ids()
         app = app_factory.AppFactory().create_app(routers=[admin_config_router])
         with loopback_client(app) as http:
             listed = http.get(f"{BASE}/agents", headers=ADMIN)

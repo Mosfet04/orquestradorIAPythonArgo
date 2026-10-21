@@ -82,6 +82,9 @@ class AppConfig:
     secrets_dir: str = DEFAULT_SECRETS_DIR
     # Hosts aceitos em base_url de modelo/embedder vinda da config (F2-02), normalizados.
     model_base_url_allowlist: tuple[str, ...] = ()
+    # Hosts do operador para a route de tool gravada pela API (FA-06), normalizados: aceitos em IP
+    # privado/loopback e os únicos que recebem header por referência.
+    tool_route_allowlist: tuple[str, ...] = ()
     # Plugins de provider por entry point (F2-03): "distribuição:nome", distribuição pela PEP 503.
     plugin_allowlist: tuple[str, ...] = ()
     # "módulo:atributo" de ProviderSpec por env: só com o flag e no modo dev local (F2-03).
@@ -137,7 +140,10 @@ class AppConfig:
             api_key_run=_api_key("API_KEY_RUN", os.getenv("API_KEY_RUN")),
             api_key_admin=_api_key("API_KEY_ADMIN", os.getenv("API_KEY_ADMIN")),
             secrets_dir=_secrets_dir(),
-            model_base_url_allowlist=_model_base_url_allowlist(),
+            model_base_url_allowlist=_host_allowlist(
+                "MODEL_BASE_URL_ALLOWLIST", os.getenv("MODEL_BASE_URL_ALLOWLIST")
+            ),
+            tool_route_allowlist=_host_allowlist("TOOL_ROUTE_ALLOWLIST", os.getenv("TOOL_ROUTE_ALLOWLIST")),
             plugin_allowlist=_plugin_allowlist(),
             allow_dynamic_import=_optional_bool(
                 "ALLOW_DYNAMIC_IMPORT", os.getenv("ALLOW_DYNAMIC_IMPORT"), default=False
@@ -210,21 +216,20 @@ def _secrets_dir() -> str:
     return value
 
 
-def _model_base_url_allowlist() -> tuple[str, ...]:
-    """``MODEL_BASE_URL_ALLOWLIST``: hosts separados por vírgula; vazio = nenhum.
+def _host_allowlist(env_name: str, raw: str | None) -> tuple[str, ...]:
+    """``MODEL_BASE_URL_ALLOWLIST``/``TOOL_ROUTE_ALLOWLIST``: hosts separados por vírgula; vazio = nenhum.
 
     Só o host (nome DNS ou IP literal), sem esquema, porta, caminho nem curinga: a comparação
-    é exata com o host da ``base_url``. Normaliza caixa, ponto final e a forma do IPv6.
+    é exata com o host da URL. Normaliza caixa, ponto final e a forma do IPv6.
     """
-    raw = os.getenv("MODEL_BASE_URL_ALLOWLIST") or ""
     hosts: dict[str, None] = {}
-    for position, entry in enumerate((item.strip() for item in raw.split(",")), start=1):
+    for position, entry in enumerate((item.strip() for item in (raw or "").split(",")), start=1):
         if entry:
-            hosts[_allowlisted_host(entry, position)] = None
+            hosts[_allowlisted_host(entry, position, env_name)] = None
     return tuple(hosts)
 
 
-def _allowlisted_host(entry: str, position: int) -> str:
+def _allowlisted_host(entry: str, position: int, env_name: str) -> str:
     """Host normalizado; inválido = ``ValueError`` com a posição, nunca a entrada.
 
     A entrada pode ser uma URL com credencial colada por engano.
@@ -237,7 +242,7 @@ def _allowlisted_host(entry: str, position: int) -> str:
         pass
     if len(name) > 253 or not all(_DNS_LABEL.fullmatch(label) for label in name.split(".")):
         raise ValueError(
-            f"MODEL_BASE_URL_ALLOWLIST inválida: entrada {position} (contando da esquerda, separadas por "
+            f"{env_name} inválida: entrada {position} (contando da esquerda, separadas por "
             "vírgula) não é um host; use só o host (ex.: llm.interno.example), sem esquema, credencial, "
             "porta, caminho nem '*'"
         )

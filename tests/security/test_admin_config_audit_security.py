@@ -36,10 +36,10 @@ async def test_historico_e_diario_nunca_contem_valor_de_header_nem_a_chave_admin
     assert [w.status_code for w in writes] == [201, 200, 200, 204]
     assert history.status_code == 200 and history.json()["total"] == 4
     created = history.json()["items"][-1]
-    assert created["document"]["headers"] == {"X-Api-Key": "***"}
-    assert created["diff"]["headers"] == {"before": None, "after": {"X-Api-Key": "***"}}
+    assert created["document"]["headers"] == {"X-Cliente": "***"}
+    assert created["diff"]["headers"] == {"before": None, "after": {"X-Cliente": "***"}}
     changed = history.json()["items"][-2]
-    assert changed["diff"] == {"headers": {"before": {"X-Api-Key": "***"}, "after": {"X-Api-Key": "***"}}}
+    assert changed["diff"] == {"headers": {"before": {"X-Cliente": "***"}, "after": {"X-Cliente": "***"}}}
     assert {item["actor"] for item in history.json()["items"]} == {"admin"}
     for text in (history.text, repr(stored), repr([(r.message, r.context) for r in world.logger.records])):
         assert FIRST_HEADER_VALUE not in text and SECOND_HEADER_VALUE not in text
@@ -59,11 +59,11 @@ async def test_restaurar_tool_de_outro_host_nao_leva_o_segredo_gravado(monkeypat
     current = (await world.tools.list_all())[0]
     assert (current.entity.route, current.entity.headers, current.version) == (
         tool_body()["route"],
-        {"X-Api-Key": SECOND_HEADER_VALUE},
+        {"X-Cliente": SECOND_HEADER_VALUE},
         2,
     )
 
 
 def _with_header(value: str) -> dict[str, Any]:
-    """Corpo da tool com o valor do header ``X-Api-Key``."""
-    return tool_body(headers={"X-Api-Key": value})
+    """Corpo da tool com o valor do header ``X-Cliente`` (nome não sensível: texto novo aceito, FA-06)."""
+    return tool_body(headers={"X-Cliente": value})

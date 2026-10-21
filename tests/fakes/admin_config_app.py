@@ -32,9 +32,12 @@ from src.infrastructure.dependency_injection import build_config_admin, build_co
 from src.infrastructure.providers import ProviderRegistry
 from src.infrastructure.providers.builtins import BUILTIN_PROVIDERS
 from src.infrastructure.repositories.mongo_config_audit_log import MongoConfigAuditLog
+from src.infrastructure.security.ssrf import Resolver, normalize_host
+from src.infrastructure.security.tool_route_guard import ToolRouteGuard
 from src.infrastructure.web.app_factory import AppFactory
 from src.presentation.routes.admin_config import router as admin_config_router
 from src.presentation.routes.admin_schema import router as admin_schema_router
+from tests.fakes.dns import public_dns
 from tests.fakes.logger import RecordingLogger
 from tests.fakes.mongo import FakeMotorClient
 from tests.fakes.repositories import (
@@ -50,6 +53,11 @@ RUN_KEY = "fa02-run-key-" + "r" * 20
 ADMIN_KEY = "fa02-admin-key-" + "a" * 19
 RUN = {"Authorization": f"Bearer {RUN_KEY}"}
 ADMIN = {"Authorization": f"Bearer {ADMIN_KEY}"}
+
+
+def route_guard(*trusted_hosts: str, resolver: Resolver = public_dns) -> ToolRouteGuard:
+    """Guarda de destino da ``route`` (FA-06) com ``trusted_hosts`` na ``TOOL_ROUTE_ALLOWLIST`` e DNS falso."""
+    return ToolRouteGuard(allowlist=frozenset(normalize_host(host) for host in trusted_hosts), resolver=resolver)
 
 
 def agent(agent_id: str, *, tools_ids: list[str] | None = None, active: bool = True) -> AgentConfig:
@@ -157,13 +165,21 @@ def fake_config_admin(
     logger: RecordingLogger,
     runtime: AgentRuntime | None = None,
     audit: MongoConfigAuditLog | None = None,
+    guard: ToolRouteGuard | None = None,
 ) -> ConfigAdmin:
     """``build_config_admin`` com a troca a quente sobre ``runtime`` (default: um ``FakeAgentRuntime`` novo).
 
-    ``audit`` é o diário das escritas (default: um novo, num Mongo falso só dele).
+    ``audit`` é o diário das escritas (default: um novo, num Mongo falso só dele). ``guard``: destino da
+    ``route`` (default: ``route_guard()``, DNS falso público e allowlist vazia).
     """
     return build_config_admin(
-        agents, teams, tools, logger, runtime=fake_runtime_swap(agents, teams, runtime), audit=audit or fake_audit_log()
+        agents,
+        teams,
+        tools,
+        logger,
+        runtime=fake_runtime_swap(agents, teams, runtime),
+        audit=audit or fake_audit_log(),
+        route_guard=guard or route_guard(),
     )
 
 
@@ -174,7 +190,13 @@ def read_only_config_admin() -> ConfigAdmin:
     """
     agents, teams = InMemoryAgentConfigRepository(), InMemoryTeamConfigRepository()
     return build_config_admin(
-        agents, teams, InMemoryToolRepository(), RecordingLogger(), runtime=fake_runtime_swap(agents, teams), audit=None
+        agents,
+        teams,
+        InMemoryToolRepository(),
+        RecordingLogger(),
+        runtime=fake_runtime_swap(agents, teams),
+        audit=None,
+        route_guard=route_guard(),
     )
 
 
@@ -189,6 +211,8 @@ class AdminWorld:
     runtime: FakeAgentRuntime
     audit_db: Any
     """Database falso do diário (``config_audit``, ``config_revision``): o que ficou gravado, cru."""
+    audit: MongoConfigAuditLog
+    """O diário em si (a porta ``ConfigAuditLog``): ``record`` grava entradas, como o caso de uso."""
 
 
 def admin_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -213,7 +237,9 @@ async def admin_world(
     tools: Iterable[Tool] = (),
     providers: ProviderRegistry | None = None,
     runtime: FakeAgentRuntime | None = None,
+    guard: ToolRouteGuard | None = None,
 ) -> AsyncIterator[AdminWorld]:
+    """``guard``: destino da ``route`` de tool (default: ``route_guard()``, DNS falso público)."""
     admin_env(monkeypatch)
     logger = RecordingLogger()
     agent_repo = InMemoryAgentConfigRepository(agents)
@@ -223,8 +249,8 @@ async def admin_world(
     audit_db = FakeMotorClient()["agno"]
     audit = fake_audit_log(audit_db)
     app = AppFactory().create_app(routers=[admin_config_router, admin_schema_router])
-    app.state.config_admin = fake_config_admin(agent_repo, team_repo, tool_repo, logger, runtime, audit)
+    app.state.config_admin = fake_config_admin(agent_repo, team_repo, tool_repo, logger, runtime, audit, guard)
     app.state.config_schema = build_config_schema(providers or ProviderRegistry(BUILTIN_PROVIDERS), writable=True)
     transport = httpx.ASGITransport(app=app, client=LOOPBACK_CLIENT)
     async with httpx.AsyncClient(transport=transport, base_url=LOOPBACK_BASE_URL) as client:
-        yield AdminWorld(agent_repo, team_repo, tool_repo, logger, app, client, runtime, audit_db)
+        yield AdminWorld(agent_repo, team_repo, tool_repo, logger, app, client, runtime, audit_db, audit)

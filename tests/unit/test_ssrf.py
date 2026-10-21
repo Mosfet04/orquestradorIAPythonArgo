@@ -14,8 +14,10 @@ from src.infrastructure.security.ssrf import (
     check_host,
     is_blocked_address,
     is_loopback_host,
+    is_public_address,
     literal_address,
 )
+from tests.fakes.dns import no_dns
 
 
 def _resolver(*addresses: str):
@@ -27,10 +29,6 @@ def _resolver(*addresses: str):
 
     resolve.calls = calls  # type: ignore[attr-defined]
     return resolve
-
-
-def _no_dns(host: str) -> list[str]:
-    raise AssertionError(f"literal não deveria resolver DNS: {host}")
 
 
 @pytest.mark.parametrize(
@@ -78,7 +76,7 @@ def test_formas_legadas_de_ip_sao_reconhecidas_como_literal(host: str):
     address = literal_address(host)
     assert address is not None and is_blocked_address(address)
     with pytest.raises(BlockedDestinationError):
-        check_host(host, resolver=_no_dns)
+        check_host(host, resolver=no_dns)
 
 
 @pytest.mark.parametrize("host", ["api.openai.com", "1.2.3.4 x", "deadbeef", "08.1.1.1", ""])
@@ -87,7 +85,7 @@ def test_hostname_nao_vira_literal(host: str):
 
 
 def test_literal_permitido_nao_consulta_dns():
-    check_host("10.0.0.5", resolver=_no_dns)
+    check_host("10.0.0.5", resolver=no_dns)
 
 
 def test_host_que_resolve_para_metadata_e_recusado():
@@ -186,3 +184,30 @@ def test_ip_com_ponto_final_e_nome_dns_e_nao_vira_o_ip(host: str):
 
     assert normalize_host(host) == host
     assert is_loopback_host(host) is False
+
+
+@pytest.mark.parametrize(
+    ("address", "public"),
+    [
+        ("93.184.216.34", True),
+        ("2606:4700::1111", True),
+        ("::ffff:93.184.216.34", True),
+        ("168.63.129.16", False),  # global, mas WireServer da Azure (bloqueado)
+        ("64:ff9b::a00:5", False),  # NAT64 de 10.0.0.5: o stdlib diz global, vale o IPv4
+        ("10.0.0.5", False),
+        ("100.64.0.1", False),
+        ("127.0.0.1", False),
+        ("192.0.2.1", False),  # documentação
+        ("fc00::1", False),
+        ("fec0::1", False),  # site-local (obsoleto): o stdlib diz global
+        ("224.0.0.1", False),  # multicast: o stdlib diz global
+        ("239.1.1.1", False),
+        ("ff02::1", False),
+        ("ff05::2", False),
+        ("ff0e::1", False),  # multicast de escopo global: não é destino de tool HTTP
+        ("::ffff:224.0.0.1", False),
+    ],
+)
+def test_is_public_address_so_global_fora_da_lista_de_bloqueio(address: str, public: bool):
+    """FA-06: base do ``public_only`` da guarda da route de tool."""
+    assert is_public_address(ipaddress.ip_address(address)) is public

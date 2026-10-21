@@ -259,14 +259,14 @@ async def test_tool_criada_com_header_em_texto_grava_o_valor_e_devolve_mascarado
         "description": "Previsão do tempo",
         "route": "https://api.example.invalid/clima",
         "http_method": "get",
-        "headers": {"X-Api-Key": "valor-de-teste"},
+        "headers": {"X-Tenant": "valor-de-teste"},
     }
     async with admin_world(monkeypatch) as world:
         created = await world.client.post(f"{BASE}/tools", json=body, headers=ADMIN)
 
     assert created.status_code == 201
-    assert (created.json()["headers"], created.json()["http_method"]) == ({"X-Api-Key": "***"}, "GET")
-    assert (await world.tools.list_all())[0].entity.headers == {"X-Api-Key": "valor-de-teste"}
+    assert (created.json()["headers"], created.json()["http_method"]) == ({"X-Tenant": "***"}, "GET")
+    assert (await world.tools.list_all())[0].entity.headers == {"X-Tenant": "valor-de-teste"}
 
 
 async def test_team_nao_e_referenciado_e_sai_com_soft_e_hard_delete(monkeypatch: pytest.MonkeyPatch):

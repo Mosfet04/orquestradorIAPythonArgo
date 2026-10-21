@@ -12,6 +12,7 @@ from src.application.services.knowledge_search_factory import KnowledgeSearchFac
 from src.application.use_cases.config_admin_use_case import (
     AgentConfigEditor,
     ConfigAdmin,
+    RouteGuard,
     RuntimeSwap,
     TeamConfigEditor,
     ToolConfigEditor,
@@ -62,6 +63,8 @@ from src.infrastructure.runtime.agno.http_tool_factory import HttpToolFactory
 from src.infrastructure.runtime.agno.llm_summary_generator import LLMSummaryGenerator
 from src.infrastructure.runtime.agno.session_db import SessionDb, create_session_db
 from src.infrastructure.runtime.agno.team_factory_service import TeamFactoryService
+from src.infrastructure.security.ssrf import system_resolver
+from src.infrastructure.security.tool_route_guard import ToolRouteGuard
 from src.infrastructure.telemetry.metrics import TelemetryMetrics
 from src.infrastructure.web.api_key_auth import is_local_dev_mode
 from src.presentation.controllers.orquestrador_controller import OrquestradorController
@@ -198,13 +201,15 @@ def build_config_admin(
     *,
     runtime: RuntimeSwap,
     audit: ConfigAuditLog | None,
+    route_guard: RouteGuard,
 ) -> ConfigAdmin:
     """Administração da config (FA-02) sobre os repositórios do store, com a troca a quente do runtime (FA-04).
 
     O corpo passa pelo mapper do store no modo estrito (recusa o que a leitura legada tolera) e os três
     editores, o ``reload`` e o ``sync`` dividem uma trava de escrita (as referências cruzam os tipos e cada
     escrita monta o runtime com a config que as anteriores gravaram). ``audit``: o diário das escritas (FA-05);
-    ``None`` com o store YAML (só leitura: toda escrita responde 409 antes de montar).
+    ``None`` com o store YAML (só leitura: toda escrita responde 409 antes de montar). ``route_guard``: destino da
+    ``route`` de tool na escrita (FA-06; ``ToolRouteGuard`` no app).
     """
     lock = asyncio.Lock()
     return ConfigAdmin(
@@ -238,6 +243,7 @@ def build_config_admin(
             runtime,
             audit=audit,
             agents=agents,
+            route_guard=route_guard,
         ),
         runtime=runtime,
         write_lock=lock,
@@ -287,7 +293,7 @@ class DependencyContainer:
         await self._connect_mongo()
 
         # ── Wiring ──────────────────────────────────────────────────
-        tool_factory = HttpToolFactory(logger=self._logger)
+        tool_factory = HttpToolFactory(logger=self._logger, secrets_dir=self.config.secrets_dir)
 
         agent_config_repo, team_config_repo, tool_repo = self._build_config_repositories()
 
@@ -317,6 +323,11 @@ class DependencyContainer:
             self._logger,
             runtime=RuntimeSwap(runtime, agents_use_case, teams_use_case, self._logger),
             audit=audit,
+            route_guard=ToolRouteGuard(
+                allowlist=frozenset(self.config.tool_route_allowlist),
+                allow_loopback=is_local_dev_mode(self.config),
+                resolver=system_resolver,
+            ),
         )
         self._config_schema = build_config_schema(providers, writable=audit is not None)
 

@@ -16,7 +16,7 @@ from src.domain.repositories.config_audit import ConfigAuditEntry, FieldChange
 from src.domain.repositories.versioning import ConfigStoreReadOnly
 from src.infrastructure.dependency_injection import build_config_admin
 from src.infrastructure.repositories.mongo_config_audit_log import MongoConfigAuditLog
-from tests.fakes.admin_config_app import agent_body, fake_audit_log, fake_runtime_swap, tool, tool_body
+from tests.fakes.admin_config_app import agent_body, fake_audit_log, fake_runtime_swap, route_guard, tool, tool_body
 from tests.fakes.logger import RecordingLogger
 from tests.fakes.mongo import FakeMotorClient
 from tests.fakes.repositories import (
@@ -61,6 +61,7 @@ class _Replica:
             self.logger,
             runtime=fake_runtime_swap(store.agents, store.teams, self.runtime),
             audit=audit or fake_audit_log(store.database),
+            route_guard=route_guard(),
         )
 
     def served(self) -> list[tuple[str, str]]:
@@ -106,13 +107,13 @@ async def test_cada_escrita_registra_ator_tipo_id_versao_e_so_o_que_mudou():
 async def test_header_de_tool_sai_mascarado_no_documento_e_no_diff_e_a_troca_do_valor_aparece():
     store = _Store()
     tools = _Replica(store).admin.tools
-    body = tool_body(headers={"Authorization": "Bearer valor-um"})
+    body = tool_body(headers={"X-Cliente": "valor-um"})  # nome não sensível: texto novo aceito (FA-06)
 
     await tools.create(body, actor=ACTOR)
-    await tools.replace("cep", {**body, "headers": {"Authorization": "Bearer valor-dois"}}, 1, actor=ACTOR)
+    await tools.replace("cep", {**body, "headers": {"X-Cliente": "valor-dois"}}, 1, actor=ACTOR)
 
     changed, created = await tools.history("cep")
-    masked = {"Authorization": "***"}
+    masked = {"X-Cliente": "***"}
     assert changed.diff == {"headers": FieldChange(masked, masked)}
     assert created.document is not None and created.document["headers"] == masked
     assert "valor-" not in repr(await tools.history("cep"))
@@ -172,14 +173,14 @@ async def test_restaurar_tool_mantem_o_valor_gravado_dos_headers_so_na_mesma_ori
     await tools.replace("cep", {**shown, "description": "v2"}, 1, actor=ACTOR)
 
     await tools.restore("cep", 1, 2, actor=ACTOR)
-    moved = {**shown, "route": "https://outro.example.invalid/x", "headers": {"Authorization": "Bearer outro"}}
+    moved = {**shown, "route": "https://outro.example.invalid/x", "headers": {"X-Cliente": "Bearer outro"}}
     await tools.replace("cep", moved, 3, actor=ACTOR)
     with pytest.raises(InvalidConfig) as caught:
         await tools.restore("cep", 1, 4, actor=ACTOR)  # volta à route antiga com o valor do outro host
 
     assert caught.value.field == "headers"
     stored = [(i.entity.description, i.entity.headers, i.version) for i in await store.tools.list_all()]
-    assert stored == [("Busca endereço", {"Authorization": "Bearer outro"}, 4)]
+    assert stored == [("Busca endereço", {"X-Cliente": "Bearer outro"}, 4)]
     assert [e.document["description"] for e in await tools.history("cep") if e.document][:2] == ["Busca endereço", "v1"]
 
 
@@ -189,7 +190,7 @@ async def test_store_sem_diario_e_so_leitura_historico_vazio_e_poll_desligado():
     runtime = FakeAgentRuntime()
     admin = build_config_admin(
         store.agents, store.teams, store.tools, RecordingLogger(),
-        runtime=fake_runtime_swap(store.agents, store.teams, runtime), audit=None,
+        runtime=fake_runtime_swap(store.agents, store.teams, runtime), audit=None, route_guard=route_guard(),
     )
 
     with pytest.raises(ConfigStoreReadOnly):

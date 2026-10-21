@@ -52,6 +52,15 @@ def parse_secret_ref(ref: object) -> tuple[str, str]:
     raise InvalidField("api_key_ref", f"api_key_ref inválido: {_REF_HINT}")
 
 
+def is_secret_ref(value: str) -> bool:
+    """Texto com esquema de referência (``env:``/``file:``): é referência, válida ou não, nunca valor literal.
+
+    Header de tool (FA-06): quem chama resolve (inválida falha fechado, sem enviar o texto); quem grava
+    confere com ``parse_secret_ref``.
+    """
+    return value.startswith((f"{ENV_SCHEME}:", f"{FILE_SCHEME}:"))
+
+
 class ModelParams(Mapping[str, ParamValue]):
     """Parâmetros escalares do modelo: mapeamento somente leitura e com hash.
 

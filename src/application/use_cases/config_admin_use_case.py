@@ -12,6 +12,11 @@ alterar e remover agem no documento do id na versão lida (``If-Match``), e a po
 Valores de header de tool saem mascarados; na escrita, o valor mascarado mantém o gravado, desde que
 a ``route`` siga na mesma origem.
 
+Tool (FA-06): a ``route`` passa pela guarda de destino (``RouteGuard``, injetada: esquema, credencial, IP
+privado/loopback/metadata). Header aceita valor por referência (``env:``/``file:``, regra do ``parse_secret_ref``),
+que a API mostra como está (não é segredo) e que só vai para host do operador; nome sensível (``Authorization``,
+``Cookie``, ``*-Key``, ``*-Token``) não aceita texto novo; o texto gravado antes segue lido e mantido pela máscara.
+
 Troca a quente (FA-04): cada escrita de agente ou team monta todas as entidades ativas com a mudança
 (``RuntimeSwap.build``), só então grava e troca as servidas pelo runtime; se a entidade alterada não monta,
 ``ConfigNotBuildable`` e nada é gravado. Tool é lida do store pela montagem do agente (e nunca o derruba):
@@ -42,6 +47,7 @@ from src.application.use_cases.config_change import ConfigChange, ConfigNotBuild
 from src.application.use_cases.get_active_agents_use_case import GetActiveAgentsUseCase
 from src.application.use_cases.get_active_teams_use_case import GetActiveTeamsUseCase
 from src.domain.entities.agent_config import AgentConfig
+from src.domain.entities.model_config import is_secret_ref, parse_secret_ref
 from src.domain.entities.team_config import TeamConfig
 from src.domain.entities.tool import Tool
 from src.domain.entities.validation import InvalidField
@@ -71,6 +77,20 @@ MAX_DOCUMENT_DEPTH = 32
 _SURROGATE = re.compile("[\ud800-\udfff]")
 # Recusas do mapeamento sem campo conhecido (o ``InvalidField`` já diz o campo).
 _UNPLACED_DOCUMENT_ERRORS = (ValueError, TypeError, AttributeError, KeyError, RecursionError)
+# Nome de header HTTP (``token`` da RFC 9110): espaço ou quebra de linha forjariam outro header.
+_HEADER_NAME = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
+# Controle C0 (menos o tab) e DEL no valor: idem.
+_HEADER_VALUE_CONTROL = re.compile(r"[\x00-\x08\x0a-\x1f\x7f]")
+# Nomes que levam credencial: só por referência (ou o texto já gravado, pela máscara).
+_SENSITIVE_HEADERS = frozenset({"authorization", "proxy-authorization", "cookie"})
+_SENSITIVE_HEADER_SUFFIXES = ("-key", "_key", "-token", "_token")
+
+RouteGuard = Callable[[str], Awaitable[bool]]
+"""Destino da ``route`` de tool (FA-06): recusa com ``InvalidField("route")``; ``True`` = host do operador.
+
+Host do operador (allowlist, loopback no modo dev) é o único que recebe header por referência: senão quem tem a
+chave admin mandaria qualquer ``*_API_KEY`` do processo para um host seu. Resolve DNS: não bloqueia o loop.
+"""
 
 
 class ConfigNotFound(Exception):
@@ -238,6 +258,32 @@ def _origin(route: str) -> tuple[str, str | None, int | None] | None:
         return parts.scheme, parts.hostname, parts.port
     except ValueError:
         return None
+
+
+def _valid_ref(value: str) -> bool:
+    """``value`` é referência de segredo no formato aceito (``parse_secret_ref``)."""
+    if not is_secret_ref(value):
+        return False
+    try:
+        parse_secret_ref(value)
+    except InvalidField:
+        return False
+    return True
+
+
+def _check_headers(headers: Mapping[str, str]) -> None:
+    """Nome token HTTP, valor sem controle, referência no formato e nome sensível sem texto novo.
+
+    ``***`` (a máscara do GET) fica para ``_kept``: mantém o gravado, texto legado inclusive.
+    """
+    for name, value in headers.items():
+        if not _HEADER_NAME.fullmatch(name) or _HEADER_VALUE_CONTROL.search(value):
+            raise InvalidConfig("headers")
+        if value == MASKED_VALUE or _valid_ref(value):
+            continue
+        lowered = name.lower()
+        if is_secret_ref(value) or lowered in _SENSITIVE_HEADERS or lowered.endswith(_SENSITIVE_HEADER_SUFFIXES):
+            raise InvalidConfig("headers")
 
 
 def _ids(items: Sequence[Versioned[AgentConfig]] | Sequence[Versioned[Tool]]) -> set[str]:
@@ -564,7 +610,7 @@ class TeamConfigEditor(ConfigEditor[TeamConfig]):
 
 
 class ToolConfigEditor(ConfigEditor[Tool]):
-    """Tools: headers saem mascarados; uma tool nas ``tools_ids`` de um agente não é removida.
+    """Tools: header em texto sai mascarado (referência sai como está); tool nas ``tools_ids`` de agente não sai.
 
     Monta só depois de gravar (``_built`` padrão): a montagem do agente lê as tools do store, e tool que
     falha não derruba o agente.
@@ -583,11 +629,29 @@ class ToolConfigEditor(ConfigEditor[Tool]):
         *,
         audit: ConfigAuditLog | None,
         agents: IAgentConfigRepository,
+        route_guard: RouteGuard,
     ) -> None:
         super().__init__(repository, parse, dump, logger, write_lock, runtime, audit=audit)
         self._agents = agents
+        self._route_guard = route_guard
 
     async def _checked(self, entity: Tool, current: Tool | None) -> Tool:
+        """Headers e ``route`` conferidos (os headers antes: recusa sem DNS); a máscara mantém o gravado.
+
+        Header por referência, inclusive o mantido pela máscara, só para host do operador.
+        """
+        _check_headers(entity.headers or {})
+        try:
+            trusted = await self._route_guard(entity.route)
+        except InvalidField as exc:
+            raise InvalidConfig(exc.field) from None
+        kept = self._kept(entity, current)
+        if not trusted and any(is_secret_ref(value) for value in (kept.headers or {}).values()):
+            raise InvalidConfig("headers")
+        return kept
+
+    @staticmethod
+    def _kept(entity: Tool, current: Tool | None) -> Tool:
         """Header com o valor mascarado mantém o valor gravado (o GET devolve a máscara).
 
         Só na mesma origem (esquema, host e porta) da ``route`` gravada: senão, quem tem a chave admin
@@ -612,7 +676,10 @@ class ToolConfigEditor(ConfigEditor[Tool]):
     def _document(self, entity: Tool) -> ConfigDocument:
         document = self._dump(entity)
         if entity.headers:
-            document["headers"] = dict.fromkeys(entity.headers, MASKED_VALUE)
+            # A referência não é segredo (como o ``api_key_ref``); o texto pode ser.
+            document["headers"] = {
+                name: value if _valid_ref(value) else MASKED_VALUE for name, value in entity.headers.items()
+            }
         return document
 
 
