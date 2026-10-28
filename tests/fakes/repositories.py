@@ -47,7 +47,8 @@ class _VersionedItems(Generic[E]):
 
     def _position(self, entity_id: str, expected_version: int) -> int | None:
         """Posição do primeiro item do id na versão, ``None`` para id novo na versão 0; senão, conflito."""
-        if not isinstance(entity_id, str) or type(expected_version) is not int:
+        valid_version = isinstance(expected_version, int) and not isinstance(expected_version, bool)
+        if not isinstance(entity_id, str) or not valid_version:
             raise TypeError("id da config deve ser texto e a versão, inteiro")
         same_id = [i for i, entry in enumerate(self._entries) if entry.entity.id == entity_id]
         position = next((i for i in same_id if self._entries[i].version == expected_version), None)

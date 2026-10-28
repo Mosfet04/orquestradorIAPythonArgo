@@ -131,43 +131,7 @@ class HttpToolFactory(IToolFactory):
                     error_type=exc.error_type,
                 )
                 return f"Erro na tool {tool.id}: header por referência não resolvido ({exc.name})"
-            try:
-                # Montar a requisição também pode falhar (ex.: argumento de rota que o quote não
-                # codifica): dentro do try, para a falha ter log nosso e resultado sem o texto dela.
-                headers.setdefault("Content-Type", "application/json")
-                url, remaining = _resolve_url(tool.route, arguments)
-                req_kwargs = _build_request_kwargs(tool, url, headers, remaining, timeout)
-                async with httpx.AsyncClient(verify=True, follow_redirects=False) as client:
-                    response = await client.request(**req_kwargs)
-                    response.raise_for_status()
-                logger.info(
-                    "HTTP OK",
-                    tool_id=tool.id,
-                    status=response.status_code,
-                )
-                return _serialize(response)
-            except httpx.HTTPStatusError as exc:
-                logger.error(
-                    "HTTP error",
-                    tool_id=tool.id,
-                    status=getattr(exc.response, "status_code", None),
-                )
-                return _format_http_error(exc)
-            except httpx.RequestError as exc:
-                logger.error(
-                    "Request error",
-                    tool_id=tool.id,
-                    error_type=type(exc).__name__,
-                )
-                kind = "timeout" if isinstance(exc, httpx.TimeoutException) else "falha"
-                return f"Erro na requisição: {kind} ao chamar a tool ({type(exc).__name__})"
-            except Exception as exc:  # noqa: BLE001 - logado; o modelo recebe o erro como resultado da tool
-                logger.error(
-                    "Erro inesperado",
-                    tool_id=tool.id,
-                    error_type=type(exc).__name__,
-                )
-                return f"Erro inesperado ao chamar a tool ({type(exc).__name__})"
+            return await _send(tool, arguments, headers, timeout, logger)
 
         instructions = _build_instructions(tool)
         return Function(
@@ -325,6 +289,53 @@ def _reject_dot_segments(tool: Tool, arguments: dict[str, Any]) -> None:
             raise _ArgumentError(
                 f"valor inválido para {name}: '.' e '..' não são permitidos na rota", [name]
             )
+
+
+async def _send(
+    tool: Tool,
+    arguments: dict[str, Any],
+    headers: dict[str, str],
+    request_timeout: float,
+    logger: ILogger,
+) -> str:
+    """Faz a requisição da tool; toda falha vira log nosso e resultado sem o texto da exceção."""
+    try:
+        # Montar a requisição também pode falhar (ex.: argumento de rota que o quote não
+        # codifica): dentro do try, para a falha ter log nosso e resultado sem o texto dela.
+        headers.setdefault("Content-Type", "application/json")
+        url, remaining = _resolve_url(tool.route, arguments)
+        req_kwargs = _build_request_kwargs(tool, url, headers, remaining, request_timeout)
+        async with httpx.AsyncClient(verify=True, follow_redirects=False) as client:
+            response = await client.request(**req_kwargs)
+            response.raise_for_status()
+        logger.info(
+            "HTTP OK",
+            tool_id=tool.id,
+            status=response.status_code,
+        )
+        return _serialize(response)
+    except httpx.HTTPStatusError as exc:
+        logger.error(
+            "HTTP error",
+            tool_id=tool.id,
+            status=getattr(exc.response, "status_code", None),
+        )
+        return _format_http_error(exc)
+    except httpx.RequestError as exc:
+        logger.error(
+            "Request error",
+            tool_id=tool.id,
+            error_type=type(exc).__name__,
+        )
+        kind = "timeout" if isinstance(exc, httpx.TimeoutException) else "falha"
+        return f"Erro na requisição: {kind} ao chamar a tool ({type(exc).__name__})"
+    except Exception as exc:  # noqa: BLE001 - logado; o modelo recebe o erro como resultado da tool
+        logger.error(
+            "Erro inesperado",
+            tool_id=tool.id,
+            error_type=type(exc).__name__,
+        )
+        return f"Erro inesperado ao chamar a tool ({type(exc).__name__})"
 
 
 def _build_request_kwargs(

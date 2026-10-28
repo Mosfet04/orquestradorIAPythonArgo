@@ -168,14 +168,21 @@ def check_host(host: str, *, resolver: Resolver, public_only: bool = False) -> N
         if public_only and not is_public_address(literal):
             raise BlockedDestinationError("destino em IP privado, loopback ou reservado recusado")
         return
+    addresses = _resolved_addresses(host, resolver)
+    if any(is_blocked_address(address) for address in addresses):
+        raise BlockedDestinationError("host do destino resolve para metadata/link-local; recusado")
+    if public_only and not all(is_public_address(address) for address in addresses):
+        raise BlockedDestinationError("host do destino resolve para IP privado, loopback ou reservado; recusado")
+
+
+def _resolved_addresses(host: str, resolver: Resolver) -> list[IPAddress]:
+    """Endereços de ``host`` pelo ``resolver``; nenhum, inválido ou erro de resolução recusam."""
     try:
         resolved = list(resolver(host))
     except (OSError, ValueError):  # ValueError: UnicodeError do idna (rótulo > 63, vazio...)
         resolved = []
     addresses = [literal_address(item) for item in resolved]
-    if not addresses or any(address is None for address in addresses):
+    valid = [address for address in addresses if address is not None]
+    if not valid or len(valid) != len(addresses):
         raise BlockedDestinationError("host do destino não resolve para um endereço válido")
-    if any(address is not None and is_blocked_address(address) for address in addresses):
-        raise BlockedDestinationError("host do destino resolve para metadata/link-local; recusado")
-    if public_only and not all(address is not None and is_public_address(address) for address in addresses):
-        raise BlockedDestinationError("host do destino resolve para IP privado, loopback ou reservado; recusado")
+    return valid

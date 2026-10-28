@@ -82,6 +82,12 @@ def _host(route: object) -> str:
     parts = _split(route)
     if parts is None or parts.scheme not in _SCHEMES or not parts.hostname:
         raise InvalidField("route", "route deve ser http(s)://host[:porta]/caminho")
+    _check_netloc(parts)
+    return parts.hostname
+
+
+def _check_netloc(parts: SplitResult) -> None:
+    """Recusa credencial, placeholder, não ASCII, ``%`` e porta vazia/0 no ``host[:porta]``."""
     if "@" in parts.netloc:
         raise InvalidField("route", "route não pode ter credenciais; use header por referência")
     if "{" in parts.netloc or "}" in parts.netloc:
@@ -90,7 +96,6 @@ def _host(route: object) -> str:
         raise InvalidField("route", "route: host só em ASCII, sem '%' (IDN em punycode)")
     if parts.port == 0 or parts.netloc.endswith(":"):
         raise InvalidField("route", "route com porta vazia ou 0")
-    return parts.hostname
 
 
 def _split(route: str) -> SplitResult | None:
