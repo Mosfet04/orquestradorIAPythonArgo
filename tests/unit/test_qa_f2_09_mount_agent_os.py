@@ -70,7 +70,8 @@ def test_agent_os_recebe_a_configuracao_do_projeto(monkeypatch: pytest.MonkeyPat
     assert agent_os.cors_allowed_origins == origins
 
 
-def test_sem_teams_o_agent_os_recebe_none_e_as_listas_dele_sao_copias(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_sem_teams_o_agent_os_recebe_lista_vazia_e_as_listas_dele_sao_copias(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Lista vazia (não ``None``): a troca a quente (FA-04) reenche no lugar a lista que o AgentOS guardou."""
     monkeypatch.setattr(f"{RUNTIME_MODULE}.AgentOS", _RecordingAgentOS)
     runtime = agno_runtime(fake_session_db())
     agents = [_agent("a1"), _agent("a2")]
@@ -78,7 +79,7 @@ def test_sem_teams_o_agent_os_recebe_none_e_as_listas_dele_sao_copias(monkeypatc
     runtime.mount(FastAPI(), agents, [], cors_allowed_origins=[])
 
     (kwargs,) = _RecordingAgentOS.received
-    assert kwargs["teams"] is None
+    assert kwargs["teams"] == []
     assert kwargs["agents"] == agents and kwargs["agents"] is not agents  # o AgentOS não muta a lista de quem montou
 
 

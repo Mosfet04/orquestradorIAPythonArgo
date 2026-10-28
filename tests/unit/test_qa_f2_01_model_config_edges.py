@@ -258,7 +258,7 @@ async def test_model_params_hostil_isola_agente_team_e_rag(monkeypatch: pytest.M
     assert [t.id for t in teams] == ["t-ok"]
     failed = [r.context.get("agent_id") or r.context.get("team_id") for r in logger.records if r.level == "error"]
     assert sorted(failed) == ["ruim", "ruim-rag", "t-ruim"]
-    assert all(r.context.get("error_type") == "ValueError" for r in logger.records if r.level == "error")
+    assert all(r.context.get("error_type") == "InvalidField" for r in logger.records if r.level == "error")
     assert MARKER not in repr(logger.records)
 
 

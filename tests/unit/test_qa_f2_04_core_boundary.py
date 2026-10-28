@@ -57,10 +57,13 @@ class _OnlyAgents(AgentRuntime):
 
 @pytest.mark.parametrize(
     ("runtime_cls", "missing"),
-    [(AgentRuntime, {"build_agent", "build_team"}), (_OnlyAgents, {"build_team"})],
+    [
+        (AgentRuntime, {"build_agent", "build_team", "revision", "swap"}),
+        (_OnlyAgents, {"build_team", "revision", "swap"}),
+    ],
     ids=["porta", "so-build_agent"],
 )
-def test_agent_runtime_e_abstrato_e_exige_os_dois_metodos(
+def test_agent_runtime_e_abstrato_e_exige_a_montagem_e_a_troca(
     runtime_cls: type[AgentRuntime], missing: set[str]
 ) -> None:
     assert runtime_cls.__abstractmethods__ == frozenset(missing)

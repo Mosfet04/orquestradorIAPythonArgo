@@ -3,16 +3,26 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Any, get_args
 
 from motor.motor_asyncio import AsyncIOMotorClient
 
 from src.application.services.document_indexing_service import DocumentIndexingService
 from src.application.services.knowledge_search_factory import KnowledgeSearchFactory
+from src.application.use_cases.config_admin_use_case import (
+    AgentConfigEditor,
+    ConfigAdmin,
+    RouteGuard,
+    RuntimeSwap,
+    TeamConfigEditor,
+    ToolConfigEditor,
+)
+from src.application.use_cases.config_schema import ConfigSchema
 from src.application.use_cases.get_active_agents_use_case import GetActiveAgentsUseCase
 from src.application.use_cases.get_active_teams_use_case import GetActiveTeamsUseCase
 from src.domain.ports import IEmbedderFactory, ILogger
 from src.domain.repositories.agent_config_repository import IAgentConfigRepository
+from src.domain.repositories.config_audit import ConfigAuditLog
 from src.domain.repositories.team_config_repository import ITeamConfigRepository
 from src.domain.repositories.tool_repository import IToolRepository
 from src.infrastructure.config.app_config import AppConfig
@@ -21,10 +31,18 @@ from src.infrastructure.parsers.text_document_parser import TextDocumentParser
 from src.infrastructure.providers import DestinationPolicy, ProviderRegistry
 from src.infrastructure.providers.builtins import BUILTIN_PROVIDERS
 from src.infrastructure.providers.plugins import load_provider_plugins
+from src.infrastructure.providers.registry import Kind
+from src.infrastructure.repositories.config_documents import (
+    entity_document,
+    map_agent_document,
+    map_team_document,
+    map_tool_document,
+)
 from src.infrastructure.repositories.mongo_agent_config_repository import (
     MongoAgentConfigRepository,
 )
-from src.infrastructure.repositories.mongo_base import MongoDocument
+from src.infrastructure.repositories.mongo_base import MongoClientFactory, MongoDocument
+from src.infrastructure.repositories.mongo_config_audit_log import MongoConfigAuditLog
 from src.infrastructure.repositories.mongo_document_tree_repository import (
     MongoDocumentTreeRepository,
 )
@@ -45,6 +63,8 @@ from src.infrastructure.runtime.agno.http_tool_factory import HttpToolFactory
 from src.infrastructure.runtime.agno.llm_summary_generator import LLMSummaryGenerator
 from src.infrastructure.runtime.agno.session_db import SessionDb, create_session_db
 from src.infrastructure.runtime.agno.team_factory_service import TeamFactoryService
+from src.infrastructure.security.ssrf import system_resolver
+from src.infrastructure.security.tool_route_guard import ToolRouteGuard
 from src.infrastructure.telemetry.metrics import TelemetryMetrics
 from src.infrastructure.web.api_key_auth import is_local_dev_mode
 from src.presentation.controllers.orquestrador_controller import OrquestradorController
@@ -162,6 +182,75 @@ def build_provider_registry(config: AppConfig, logger: ILogger) -> ProviderRegis
     return registry
 
 
+def build_config_schema(providers: ProviderRegistry, *, writable: bool) -> ConfigSchema:
+    """Schema de ``/admin/schema`` (FA-03): opções de cada tipo de provider do registry em vigor e o store.
+
+    ``writable``: ``False`` com o store YAML (só leitura; a escrita responde 409).
+    """
+    return ConfigSchema(
+        providers={kind: tuple(providers.options(kind)) for kind in get_args(Kind)},
+        config_store_writable=writable,
+    )
+
+
+def build_config_admin(
+    agents: IAgentConfigRepository,
+    teams: ITeamConfigRepository,
+    tools: IToolRepository,
+    logger: ILogger,
+    *,
+    runtime: RuntimeSwap,
+    audit: ConfigAuditLog | None,
+    route_guard: RouteGuard,
+) -> ConfigAdmin:
+    """Administração da config (FA-02) sobre os repositórios do store, com a troca a quente do runtime (FA-04).
+
+    O corpo passa pelo mapper do store no modo estrito (recusa o que a leitura legada tolera) e os três
+    editores, o ``reload`` e o ``sync`` dividem uma trava de escrita (as referências cruzam os tipos e cada
+    escrita monta o runtime com a config que as anteriores gravaram). ``audit``: o diário das escritas (FA-05);
+    ``None`` com o store YAML (só leitura: toda escrita responde 409 antes de montar). ``route_guard``: destino da
+    ``route`` de tool na escrita (FA-06; ``ToolRouteGuard`` no app).
+    """
+    lock = asyncio.Lock()
+    return ConfigAdmin(
+        agents=AgentConfigEditor(
+            agents,
+            lambda doc: map_agent_document(doc, logger, strict=True),
+            entity_document,
+            logger,
+            lock,
+            runtime,
+            audit=audit,
+            tools=tools,
+            teams=teams,
+        ),
+        teams=TeamConfigEditor(
+            teams,
+            lambda doc: map_team_document(doc, logger, strict=True),
+            entity_document,
+            logger,
+            lock,
+            runtime,
+            audit=audit,
+            agents=agents,
+        ),
+        tools=ToolConfigEditor(
+            tools,
+            lambda doc: map_tool_document(doc, strict=True),
+            entity_document,
+            logger,
+            lock,
+            runtime,
+            audit=audit,
+            agents=agents,
+            route_guard=route_guard,
+        ),
+        runtime=runtime,
+        write_lock=lock,
+        audit=audit,
+    )
+
+
 class DependencyContainer:
     """Composition Root — cria e fornece todas as dependências."""
 
@@ -172,6 +261,8 @@ class DependencyContainer:
         self._session_db: SessionDb | None = None
         self._health_service: HealthService | None = None
         self._controller: OrquestradorController | None = None
+        self._config_admin: ConfigAdmin | None = None
+        self._config_schema: ConfigSchema | None = None
         self._runtime: AgnoRuntime | None = None
 
     @classmethod
@@ -202,7 +293,7 @@ class DependencyContainer:
         await self._connect_mongo()
 
         # ── Wiring ──────────────────────────────────────────────────
-        tool_factory = HttpToolFactory(logger=self._logger)
+        tool_factory = HttpToolFactory(logger=self._logger, secrets_dir=self.config.secrets_dir)
 
         agent_config_repo, team_config_repo, tool_repo = self._build_config_repositories()
 
@@ -223,6 +314,22 @@ class DependencyContainer:
         teams_use_case = GetActiveTeamsUseCase(
             runtime, team_config_repo, self._logger
         )
+
+        audit = self._build_config_audit()
+        self._config_admin = build_config_admin(
+            agent_config_repo,
+            team_config_repo,
+            tool_repo,
+            self._logger,
+            runtime=RuntimeSwap(runtime, agents_use_case, teams_use_case, self._logger),
+            audit=audit,
+            route_guard=ToolRouteGuard(
+                allowlist=frozenset(self.config.tool_route_allowlist),
+                allow_loopback=is_local_dev_mode(self.config),
+                resolver=system_resolver,
+            ),
+        )
+        self._config_schema = build_config_schema(providers, writable=audit is not None)
 
         self._controller = OrquestradorController(
             get_active_agents_use_case=agents_use_case,
@@ -349,11 +456,31 @@ class DependencyContainer:
             MongoToolRepository(connection_string=conn, database_name=db, logger=self._logger),
         )
 
+    def _build_config_audit(self) -> ConfigAuditLog | None:
+        """Diário das escritas de config (FA-05) no Mongo; ``None`` com o store YAML, que a API não grava."""
+        config = self.config
+        if config.config_store == "yaml":
+            return None
+        client = MongoClientFactory.get_client(config.mongo_connection_string)
+        return MongoConfigAuditLog(client[config.mongo_database_name])
+
     def get_orquestrador_controller(self) -> OrquestradorController:
         """Devolve o controller; ``RuntimeError`` se o container não foi inicializado."""
         if self._controller is None:
             raise RuntimeError("Container não inicializado: chame create_async() antes")
         return self._controller
+
+    def get_config_admin(self) -> ConfigAdmin:
+        """Caso de uso das rotas ``/admin/config`` e do reload; ``RuntimeError`` se o container não foi inicializado."""
+        if self._config_admin is None:
+            raise RuntimeError("Container não inicializado: chame create_async() antes")
+        return self._config_admin
+
+    def get_config_schema(self) -> ConfigSchema:
+        """Schema da rota ``/admin/schema``; ``RuntimeError`` se o container não foi inicializado."""
+        if self._config_schema is None:
+            raise RuntimeError("Container não inicializado: chame create_async() antes")
+        return self._config_schema
 
     def get_agent_runtime(self) -> AgnoRuntime:
         """Runtime que monta as entidades e as serve no app (``mount``/``start``/``close``)."""

@@ -112,4 +112,4 @@ async def test_lote_so_com_documentos_invalidos_devolve_vazio_e_loga_cada_um(
     result, errors = await _load("agents", name, monkeypatch, tmp_path, docs)
 
     assert result == []
-    assert errors == [("Documento de agente inválido ignorado", "ValueError")] * 5
+    assert errors == [("Documento de agente inválido ignorado", "InvalidField")] * 5

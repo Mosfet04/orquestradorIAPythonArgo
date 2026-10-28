@@ -6,16 +6,18 @@ container -> entidades -> ``runtime.mount``/``start`` e, no shutdown, ``runtime.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from src.application.use_cases.config_admin_use_case import ConfigAdmin
 from src.domain.ports import AgentHandle, TeamHandle
 from src.infrastructure.config.app_config import AppConfig
 from src.infrastructure.dependency_injection import DependencyContainer
@@ -31,13 +33,18 @@ from src.infrastructure.web.api_key_auth import (
     ApiKeys,
     resolve_api_keys,
 )
+from src.infrastructure.web.config_revision_poll import poll_config_revision, track_config_revision
 from src.infrastructure.web.metrics_middleware import MetricsMiddleware
 
 # CORS explícito (nada de "*"): o que o AgentOS/os.agno.com e o AG-UI usam. O Starlette
 # soma os headers CORS-safelisted (Accept, Accept-Language, Content-Language, Content-Type).
 _CORS_ALLOW_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
 _CORS_ALLOW_HEADERS = ("Authorization", "Content-Type", "X-API-Key")
-_CORS_EXPOSE_HEADERS = ("Deprecation", "Link")
+# Legíveis no navegador: o sinal dos aliases deprecated e as versões que o playground lê da escrita de
+# config (``ETag`` = versão do documento, ``Runtime-Revision`` = revisão do runtime; admin_config.py).
+_CORS_EXPOSE_HEADERS = ("Deprecation", "Link", "ETag", "Runtime-Revision")
+# Sucessor do /admin/refresh-cache (rota da apresentação, src/presentation/routes/admin_config.py).
+_RELOAD_PATH = "/admin/config/reload"
 
 # Rotas fora do tracing. O OTel faz re.search em ``scheme://<Host><path>`` (sem query;
 # opentelemetry/instrumentation/asgi/__init__.py, get_host_port_url_tuple): a regex
@@ -72,11 +79,13 @@ class AppFactory:
         self._lifespan_ran = False
         self._logger = StructlogLoggerAdapter("app_factory")
 
-    def create_app(self) -> FastAPI:
+    def create_app(self, routers: Sequence[APIRouter] = ()) -> FastAPI:
         """Cria a aplicação FastAPI — **síncrono** (module-level safe).
 
         Lê o ``AppConfig`` aqui (configuração inválida falha no startup, antes do bind).
         Sem ``API_KEY_RUN``/``API_KEY_ADMIN`` fora do modo dev local, recusa (fail-closed).
+        ``routers``: rotas da camada de apresentação (``app.py`` as passa; a infraestrutura não
+        importa ``src.presentation``), sob a mesma borda (CORS + auth) das demais.
         """
         _disable_agno_telemetry_by_default()
         self._config = AppConfig.load()
@@ -106,6 +115,8 @@ class AppFactory:
         # middleware; instrument_app depois disso não gera span nenhum.
         self._instrument_fastapi(base_app)
         self._add_admin_endpoints(base_app)
+        for router in routers:
+            base_app.include_router(router)
         # Por último: add_middleware insere na frente, então o CORS fica o mais externo
         # (preflight e headers CORS valem também para respostas de erro dos demais) e a
         # auth logo dentro dele.
@@ -158,12 +169,14 @@ class AppFactory:
             return {"status": "ok"}
 
         @app.get("/admin/health")
-        async def health_check() -> Any:
+        async def health_check() -> JSONResponse:
+            """Checks do health service e a revisão das entidades servidas (``runtime_revision``, FA-04)."""
+            body: dict[str, Any] = {"status": "healthy"}
             if self._container and self._container.health_service:
-                result = await self._container.health_service.check_async()
-                status_code = 200 if result.get("status") == "healthy" else 503
-                return JSONResponse(result, status_code=status_code)
-            return {"status": "healthy"}
+                body = await self._container.health_service.check_async()
+            if self._container:
+                body = {**body, "runtime_revision": self._container.get_agent_runtime().revision}
+            return JSONResponse(body, status_code=200 if body.get("status") == "healthy" else 503)
 
         @app.get("/metrics/cache")
         async def cache_metrics() -> dict[str, Any]:
@@ -172,13 +185,17 @@ class AppFactory:
                 return ctrl.get_cache_stats()
             return {"status": "no_cache"}
 
-        @app.post("/admin/refresh-cache")
-        async def refresh_cache() -> dict[str, str]:
-            if self._container:
-                ctrl = self._container.get_orquestrador_controller()
-                await ctrl.refresh_agents()
-                return {"status": "cache_refreshed"}
-            return {"status": "no_cache"}
+        @app.post("/admin/refresh-cache", deprecated=True)
+        async def refresh_cache(request: Request) -> JSONResponse:
+            """Alias deprecated de ``POST /admin/config/reload`` (FA-04): relê o store e troca o runtime."""
+            admin = getattr(request.app.state, "config_admin", None)
+            if not isinstance(admin, ConfigAdmin):
+                return JSONResponse({"detail": "Administração da configuração indisponível"}, status_code=503)
+            revision = await admin.reload()
+            return JSONResponse(
+                {"runtime_revision": revision},
+                headers={"Deprecation": "true", "Link": f'<{_RELOAD_PATH}>; rel="successor-version"'},
+            )
 
     # ── lifespan ────────────────────────────────────────────────────
 
@@ -274,9 +291,11 @@ class AppFactory:
 
     @asynccontextmanager
     async def _lifespan(self, app: FastAPI) -> AsyncIterator[None]:
-        """Container -> telemetria -> entidades -> runtime (rotas e lifespans do AgentOS).
+        """Container -> telemetria -> entidades -> runtime (rotas e lifespans do AgentOS) -> poll da config.
 
-        Shutdown, também depois de falha parcial no startup: flush da telemetria primeiro (o fechamento
+        O poll da revisão da config (FA-05, ``config_revision_poll.py``) só existe com o store Mongo e segue as
+        escritas das outras réplicas. Shutdown, também depois de falha parcial no startup: o poll é parado
+        antes de tudo (nenhuma troca durante o fechamento), depois o flush da telemetria (o fechamento
         do runtime pode demorar e o orquestrador matar o processo), depois o runtime (uma vez) e o
         container. Falha dentro de ``DependencyContainer.create_async`` é fechada por ele mesmo (o
         container só existe aqui quando a inicialização terminou).
@@ -293,15 +312,25 @@ class AppFactory:
         self._lifespan_ran = True
         startup_start = time.perf_counter()
         runtime: AgnoRuntime | None = None
+        poll: asyncio.Task[None] | None = None
         try:
             self._logger.info("Lifespan: iniciando...")
             container = await self._ensure_container()
+            # Lidos pelas rotas /admin/config e /admin/schema (src/presentation/routes/).
+            admin = container.get_config_admin()
+            app.state.config_admin = admin
+            app.state.config_schema = container.get_config_schema()
             setup_telemetry(container.config)
 
+            # Antes da carga: o poll só relê o que outra réplica gravar depois dela.
+            await track_config_revision(admin, self._logger)
             agents, teams = await self._load_all_entities(container)
             runtime = container.get_agent_runtime()
             self._try_mount_runtime(app, runtime, agents, teams)
             await runtime.start()
+            if admin.audit is not None:  # store YAML: sem revisão a seguir (reload manual)
+                interval = container.config.config_revision_poll_seconds
+                poll = asyncio.create_task(poll_config_revision(admin, interval, self._logger))
 
             self._record_startup_metrics(startup_start, agents, teams)
             yield
@@ -312,6 +341,10 @@ class AppFactory:
             )
             raise
         finally:
+            if poll is not None:
+                # Antes de fechar o runtime: nenhuma troca durante o shutdown (wait não re-levanta o cancel).
+                poll.cancel()
+                await asyncio.wait({poll})
             try:
                 shutdown_telemetry()
             finally:
@@ -337,17 +370,11 @@ class AppFactory:
         agents: Sequence[AgentHandle],
         teams: Sequence[TeamHandle],
     ) -> None:
-        """Monta o runtime no app se houver agentes ou teams.
+        """Monta o runtime no app, mesmo sem agentes nem teams: os criados depois pela API são trocados a quente.
 
         Falha deixa a borda, o admin e o que a montagem já tiver posto (falha depois do
         ``get_app()`` deixa as rotas do AgentOS sem os lifespans dele).
         """
-        if not agents and not teams:
-            self._logger.info(
-                "Nenhum agente ou team ativo — rodando só endpoints admin"
-            )
-            return
-
         try:
             self._mount_runtime(app, runtime, agents, teams)
         except Exception as exc:  # noqa: BLE001 - o app sobe sem rotas de agente; logado
@@ -375,6 +402,6 @@ class AppFactory:
 _factory = AppFactory()
 
 
-def create_app() -> FastAPI:
+def create_app(routers: Sequence[APIRouter] = ()) -> FastAPI:
     """Factory **síncrona** global — segura para atribuir o ``app`` no nível do módulo."""
-    return _factory.create_app()
+    return _factory.create_app(routers)

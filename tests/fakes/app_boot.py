@@ -30,6 +30,7 @@ from src.infrastructure.runtime.agno.team_factory_service import TeamFactoryServ
 from src.infrastructure.web import app_factory
 from src.infrastructure.web.app_factory import AppFactory
 from src.presentation.controllers.orquestrador_controller import OrquestradorController
+from tests.fakes.admin_config_app import read_only_config_admin
 from tests.fakes.logger import RecordingLogger
 from tests.fakes.models import FakeEmbedderFactory, FakeModelFactory
 from tests.fakes.mongo import FakeMongoClient, FakeMongoCollection
@@ -169,6 +170,8 @@ def _serve_with(
             health_service=None,
             get_orquestrador_controller=lambda: controller,
             get_agent_runtime=lambda: runtime,
+            get_config_admin=read_only_config_admin,
+            get_config_schema=lambda: None,
         )
         return factory._container
 

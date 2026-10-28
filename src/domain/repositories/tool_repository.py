@@ -1,12 +1,13 @@
 """Porta do repositório de tools."""
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from typing import List
 
 from ..entities.tool import Tool
+from .versioning import VersionedConfigRepository
 
 
-class IToolRepository(ABC):
+class IToolRepository(VersionedConfigRepository[Tool]):
     """Interface para repositório de tools."""
 
     @abstractmethod

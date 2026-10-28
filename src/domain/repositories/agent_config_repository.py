@@ -1,12 +1,13 @@
 """Porta do repositório de configurações de agentes."""
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from typing import List
 
 from src.domain.entities.agent_config import AgentConfig
+from src.domain.repositories.versioning import VersionedConfigRepository
 
 
-class IAgentConfigRepository(ABC):
+class IAgentConfigRepository(VersionedConfigRepository[AgentConfig]):
     """Interface para repositório de configurações de agentes."""
 
     @abstractmethod

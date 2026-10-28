@@ -66,6 +66,24 @@ def is_blocked_address(address: IPAddress) -> bool:
     return any(address in network for network in _BLOCKED_NETWORKS if address.version == network.version)
 
 
+def is_public_address(address: IPAddress) -> bool:
+    """``True`` só para endereço global (roteável na internet) fora da lista de bloqueio.
+
+    Recusa privado, loopback, link-local, CGNAT, reservado e documentação (``is_global`` do stdlib),
+    multicast e site-local IPv6 (``fec0::/10``), que o ``is_global`` do 3.12 dá como globais;
+    IPv4 embutido em IPv6 (mapeado, NAT64, 6to4) vale pelo IPv4.
+    """
+    if is_blocked_address(address) or address.is_multicast:
+        return False
+    if isinstance(address, ipaddress.IPv6Address):
+        if address.is_site_local:
+            return False
+        embedded = _embedded_ipv4(address)
+        if embedded is not None:
+            return is_public_address(embedded)
+    return address.is_global
+
+
 def _strip(host: str) -> str:
     candidate = host.strip().lower()
     if candidate.startswith("[") and candidate.endswith("]"):
@@ -136,23 +154,35 @@ def system_resolver(host: str) -> list[str]:
     return [str(info[4][0]) for info in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)]
 
 
-def check_host(host: str, *, resolver: Resolver) -> None:
+def check_host(host: str, *, resolver: Resolver, public_only: bool = False) -> None:
     """Recusa (``BlockedDestinationError``) host de metadata/link-local, literal ou resolvido.
 
     Literal não consulta DNS. Nome é resolvido uma vez; qualquer endereço bloqueado, nenhum
-    endereço ou erro de resolução recusam.
+    endereço ou erro de resolução recusam. ``public_only``: todo endereço tem de ser público
+    (``is_public_address``; tool HTTP, FA-06). Bloqueante no nome: chame fora do event loop.
     """
     literal = literal_address(host)
     if literal is not None:
         if is_blocked_address(literal):
             raise BlockedDestinationError("destino de metadata/link-local recusado")
+        if public_only and not is_public_address(literal):
+            raise BlockedDestinationError("destino em IP privado, loopback ou reservado recusado")
         return
+    addresses = _resolved_addresses(host, resolver)
+    if any(is_blocked_address(address) for address in addresses):
+        raise BlockedDestinationError("host do destino resolve para metadata/link-local; recusado")
+    if public_only and not all(is_public_address(address) for address in addresses):
+        raise BlockedDestinationError("host do destino resolve para IP privado, loopback ou reservado; recusado")
+
+
+def _resolved_addresses(host: str, resolver: Resolver) -> list[IPAddress]:
+    """Endereços de ``host`` pelo ``resolver``; nenhum, inválido ou erro de resolução recusam."""
     try:
         resolved = list(resolver(host))
     except (OSError, ValueError):  # ValueError: UnicodeError do idna (rótulo > 63, vazio...)
         resolved = []
     addresses = [literal_address(item) for item in resolved]
-    if not addresses or any(address is None for address in addresses):
+    valid = [address for address in addresses if address is not None]
+    if not valid or len(valid) != len(addresses):
         raise BlockedDestinationError("host do destino não resolve para um endereço válido")
-    if any(address is not None and is_blocked_address(address) for address in addresses):
-        raise BlockedDestinationError("host do destino resolve para metadata/link-local; recusado")
+    return valid

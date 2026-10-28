@@ -196,7 +196,7 @@ ollama pull qwen3 && ollama pull nomic-embed-text                       # Ollama
 $COMPOSE exec ollama ollama pull qwen3 && $COMPOSE exec ollama ollama pull nomic-embed-text   # compose service
 ```
 
-The seed has no RAG agent. Create one (in mongo-express or `mongosh`) and restart the app (agents are built at startup):
+The seed has no RAG agent. Create one (with `POST /admin/config/agents`, or in mongo-express/`mongosh` followed by `POST /admin/config/reload`; see [Administrative Routes](#administrative-routes-custom)):
 
 ```javascript
 // $COMPOSE exec mongodb mongosh -u <MONGO_ROOT_USERNAME> -p --authenticationDatabase admin agno
@@ -616,8 +616,10 @@ OLLAMA_BASE_URL=http://localhost:11434
 # AZURE_VERSION=2024-02-01
 # SECRETS_DIR=/run/secrets   # root for "file:/..." api_key_ref (files outside it are rejected); relative or "/" stops the app from starting
 # MODEL_BASE_URL_ALLOWLIST=llm.internal.example,10.0.0.5   # hosts accepted in documents' base_url (host only); list only hosts trusted to receive the process's provider keys
+# TOOL_ROUTE_ALLOWLIST=api.internal.example,10.0.0.5   # operator hosts in tool routes written through the API (private IPs accepted); the only ones that receive headers by reference
 # CONFIG_STORE=mongo   # mongo (default) or yaml: where agents, teams and tools come from (see "Configuration in a YAML file"); any other value: the app does not start
 # CONFIG_YAML_PATH=/app/config.yaml   # required with CONFIG_STORE=yaml; a readable regular file
+# CONFIG_REVISION_POLL_SECONDS=2   # with mongo: seconds between each replica's checks of the config revision (another replica's write served within one cycle); number > 0
 # PLUGIN_ALLOWLIST=orquestrador-provider-deepseek:deepseek   # allowed provider plugins (distribution:name); outside the list they are never imported (see "Provider plugins")
 # ALLOW_DYNAMIC_IMPORT=false   # with DYNAMIC_PROVIDER_SPECS=module:ATTRIBUTE, local dev mode only; outside it the app does not start
 
@@ -635,7 +637,7 @@ OTEL_SERVICE_NAME=orquestrador-ia
 # AGNO_TELEMETRY=false         # the app assumes false when unset (Agent/Team/AgentOS already use telemetry=False)
 ```
 
-> **CORS**: methods `GET, POST, PUT, PATCH, DELETE, OPTIONS` and headers `Authorization, Content-Type, X-API-Key` (plus the CORS-safelisted ones); no response header is exposed. AgentOS gets the same origin list; the app CORS is re-applied after mounting (even if mounting fails) and is always the outermost middleware, so Agno's default origins are not added.
+> **CORS**: methods `GET, POST, PUT, PATCH, DELETE, OPTIONS` and headers `Authorization, Content-Type, X-API-Key` (plus the CORS-safelisted ones); exposed response headers: `Deprecation`, `Link`, `ETag` and `Runtime-Revision`. AgentOS gets the same origin list; the app CORS is re-applied after mounting (even if mounting fails) and is always the outermost middleware, so Agno's default origins are not added.
 
 > **Agno telemetry**: an explicit `AGNO_TELEMETRY=true` turns Agent/Team telemetry back on (Agno 2.5.8 lets the variable override `telemetry=False`); AgentOS stays off. Known residue: evals created by the AgentOS `/eval-runs` route (`agno/os/routers/evals/utils.py`) use Agno's default `telemetry=True` and ignore `AGNO_TELEMETRY`; to be revisited in F3 (Agno 3.x).
 
@@ -659,7 +661,7 @@ Every route requires an API key, except `GET /livez` and the CORS preflight (`OP
 
 ```bash
 curl -H "Authorization: Bearer $API_KEY_RUN" http://localhost:7777/agents
-curl -X POST -H "X-API-Key: $API_KEY_ADMIN" http://localhost:7777/admin/refresh-cache
+curl -X POST -H "X-API-Key: $API_KEY_ADMIN" http://localhost:7777/admin/config/reload
 ```
 
 ---
@@ -706,7 +708,7 @@ AG-UI details (F1-08):
 - `user_id` still comes from `forwardedProps.user_id` (see [Smart Memory](#smart-memory)); a non-string value is dropped (the run proceeds without `user_id`; an entity with user memory refuses it).
 - `GET /config` does not list AG-UI (its `interfaces` list is empty): use `POST /agui/{id}` with the ids from `GET /agents` and `GET /teams`.
 - Cancelling an AG-UI run: `POST /agents/{id}/runs/{runId}/cancel` (or `/teams/...`) while it is in progress. Before it starts or after it finishes the answer is 404 and the request is not stored: cancelling before the start does not pre-cancel a future run with that `runId`. A `runId` that already belongs to an in-progress run is replaced by a server UUID (use the events' `runId`); two simultaneous requests with the same `runId` can still collide. Runs have no owner yet: any run key can cancel an in-progress run whose `runId` it knows (binding to the credential is F5).
-- In the browser, `Deprecation` and `Link` are the only response headers exposed by CORS.
+- In the browser, the response headers exposed by CORS are `Deprecation` and `Link` (deprecated aliases) and `ETag` and `Runtime-Revision` (config writes, read by the playground).
 
 ### Administrative Routes (custom)
 
@@ -715,9 +717,22 @@ Except `/livez` (public), they require the admin key.
 | Method | Route | Description |
 |--------|-------|-------------|
 | `GET` | `/livez` | Minimal public (no key) liveness (`{"status":"ok"}`), no dependencies; HEALTHCHECK target |
-| `GET` | `/admin/health` | Detailed health check (MongoDB + memory + OTLP): 200 when `healthy`, **503** when anything is `unhealthy`/`error`; the body never carries exception text (details go to the log, by type) |
+| `GET` | `/admin/health` | Detailed health check (MongoDB + memory + OTLP): 200 when `healthy`, **503** when anything is `unhealthy`/`error`; the body never carries exception text (details go to the log, by type). Includes `runtime_revision`: the revision of the served entities (0 = the startup ones; each hot swap adds 1) |
 | `GET` | `/metrics/cache` | Agent cache statistics |
-| `POST` | `/admin/refresh-cache` | Reloads the internal agent/team cache (the one in `/metrics/cache`) from the config (MongoDB or the YAML file, see `CONFIG_STORE`); an invalid document becomes an error log. The cache is only replaced after agents and teams load: if the reload fails (MongoDB down, broken YAML), the previous cache stays, the error is logged (type only) and the route answers 500. It does **not** change what AgentOS and AG-UI serve: a new, changed or removed agent/team only takes effect after restarting the application (hot reload is out of scope) |
+| `POST` | `/admin/config/reload` | Re-reads the config (MongoDB or the YAML file, see `CONFIG_STORE`), builds every active agent and team and swaps what AgentOS, AG-UI and cancel serve, without a restart: `{"runtime_revision": N}`. It is the path for the YAML store (edited file) and for manual recovery (document written straight to MongoDB). An invalid document becomes an error log and is left out, as at startup; if reading fails (MongoDB down, broken YAML), the previous runtime keeps serving, the error goes to the log (type only) and the route answers 500 |
+| `POST` | `/admin/refresh-cache` | **Deprecated**: alias of `POST /admin/config/reload` (same response, with `Deprecation: true` and a `Link` to the new route). It no longer reloads the `/metrics/cache` cache, which stays the startup one |
+| `GET` | `/admin/config/{agents,teams,tools}` | Paginated list (`?offset=0&limit=50`, max 200) of every document, inactive ones included: `{"items": [...], "total", "offset", "limit"}`; each item carries its `version` |
+| `GET` | `/admin/config/{kind}/{id}` | The id's document (snake_case) with `version`; `ETag: "<version>"` header. Plain-text tool header values come out as `***`; reference values (`env:`/`file:`) come out as they are |
+| `POST` | `/admin/config/{kind}` | Creates (201, version 1). Validated by the entities, stricter than reading: a wrong type, a missing provider (`factory_ia_model`), a non-text item in `tools_ids`/`member_ids`, an unknown `http_method` or parameter type are refused instead of corrected; so is a key the document does not have (a typo such as `promt`, or the camelCase `apiKeyRef`/`baseUrl`/`modelParams`, at the root or in `rag_config`), with the key in `field` (or `unknown_key` when it is not an identifier of up to 64 characters). 422 with `field` (and `indexes`, positions in the body), without echoing the value; `tools_ids` and `member_ids` must exist (422); existing id or YAML store: 409; body over 1 MiB: 413 |
+| `PUT` | `/admin/config/{kind}/{id}` | Replaces the id's document at the `If-Match` version (with a repeated id, the version picks the document): missing 428, no document at that version 412. The `version` of the document read may come back in the body (it is ignored: `If-Match` applies). A tool header sent as `***` keeps the stored value as long as the `route` keeps the same scheme, host and port (otherwise 422 `headers`) |
+| `DELETE` | `/admin/config/{kind}/{id}` | Deactivates (`active: false`); `?hard=true` removes it. Requires `If-Match`. Tool or agent in use: 409 with `used_by` |
+| `GET` | `/admin/config/{kind}/{id}/history` | The id's writes through the API, newest first, paginated like the list: each item has `version` (the saved one; on removal, the removed one), `actor` (key id: `admin`, or `local-dev` in local dev mode; never the key), `at` (UTC), `diff` (top-level fields that changed, `{"before", "after"}`) and `document` (as `GET` shows it; `null` on removal). Plain-text tool header values are always `***` (references as they are), in the `diff` too (changing only the value shows up with both sides masked). Id never written through the API: empty list. YAML store: always empty |
+| `POST` | `/admin/config/{kind}/{id}/history/{version}/restore` | Brings the id back to the `document` of the newest write with that `version`, as a new version: it is a `PUT` (same `If-Match` of the current version, validation, build, save, swap and audit). A `***` header keeps the saved value only if the `route` keeps the same origin (otherwise 422 `headers`). Version not in the history (or only the removal): 404; removed id (`?hard=true`): 404 (recreate it with `POST`). YAML store: 409 |
+| `GET` | `/admin/schema` | What the UI can offer, built from the running code: `providers.chat`/`providers.embedder` (registry ids and aliases, `PLUGIN_ALLOWLIST` plugins included, each with its accepted `model_params` and `requires_base_url`), `team.mode`, the run fields of `agent` (`markdown`, `add_history_to_context`, `num_history_runs`, `add_datetime_to_context`, `reasoning`) and `team` (`markdown`, `add_history_to_context`) with `type`, `default` and, for the integer, `minimum`/`maximum`, `tool.http_method`, `tool.parameter_type`, `rag_config.search_strategy`, `api_key_ref.formats` (`env:<PROVEDOR>_API_KEY`, `file:<caminho em SECRETS_DIR>`) and `config_store.writable` (`false` with the YAML store). No environment or secret value |
+
+Writes through `/admin/config` are served without a restart (hot swap, FA-04): an agent or team write builds every active agent and team with the change applied, and only then saves and swaps what AgentOS (`/agents/{id}`, `/teams/{id}`, runs), AG-UI (`/agui/{id}`) and cancel serve. If the changed entity does not build (e.g. a provider refused by the factory), nothing is saved, the previous runtime keeps serving and the response is 422 `{"detail": "Configuração não monta no runtime", "error_type": "<error type>"}` (the error text only goes to the log). A tool is saved first and then everything is built (agent building reads the tools from the store, and a failing tool does not take the agent down). The write response (`POST`, `PUT`, `DELETE`) carries the `Runtime-Revision` header with the revision that already serves the change (the body stays the document). An entity created after startup answers on AgentOS and AG-UI; deactivated or removed, 404 on both. A run in progress (streaming included) finishes with the pre-swap instance; old instances are released when their runs end. AgentOS is mounted even with no active entity at startup, to serve the ones created later. The YAML store answers 409 to every write, before validating the body or building any entity: edit the file and call `POST /admin/config/reload`. A key starting with `$` at any level of the body, nesting deeper than 32 levels, a non-finite number (`NaN`, `Infinity`, `1e999`) or text with a lone surrogate (`"\ud800"`) is refused (422). Writes and reload are serialized within the process (each build sees what the previous ones saved); across replicas, concurrent writes are settled by `If-Match`. Each refusal is logged as a warning with the config kind and the refusal type, never the id or the value.
+
+Audit and replicas (FA-05, Mongo store): each write through the API, right after saving, records an entry in the `config_audit` collection (see `GET .../history`) and increments the counter in the `config_revision` collection. Each replica checks that counter every `CONFIG_REVISION_POLL_SECONDS` (default 2) and, if another replica wrote, rereads the store and swaps the runtime (like `reload`): the change reaches the other replicas within one cycle. No change streams (works on Mongo without a replica set). A failed check (Mongo down) logs a warning with only the type and the previous runtime keeps serving until the next round. A document written directly to the database does not increment the counter: call `reload` on each replica. If the save succeeds and the record fails, the response is 500 and no replica swaps until the next write or a `reload`. With the YAML store there is no audit and no polling. Known limitations: each write rebuilds every RAG agent on every replica, and each one opens a vector db Mongo client that is never closed (the replaced instance may still be serving a run, and the agno 2.5.8 vector db has no `close`); restart the replicas after many writes; on Mongo, building a RAG agent before saving already touches its collection (index repair, re-embedding, document insert), even if the save then fails, so a `PUT` that changes the embedder or the `doc_name` alters the collection of the agent still being served; AgentOS `/knowledge` lists only the startup knowledge bases (a RAG agent created later does not show up, a removed one stays).
 
 ### Interactive Documentation
 
@@ -815,8 +830,13 @@ This is the collection you manage. Each document defines an agent:
 | `model_params` | object | ❌ | Model parameters, string key → string/number/boolean (e.g., `{"temperature": 0.2}`) |
 | `base_url` | string | ❌ | Provider endpoint: `http(s)://host[:port][/path]`, up to 2048 characters, without credentials, query, fragment, whitespace or `\`; ASCII-only host (IDN in punycode) without `%`; port, if present, from 1 to 65535 |
 | `api_key_ref` | string | ❌ | Key reference: `env:<PROVIDER>_API_KEY` (only upper-case variables ending in `_API_KEY`, e.g. `env:OPENAI_API_KEY`; `API_KEY_RUN`, `API_KEY_ADMIN`, `MONGO_*` and anything else are rejected: whoever writes the config does not get to pick which process secret to read) or `file:/absolute/path` (inside `SECRETS_DIR`, default `/run/secrets`; Linux only, since the opened file is checked via `/proc/self/fd`: elsewhere use `env:`). Never the key itself |
+| `markdown` | bool | ❌ | Markdown-formatted answer (default `true`) |
+| `add_history_to_context` | bool | ❌ | Sends the session's latest runs to the model (default `true`) |
+| `num_history_runs` | int | ❌ | How many previous runs go into the context: integer from 1 to 50 (default `5`); to send no history, use `add_history_to_context: false` |
+| `add_datetime_to_context` | bool | ❌ | Adds the current date and time to the context (default `true`) |
+| `reasoning` | bool | ❌ | Agno step-by-step reasoning before answering (default `false`). Makes more model calls per answer: in agno 2.5.8, up to 10 steps (`reasoning_max_steps`, no configurable cap), and the agent's tools may be called during that phase. Avoid it with non-idempotent tools (POST/PUT/DELETE) |
 
-`model_params`, `base_url` and `api_key_ref` (also in `rag_config` and `teams_config`, always snake_case; the camelCase spelling `modelParams`/`baseUrl`/`apiKeyRef` is ignored with a log warning that names only the id and the keys) are optional: documents without them behave as before (`{PROVIDER}_API_KEY` from the environment, `OLLAMA_BASE_URL` for Ollama). A value in the wrong format makes the document invalid (see [Invalid documents](#invalid-documents)) and the message never contains the value. When the model is created (provider registry, F2-02):
+`model_params`, `base_url` and `api_key_ref` (also in `rag_config` and `teams_config`, always snake_case; the camelCase spelling `modelParams`/`baseUrl`/`apiKeyRef` is ignored with a log warning that names only the id and the keys; a write through `/admin/config` refuses it with 422) are optional: documents without them behave as before (`{PROVIDER}_API_KEY` from the environment, `OLLAMA_BASE_URL` for Ollama). A value in the wrong format makes the document invalid (see [Invalid documents](#invalid-documents)) and the message never contains the value. When the model is created (provider registry, F2-02):
 
 - `model_params`: only the keys allowed for the provider/class (e.g. `temperature`, `top_p`, `max_tokens`, `seed`; on Ollama `temperature`/`top_k`/`num_ctx`/`num_predict`... go to `options`), finite numbers; any other key refuses the model and the error lists the allowed ones.
 - `base_url`: only the provider's own host (e.g. `api.openai.com`, and only over `https`, even if it is also in the allowlist), a host in `MODEL_BASE_URL_ALLOWLIST` or, in local dev mode (no `API_KEY_*`, `APP_HOST` on loopback, `ENVIRONMENT` development/test), literal loopback (these two accept `http`; an IP with a trailing dot, like `127.0.0.1.`, is a DNS name and does not count). This holds with or without `api_key_ref` (SDKs read keys from the environment on their own). The allowlist applies to every provider: the document picks the provider and the `api_key_ref`, so a listed host may receive any `<PROVIDER>_API_KEY` of the process; list only hosts trusted to receive the process's provider keys. Cloud metadata and link-local (`169.254.0.0/16`, `fe80::/10`, including forms like `2852039166` or `[::ffff:169.254.169.254]`, or a name resolving to them) are always refused. `anthropic`, `gemini` and `azure` do not accept `base_url` (on Azure the endpoint comes only from `AZURE_ENDPOINT`: the key goes in the `api-key` header, which the HTTP client does not strip on a cross-origin redirect).
@@ -865,7 +885,8 @@ Each document defines an HTTP tool that agents can use:
 - `{name}` in `route` is replaced by the `name` argument (percent-encoded value; `.` and `..` are rejected); every `{name}` in the route must be a declared parameter with `required: true`, otherwise the tool is rejected at load time (error log with `tool_id` and the placeholders). The other arguments go to the query string (`GET`/`DELETE`) or to the JSON body (`POST`/`PUT`/`PATCH`).
 - `instructions` go to the agent's system message (prefixed by the tool `id`); the `route` is not sent to the prompt.
 - Only tools with `active: true` are loaded. A tool listed in `tools_ids` that is missing, inactive or invalid does not break the agent, but logs an error with `agent_id` and `tool_id`.
-- Never declare an API key/token as a parameter (the LLM would see and forward the secret) and never store secrets in `headers`: secret headers by reference (`env:VAR`) arrive in F5-05.
+- Never declare an API key/token as a parameter (the LLM would see and forward the secret). Secrets in `headers` go by reference: `env:<NAME>_API_KEY` or `file:<path in SECRETS_DIR>` (same format as `api_key_ref`), resolved on every call (`file:` read off the event loop) and never in logs, traces or responses; a reference that does not resolve does not call the upstream (the model gets `header por referência não resolvido (<name>)` and the log carries only the header name and the error type). Upstream redirects are never followed.
+- Writes through the admin API (tool `POST`/`PUT`/restore; documents saved before are still read and called as they are): `route` must be `http(s)://host[:port]/...` with a fixed host (`{x}` only in the path and query), no credentials, spaces or `\`; the host must be public (literal IP or a name resolving only to public IPs, checked once at write time), in `TOOL_ROUTE_ALLOWLIST` (private IPs accepted) or, in local dev mode, loopback; cloud metadata and link-local never (otherwise 422 `route`). Headers: name must be an HTTP token and value without line breaks or control characters; references only for a `TOOL_ROUTE_ALLOWLIST` host (or loopback in dev mode), so whoever holds the admin key cannot send the process's keys to a host of theirs; sensitive names (`Authorization`, `Proxy-Authorization`, `Cookie`, ending in `-Key`/`_Key`/`-Token`/`_Token`) do not accept a new plain-text value, only a reference or the `***` that keeps the stored one (otherwise 422 `headers`). `GET` shows the reference (not a secret, like `api_key_ref`) and masks plain text.
 - The tool function is async: use `Agent.arun` (AgentOS already does). With the synchronous `Agent.run`, agno rejects the run with an explicit error.
 
 ### Collection: `teams_config`
@@ -904,6 +925,7 @@ Each document defines a multi-agent team:
 | `summary_active` | bool | ❌ | Enables automatic session summaries |
 | `active` | bool | ✅ | If `false`, team is ignored at startup |
 | `model_params`, `base_url`, `api_key_ref` | | ❌ | Optional leader model fields, as in the agent |
+| `markdown`, `add_history_to_context` | bool | ❌ | As in the agent (default `true`). In a team, the effective history is 3 runs (agno default), not 5, and it is not configurable |
 
 Canonical format: the one in the example (`factoryIaModel`, everything else in snake_case), the same as agents and the seed (`mongo-init/init-db.js`). Older documents with `memberIds`, `userMemoryActive` and `summaryActive` (camelCase) are still read; with both spellings in the same document, snake_case wins. Use the canonical format for new documents.
 
@@ -942,7 +964,7 @@ db.agents_config.insertOne({
 });
 ```
 
-Then restart the application: routes (`/agents/{id}`, `/agui/{id}`...) and the served instances are built at startup. The same applies to changing or deactivating an agent/team. `POST /admin/refresh-cache` only reloads the internal cache (`/metrics/cache`) and does not apply the change to what is being served (hot reload is out of scope).
+Then call `POST /admin/config/reload` on each replica (or restart the application) to serve the document written straight to the database. The same applies to changing or deactivating an agent/team. Through the API (`/admin/config`), the swap happens on the write itself.
 
 ### Configuration in a YAML file (`CONFIG_STORE=yaml`)
 
@@ -955,8 +977,8 @@ CONFIG_YAML_PATH=config.example.yaml   # relative = from the working directory
 
 - **Format**: a mapping with the `agents`, `teams` and `tools` sections (all optional; any other top-level key stops the app from starting), each a list of documents **in the same format as the collections** (same mapper, same validation). [`config.example.yaml`](config.example.yaml) has the same content as the `mongo-init/init-db.js` seed (equivalence test in `tests/integration/test_config_store_equivalence.py`).
 - **Same semantics as MongoDB**: only `active: true` (boolean) is loaded; an invalid document is skipped with a log (see [Invalid documents](#invalid-documents)); repeated id: the first one in file order wins; agents reference tools by `tools_ids` and teams reference agents by `member_ids`. Never put secrets in the file: model keys only through `api_key_ref`.
-- **Reading**: PyYAML's safe loader (`CSafeLoader` with libyaml; no Python object tags), off the event loop. The config is queried at startup and on `POST /admin/refresh-cache` (no automatic reload), and the file is only re-read when it changes (inode, size and modification time; swapping a ConfigMap's symlink also counts); concurrent queries wait for a single read.
-- **Refused** (the app does not start; on refresh, the previous cache stays), with a message that only gives line/column, never the content: invalid YAML; anchors and aliases (`&`/`*`, including the `<<: *x` merge key: not supported, which also closes the "billion laughs" exponential expansion); a repeated key in a mapping (two `agents` sections, a field twice: PyYAML would silently keep the last one); nesting deeper than 64 levels; a value YAML cannot build (e.g. an impossible unquoted date, `2024-13-45`). A section item that is not an object is an invalid document (logged once per file read).
+- **Reading**: PyYAML's safe loader (`CSafeLoader` with libyaml; no Python object tags), off the event loop. The config is queried at startup and on `POST /admin/config/reload` (no automatic reload), and the file is only re-read when it changes (inode, size and modification time; swapping a ConfigMap's symlink also counts); concurrent queries wait for a single read.
+- **Refused** (the app does not start; on reload, the previous runtime keeps serving), with a message that only gives line/column, never the content: invalid YAML; anchors and aliases (`&`/`*`, including the `<<: *x` merge key: not supported, which also closes the "billion laughs" exponential expansion); a repeated key in a mapping (two `agents` sections, a field twice: PyYAML would silently keep the last one); nesting deeper than 64 levels; a value YAML cannot build (e.g. an impossible unquoted date, `2024-13-45`). A section item that is not an object is an invalid document (logged once per file read).
 - **Startup validation**: `CONFIG_STORE` only `mongo` or `yaml`; with `yaml`, `CONFIG_YAML_PATH` is required and must point to a readable regular file (a symlink is fine, like a Kubernetes ConfigMap's). The file belongs to the operator, like `.env`: it is not confined to a directory.
 - **MongoDB is still required**: sessions, user memory, RAG chunks and the document tree live there; only the config collections are no longer read.
 - **Docker**: the container root is read-only; mount the file, e.g. `volumes: ["./config.yaml:/app/config.yaml:ro"]` with `CONFIG_YAML_PATH=/app/config.yaml` (`docker-compose.yml` passes `CONFIG_STORE` and `CONFIG_YAML_PATH` through).
@@ -1162,14 +1184,14 @@ tests/
 
 ### How the Application Works (Summary)
 
-1. **`app.py`** loads `.env` and calls `create_app()` (synchronous)
-2. **`AppFactory.create_app()`** creates FastAPI with CORS and admin endpoints
+1. **`app.py`** loads `.env` and calls `create_app(routers=[...])` (synchronous), passing the `src/presentation` routes (e.g. `/admin/config`, `/admin/schema`)
+2. **`AppFactory.create_app()`** creates FastAPI with CORS, admin endpoints and those routers, behind the same auth
 3. On **lifespan** (async), `DependencyContainer` is created — it connects to MongoDB and wires all dependencies
 4. `OrquestradorController.warm_up_cache()` runs `GetActiveAgentsUseCase`, which:
    - Fetches active agent configs from MongoDB
    - For each config, `AgentFactoryService` creates an `agno.Agent` with model, tools, knowledge, and memory
    - Then `GetActiveTeamsUseCase` fetches active team configs and `TeamFactoryService` creates `agno.Team` with agents as members
-5. Created agents and teams are passed to `AgnoRuntime.mount` (`src/infrastructure/runtime/agno/runtime.py`), which creates `AgentOS(agents, teams, base_app)` (REST + SSE routes on FastAPI) and mounts the app's own AG-UI router (`POST /agui/{id}` per entity, `src/infrastructure/runtime/agno/agui_router.py`); `AppFactory` reinstalls CORS and auth outermost and `runtime.start()` opens the AgentOS lifespans (closed by `runtime.close()` on shutdown, before the container)
+5. Created agents and teams are passed to `AgnoRuntime.mount` (`src/infrastructure/runtime/agno/runtime.py`), which creates `AgentOS(agents, teams, base_app)` (REST + SSE routes on FastAPI) and mounts the app's own AG-UI router (`POST /agui/{id}` per entity, `src/infrastructure/runtime/agno/agui_router.py`); `AppFactory` reinstalls CORS and auth outermost and `runtime.start()` opens the AgentOS lifespans (closed by `runtime.close()` on shutdown, before the container). Afterwards, each write through `/admin/config` and each `POST /admin/config/reload` builds the entities again and calls `AgnoRuntime.swap`, which replaces the served ones (FA-04)
 6. Server is ready on port 7777
 
 ### Implemented Patterns

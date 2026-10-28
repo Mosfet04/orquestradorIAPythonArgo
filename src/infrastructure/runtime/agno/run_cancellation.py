@@ -13,7 +13,8 @@ com um ``runId`` que ele adivinha (no AG-UI o cliente escolhe o ``runId``). Aqui
   background, registrado antes de a task começar, continua cancelável;
 - ``build_run_cancel_router``: as duas rotas de cancel. Entram no app antes do
   ``AgentOS.get_app()``, que pula as dele (``on_route_conflict="preserve_base_app"``,
-  ``agno/os/app.py``, ``_add_router``). Entidade fora das montadas = 404; run não
+  ``agno/os/app.py``, ``_add_router``). Entidade fora das servidas (``ServedEntities``, lidas a
+  cada request: a troca a quente do FA-04 vale aqui também) = 404; run não
   registrado (inexistente ou já encerrado) = 404; cancelado = 200 ``{}`` (como no agno).
   Entram depois de o ``AgentOS`` ser criado (o construtor valida ids): falha ali não deixa
   rota parcial no app.
@@ -25,18 +26,16 @@ run (o gerenciador do agno é global por ``run_id``); amarrar à credencial é d
 from __future__ import annotations
 
 import threading
-from collections.abc import Sequence
 from typing import Any
 
-from agno.agent import Agent
 from agno.exceptions import RunCancelledException
 from agno.run.cancel import acancel_run, get_cancellation_manager, set_cancellation_manager
 from agno.run.cancellation_management.base import BaseRunCancellationManager
-from agno.team import Team
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
 from src.domain.ports import ILogger
+from src.infrastructure.runtime.agno.served_entities import ServedEntities
 
 _RUN_NOT_FOUND = "run não encontrado ou já encerrado"
 _ENTITY_NOT_FOUND = "entidade não encontrada"  # o mesmo do AG-UI (agui_router)
@@ -130,11 +129,11 @@ def install_run_cancellation_manager() -> RegisteredRunCancellationManager:
     return manager
 
 
-def build_run_cancel_router(agents: Sequence[Agent], teams: Sequence[Team], logger: ILogger) -> APIRouter:
+def build_run_cancel_router(served: ServedEntities, logger: ILogger) -> APIRouter:
     """``POST /agents/{agent_id}/runs/{run_id}/cancel`` e o de teams, no lugar dos do AgentOS.
 
-    O id da entidade é conferido no request: o AgentOS pode definir ids na montagem, depois
-    desta função. Mesmos path, ``operation_id`` e 200 ``{}`` das rotas do agno.
+    O id da entidade é conferido no request, entre as servidas naquele momento. Mesmos path,
+    ``operation_id`` e 200 ``{}`` das rotas do agno.
     """
     router = APIRouter()
 
@@ -146,7 +145,7 @@ def build_run_cancel_router(agents: Sequence[Agent], teams: Sequence[Team], logg
         responses=_NOT_FOUND_RESPONSE,
     )
     async def cancel_agent_run(agent_id: str, run_id: str) -> JSONResponse:
-        if not any(agent.id == agent_id for agent in agents):
+        if not any(agent.id == agent_id for agent in served.agents):
             raise HTTPException(status_code=404, detail=_ENTITY_NOT_FOUND)
         return await _cancel(run_id, "agent_id", agent_id, logger)
 
@@ -158,7 +157,7 @@ def build_run_cancel_router(agents: Sequence[Agent], teams: Sequence[Team], logg
         responses=_NOT_FOUND_RESPONSE,
     )
     async def cancel_team_run(team_id: str, run_id: str) -> JSONResponse:
-        if not any(team.id == team_id for team in teams):
+        if not any(team.id == team_id for team in served.teams):
             raise HTTPException(status_code=404, detail=_ENTITY_NOT_FOUND)
         return await _cancel(run_id, "team_id", team_id, logger)
 

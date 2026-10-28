@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from typing import List, Optional
 
 from src.domain.entities.team_config import TeamConfig
+from src.domain.repositories.versioning import VersionedConfigRepository
 
 
-class ITeamConfigRepository(ABC):
+class ITeamConfigRepository(VersionedConfigRepository[TeamConfig]):
     """Interface para repositório de configurações de teams."""
 
     @abstractmethod

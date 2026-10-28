@@ -444,13 +444,13 @@ class AgentFactoryService:
                 )
                 else None
             ),
-            reasoning=False,
-            markdown=True,
+            reasoning=config.reasoning,
+            markdown=config.markdown,
             description=config.descricao,
             instructions=config.prompt,
-            add_history_to_context=True,
-            add_datetime_to_context=True,
-            num_history_runs=5,
+            add_history_to_context=config.add_history_to_context,
+            add_datetime_to_context=config.add_datetime_to_context,
+            num_history_runs=config.num_history_runs,
             enable_agentic_memory=agentic_memory,
             enable_user_memories=user_memories,
             enable_session_summaries=config.summary_active,

@@ -29,6 +29,10 @@ credencial válida; 403 ``{"detail": "forbidden"}`` com a chave run em rota admi
 WebSocket sem credencial suficiente: ``websocket.close`` 1008 antes do accept (pela
 especificação ASGI o servidor responde 403 ao handshake). Nada aqui loga header nem chave.
 
+Request aceito leva o id da chave em ``request.state.api_key_id`` (``scope["state"]``): ``admin`` ou ``run``
+(o papel; há uma chave por papel) e ``local-dev`` no modo dev local, sem chave. É o ator que a auditoria das
+escritas de config registra (FA-05): nunca a chave nem algo derivado dela.
+
 O middleware precisa ficar logo DENTRO do CORS (o preflight é respondido pelo CORS e o
 401 de origem permitida leva os headers CORS). Middleware que reescreve o path precisa
 ficar fora dele, senão a classificação vê um path diferente do que o roteador vê.
@@ -51,6 +55,8 @@ from src.infrastructure.security.ssrf import is_loopback_host as _is_loopback
 LOCAL_DEV_ENVIRONMENTS = frozenset({"development", "test"})
 # RFC 6455, 7.4.1: policy violation.
 WS_POLICY_VIOLATION = 1008
+# Id da "chave" do modo dev local (sem chaves) em ``request.state.api_key_id``.
+LOCAL_DEV_KEY_ID = "local-dev"
 
 
 class RouteAccess(Enum):
@@ -263,6 +269,7 @@ class ApiKeyAuthMiddleware:
             role = self._role(_presented_key(scope["headers"]), self._keys)
             allowed = role is RouteAccess.ADMIN or role is access
         if allowed:
+            scope.setdefault("state", {})["api_key_id"] = LOCAL_DEV_KEY_ID if role is None else role.value
             await self.app(scope, receive, send)
             return
         if is_websocket:

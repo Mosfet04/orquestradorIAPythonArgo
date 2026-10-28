@@ -17,11 +17,17 @@ from pathlib import Path
 import pytest
 
 from tests.fakes.config_stores import (
+    CONFIG_KINDS,
     DOCUMENT_BACKEND_PARAMS,
+    WRITABLE_BACKEND_PARAMS,
+    ConfigKind,
+    EntityBackend,
+    MemoryBackend,
     MongoBackend,
     MongoLiveBackend,
     YamlBackend,
     document_backend,
+    entity_backend,
     live_mongo_for,
 )
 
@@ -35,3 +41,17 @@ def backend(
     ``test_repository_contracts.py`` define a sua (por entidades, com o backend em memória também).
     """
     return document_backend(request.param, monkeypatch, tmp_path, live_mongo_for(request))
+
+
+@pytest.fixture(params=sorted(CONFIG_KINDS))
+def kind(request: pytest.FixtureRequest) -> ConfigKind:
+    """Cada um dos três tipos de config (agent, team, tool): suíte de contrato da escrita (FA-01)."""
+    return CONFIG_KINDS[request.param]
+
+
+@pytest.fixture(params=WRITABLE_BACKEND_PARAMS)
+def writable(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> MemoryBackend | EntityBackend:
+    """Backends por entidades que aceitam escrita (memória, Mongo sobre a coleção fake e, ``live``, Mongo real)."""
+    return entity_backend(request.param, monkeypatch, tmp_path, live_mongo_for(request))

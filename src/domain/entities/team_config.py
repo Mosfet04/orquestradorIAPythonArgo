@@ -7,7 +7,10 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 
 from src.domain.entities.model_config import ModelConfig, ParamValue
-from src.domain.entities.validation import require_optional_text, require_text
+from src.domain.entities.validation import InvalidField, require_bool, require_optional_text, require_text
+
+TEAM_MODES = ("route", "coordinate", "broadcast", "tasks")
+"""Modos de team aceitos em ``mode`` (validação e ``/admin/schema``)."""
 
 
 @dataclass
@@ -29,20 +32,23 @@ class TeamConfig:
     model_params: Optional[Mapping[str, ParamValue]] = None
     base_url: Optional[str] = None
     api_key_ref: Optional[str] = None
+    # Execução (FA-07): antes fixos na montagem; o default é o comportamento de antes.
+    markdown: bool = True
+    add_history_to_context: bool = True
 
     def __post_init__(self) -> None:
-        require_text(self.id, "ID do team")
-        require_text(self.nome, "Nome do team")
-        require_text(self.model, "Modelo do team")
-        require_text(self.factory_ia_model, "Factory do modelo do team")
-        require_optional_text(self.descricao, "Descrição do team")
+        require_text(self.id, "id", "ID do team")
+        require_text(self.nome, "nome", "Nome do team")
+        require_text(self.model, "model", "Modelo do team")
+        require_text(self.factory_ia_model, "factory_ia_model", "Factory do modelo do team")
+        require_optional_text(self.descricao, "descricao", "Descrição do team")
+        require_bool(self.markdown, "markdown")
+        require_bool(self.add_history_to_context, "add_history_to_context")
         if not self.member_ids:
-            raise ValueError("Team precisa de pelo menos um membro")
-        if self.mode not in ("route", "coordinate", "broadcast", "tasks"):
-            raise ValueError(
-                f"Modo inválido: {self.mode!r}. "
-                "Valores aceitos: route, coordinate, broadcast, tasks"
-            )
+            raise InvalidField("member_ids", "Team precisa de pelo menos um membro")
+        if self.mode not in TEAM_MODES:
+            # Sem o valor na mensagem: a recusa vai a log e não pode ecoar o que foi recebido.
+            raise InvalidField("mode", f"Modo inválido. Valores aceitos: {', '.join(TEAM_MODES)}")
         _ = self.model_config  # valida os campos do modelo
 
     @property

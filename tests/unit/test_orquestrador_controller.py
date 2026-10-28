@@ -33,11 +33,6 @@ class TestOrquestradorController:
         # use_case.execute só deve ser chamado uma vez (cache)
         assert controller._agents_use_case.execute.await_count == 1
 
-    async def test_refresh_clears_cache(self, controller):
-        await controller.get_agents()
-        await controller.refresh_agents()
-        assert controller._agents_use_case.execute.await_count == 2
-
     async def test_warm_up_cache(self, controller):
         await controller.warm_up_cache()
         assert controller._cache is not None

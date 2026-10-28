@@ -12,11 +12,13 @@ por ``_id``; só ``active: true`` entra nas listagens; documento inválido isola
 Leitura: ``yaml`` com o loader seguro (``CSafeLoader`` quando o PyYAML tem a libyaml; sem tags de
 objeto Python), fora do event loop. O arquivo é relido só quando muda (``st_ino``, ``st_size`` e
 ``st_mtime_ns`` de ``os.stat``, que segue symlink: a troca de um ConfigMap invalida); consultas
-concorrentes esperam um parse só. Sem watcher nem hot-reload: a config é consultada no startup e no
-``POST /admin/refresh-cache``. Recusados, com ``YamlConfigError`` (mensagem nossa, só linha/coluna,
-nunca trecho do arquivo): YAML inválido, âncora/alias (não suportados: também fecham a expansão
-exponencial), chave repetida num mapeamento, aninhamento acima de ``MAX_DEPTH`` (o composer da libyaml
-é recursivo em C: aninhamento muito fundo derruba o processo) e topo/seções fora do formato.
+concorrentes esperam um parse só. Sem watcher nem recarga automática: a config é consultada no startup e no
+``POST /admin/config/reload``. Só leitura: ``save``/``delete`` levantam ``ConfigStoreReadOnly`` sem
+tocar o arquivo (FA-01); ``list_all`` traz a ``version`` do documento (sem ela, 0). Recusados, com
+``YamlConfigError`` (mensagem nossa, só linha/coluna, nunca trecho do arquivo): YAML inválido,
+âncora/alias (não suportados: também fecham a expansão exponencial), chave repetida num mapeamento,
+aninhamento acima de ``MAX_DEPTH`` (o composer da libyaml é recursivo em C: aninhamento muito fundo
+derruba o processo) e topo/seções fora do formato.
 """
 
 from __future__ import annotations
@@ -24,8 +26,9 @@ from __future__ import annotations
 import asyncio
 import copy
 import os
+from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
-from typing import Any, TypeVar
+from typing import Any, Generic, TypeVar
 
 import yaml
 
@@ -36,9 +39,12 @@ from src.domain.ports import ILogger
 from src.domain.repositories.agent_config_repository import IAgentConfigRepository
 from src.domain.repositories.team_config_repository import ITeamConfigRepository
 from src.domain.repositories.tool_repository import IToolRepository
+from src.domain.repositories.versioning import ConfigStoreReadOnly, Versioned
 from src.infrastructure.repositories.config_documents import (
     INVALID_DOCUMENT_ERRORS,
+    ConfigEntityT,
     Document,
+    document_version,
     first_tool_per_id,
     is_active,
     log_invalid_document,
@@ -228,8 +234,8 @@ class YamlConfigFile:
             log_invalid_document(self._logger, message, id_field, item, TypeError(), {"position": position})
 
 
-class _YamlRepository:
-    """Leitura de uma seção com isolamento de documento inválido (igual ao Mongo, F1-10)."""
+class _YamlRepository(ABC, Generic[ConfigEntityT]):
+    """Leitura de uma seção com isolamento de documento inválido (igual ao Mongo, F1-10); só leitura."""
 
     _section: str
     # Aviso de apiKeyRef/baseUrl/modelParams ignoradas: só agentes e teams têm modelo (como no Mongo).
@@ -240,13 +246,27 @@ class _YamlRepository:
         self._logger = logger
         self._invalid_message, self._id_field = INVALID_MESSAGES[self._section]
 
-    async def _active(
-        self, mapper: Callable[[Document], T], match: Callable[[Document], bool] | None = None
-    ) -> list[T]:
-        """Documentos ativos (e que casam com ``match``) na ordem do arquivo; inválido isola só ele."""
+    @abstractmethod
+    def _map(self, doc: Document) -> ConfigEntityT:
+        """Documento -> entidade (o ``map_*_document`` da seção)."""
+
+    async def list_all(self) -> list[Versioned[ConfigEntityT]]:
+        """Todos os documentos da seção, inclusive inativos e ids repetidos, na ordem do arquivo."""
+        return await self._documents(lambda doc: Versioned(self._map(doc), document_version(doc)), lambda _: True)
+
+    async def save(self, entity: ConfigEntityT, expected_version: int) -> int:
+        """Recusa: o arquivo é do operador (``ConfigStoreReadOnly``)."""
+        raise ConfigStoreReadOnly()
+
+    async def delete(self, entity_id: str, expected_version: int) -> None:
+        """Recusa: o arquivo é do operador (``ConfigStoreReadOnly``)."""
+        raise ConfigStoreReadOnly()
+
+    async def _documents(self, mapper: Callable[[Document], T], match: Callable[[Document], bool]) -> list[T]:
+        """Documentos que casam com ``match``, na ordem do arquivo; inválido isola só ele."""
         result: list[T] = []
         for position, doc in await self._source.section(self._section):
-            if not is_active(doc) or (match is not None and not match(doc)):
+            if not match(doc):
                 continue
             location = {"position": position}
             if self._warns_camel_case:
@@ -265,14 +285,17 @@ class _YamlRepository:
         return None
 
 
-class YamlAgentConfigRepository(_YamlRepository, IAgentConfigRepository):
+class YamlAgentConfigRepository(_YamlRepository[AgentConfig], IAgentConfigRepository):
     """Seção ``agents`` do arquivo de config."""
 
     _section = "agents"
 
     async def get_active_agents(self) -> list[AgentConfig]:
         """Lista os agentes ativos da seção ``agents``, na ordem do arquivo."""
-        return await self._active(lambda doc: map_agent_document(doc, self._logger))
+        return await self._documents(self._map, is_active)
+
+    def _map(self, doc: Document) -> AgentConfig:
+        return map_agent_document(doc, self._logger)
 
     async def get_agent_by_id(self, agent_id: str) -> AgentConfig:
         """Devolve o agente pelo id; ``ValueError`` se não existir."""
@@ -284,14 +307,17 @@ class YamlAgentConfigRepository(_YamlRepository, IAgentConfigRepository):
         return map_agent_document(doc, self._logger)
 
 
-class YamlTeamConfigRepository(_YamlRepository, ITeamConfigRepository):
+class YamlTeamConfigRepository(_YamlRepository[TeamConfig], ITeamConfigRepository):
     """Seção ``teams`` do arquivo de config."""
 
     _section = "teams"
 
     async def get_active_teams(self) -> list[TeamConfig]:
         """Lista os teams ativos da seção ``teams``, na ordem do arquivo."""
-        return await self._active(lambda doc: map_team_document(doc, self._logger))
+        return await self._documents(self._map, is_active)
+
+    def _map(self, doc: Document) -> TeamConfig:
+        return map_team_document(doc, self._logger)
 
     async def get_team_by_id(self, team_id: str) -> TeamConfig | None:
         """Devolve o team pelo id, ou ``None`` se não existir."""
@@ -303,7 +329,7 @@ class YamlTeamConfigRepository(_YamlRepository, ITeamConfigRepository):
         return map_team_document(doc, self._logger)
 
 
-class YamlToolRepository(_YamlRepository, IToolRepository):
+class YamlToolRepository(_YamlRepository[Tool], IToolRepository):
     """Seção ``tools`` do arquivo de config; uma tool por id (a primeira), como no Mongo."""
 
     _section = "tools"
@@ -314,7 +340,7 @@ class YamlToolRepository(_YamlRepository, IToolRepository):
         if not tool_ids:
             return []
         wanted = set(tool_ids)
-        tools = await self._active(map_tool_document, lambda doc: text_id(doc) in wanted)
+        tools = await self._documents(self._map, lambda doc: is_active(doc) and text_id(doc) in wanted)
         return first_tool_per_id(tools, self._logger)
 
     async def get_tool_by_id(self, tool_id: str) -> Tool:
@@ -326,4 +352,7 @@ class YamlToolRepository(_YamlRepository, IToolRepository):
 
     async def get_all_active_tools(self) -> list[Tool]:
         """Lista as tools ativas (a primeira de cada id)."""
-        return first_tool_per_id(await self._active(map_tool_document), self._logger)
+        return first_tool_per_id(await self._documents(self._map, is_active), self._logger)
+
+    def _map(self, doc: Document) -> Tool:
+        return map_tool_document(doc)

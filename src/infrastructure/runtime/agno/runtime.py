@@ -1,6 +1,7 @@
 """``AgnoRuntime``: implementação da porta ``AgentRuntime`` com o agno 2.5 (F2-04).
 
-Inclui o ciclo de vida do AgentOS no app (F2-05) e o db de sessões compartilhado com o AgentOS (F2-08).
+Inclui o ciclo de vida do AgentOS no app (F2-05), o db de sessões compartilhado com o AgentOS (F2-08) e a
+troca a quente das entidades servidas (FA-04).
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from src.infrastructure.runtime.agno.run_cancellation import (
     build_run_cancel_router,
     install_run_cancellation_manager,
 )
+from src.infrastructure.runtime.agno.served_entities import ServedEntities
 from src.infrastructure.runtime.agno.team_factory_service import TeamFactoryService
 
 
@@ -43,7 +45,7 @@ class AgnoRuntime(AgentRuntime):
     (texto validado no domínio).
 
     Ciclo de vida no lifespan do app: ``mount`` (rotas, síncrono e sem I/O) -> ``start`` (abre os
-    lifespans do AgentOS) -> ``close`` no shutdown.
+    lifespans do AgentOS) -> ``close`` no shutdown. Entre eles, ``swap`` troca as entidades servidas (FA-04).
 
     ``session_db``: o db de sessões e memória que as fábricas deram às entidades; vai também como
     ``db=`` ao AgentOS. Tem de ser assíncrono (``AsyncBaseDb``): com um ``BaseDb`` síncrono as
@@ -69,6 +71,9 @@ class AgnoRuntime(AgentRuntime):
         self._team_factory = team_factory
         self._session_db = session_db
         self._app: FastAPI | None = None
+        self._agent_os: AgentOS | None = None
+        self._served = ServedEntities(StructlogLoggerAdapter("agui"))
+        self._revision = 0
         self._agent_os_lifespan: Lifespan[Any] | None = None
         self._open_lifespans: AsyncExitStack | None = None
 
@@ -81,6 +86,47 @@ class AgnoRuntime(AgentRuntime):
         # Os handles de agente deste runtime são ``agno.Agent`` (criados por ``build_agent``).
         members = cast(list[Agent], list(agents))
         return cast(TeamHandle, self._team_factory.create_team(config, members))
+
+    @property
+    def revision(self) -> int:
+        """Revisão das entidades servidas: 0 = as da montagem; cada ``swap`` soma 1."""
+        return self._revision
+
+    def swap(self, agents: Sequence[AgentHandle], teams: Sequence[TeamHandle]) -> int:
+        """Passa a servir ``agents`` e ``teams`` no AgentOS, no AG-UI e no cancel; devolve a revisão nova.
+
+        Sem ``await``: nenhum request intercala a troca, que é atômica para quem lê. Request que já pegou a
+        entidade (run em andamento, em stream inclusive) termina com a instância antiga; as rotas do AgentOS
+        ainda copiam a entidade a cada run (``create_fresh``). Nada de ``AgentOS.resync`` (interno, muda na 3.x):
+        as rotas do AgentOS leem ``os.agents``/``os.teams`` a cada request (``get_agent_by_id``,
+        ``agno/os/routers/agents/router.py:457`` no 2.5.8). Falha no preparo sobe antes de trocar qualquer coisa.
+        """
+        agno_agents = cast(list[Agent], list(agents))
+        agno_teams = cast(list[Team], list(teams))
+        if self._agent_os is not None:
+            self._serve_in_agent_os(self._agent_os, agno_agents, agno_teams)
+        self._served.replace(agno_agents, agno_teams)
+        self._revision += 1
+        return self._revision
+
+    def _serve_in_agent_os(self, agent_os: AgentOS, agents: list[Agent], teams: list[Team]) -> None:
+        """Prepara as entidades como o AgentOS do app preparou as do startup e as põe nas listas dele.
+
+        O preparo (db padrão, ``initialize_agent``/``initialize_team``, ``store_events``, ids repetidos) é o
+        do construtor do AgentOS, a API pública que o faz: um AgentOS sem app, descartado. As listas são as
+        mesmas, com conteúdo novo: as rotas que as guardaram na montagem (``/eval-runs``) e o ``/registry``
+        veem as entidades novas.
+        """
+        served_agents, served_teams = agent_os.agents, agent_os.teams
+        if served_agents is None or served_teams is None:
+            raise RuntimeError("AgentOS montado sem a lista de entidades")
+        if agents or teams:
+            self._build_agent_os(None, agents, teams, ())
+        served_agents[:] = agents
+        served_teams[:] = teams
+        if agent_os.registry is not None:
+            agent_os.registry.agents[:] = agents
+            agent_os.registry.teams[:] = teams
 
     def mount(
         self,
@@ -109,6 +155,7 @@ class AgnoRuntime(AgentRuntime):
         agno_agents = cast(list[Agent], list(agents))
         agno_teams = cast(list[Team], list(teams))
         agent_os = self._build_agent_os(app, agno_agents, agno_teams, cors_allowed_origins)
+        self._served.replace(agno_agents, agno_teams)
         # Cancel só de run registrado (F1-10): gerenciador antes de qualquer run e as rotas
         # de cancel antes do get_app(), que pula as do agno (preserve_base_app). Depois do
         # construtor (que valida ids): falha ali não deixa rota parcial.
@@ -119,32 +166,35 @@ class AgnoRuntime(AgentRuntime):
         own_lifespan = app.router.lifespan_context
         app.router.lifespan_context = _no_lifespan
         try:
-            app.include_router(
-                build_run_cancel_router(agno_agents, agno_teams, StructlogLoggerAdapter("run_cancel"))
-            )
+            app.include_router(build_run_cancel_router(self._served, StructlogLoggerAdapter("run_cancel")))
             agent_os.get_app()
-            app.include_router(build_agui_router(agno_agents, agno_teams, StructlogLoggerAdapter("agui")))
+            app.include_router(build_agui_router(self._served, StructlogLoggerAdapter("agui")))
             agent_os_lifespan = app.router.lifespan_context
         finally:
             app.router.lifespan_context = own_lifespan
         app.openapi_schema = None
         self._app = app
+        self._agent_os = agent_os
         self._agent_os_lifespan = agent_os_lifespan
 
     def _build_agent_os(
         self,
-        app: FastAPI,
+        app: FastAPI | None,
         agno_agents: list[Agent],
         agno_teams: list[Team],
         cors_allowed_origins: Sequence[str],
     ) -> AgentOS:
-        """AgentOS sobre o ``app``, sem telemetria nem tracing e com o db de sessões compartilhado."""
+        """AgentOS sobre o ``app``, sem telemetria nem tracing e com o db de sessões compartilhado.
+
+        Sem ``app``, só prepara as entidades (o construtor não toca rota nem middleware): o preparo da troca.
+        """
         return AgentOS(
             # O db das entidades: habilita /schedules e /approvals (admin na auth da borda);
             # /components segue stub 503 e nada é carregado do banco, porque o db é assíncrono.
             db=self._session_db,
             agents=list(agno_agents),  # cópia: o AgentOS tipa list[Agent | RemoteAgent] (invariante)
-            teams=list(agno_teams) or None,
+            # Lista mesmo vazia: a troca a quente (swap) a reenche no lugar.
+            teams=list(agno_teams),
             cors_allowed_origins=list(cors_allowed_origins),
             base_app=app,
             on_route_conflict="preserve_base_app",

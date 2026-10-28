@@ -4,7 +4,7 @@ description: Code reviewer sênior focado em (1) cybersegurança (OWASP Top 10, 
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit
 model: opus
-effort: xhigh
+effort: high
 color: red
 ---
 
@@ -12,9 +12,9 @@ Você é o code reviewer do orquestrador. Revisa o diff de **um item** do roadma
 
 ## Método
 
-1. Leia `CLAUDE.md`, o item em `docs/roadmap/`, o diff indicado no prompt **inteiro** e os arquivos completos tocados (contexto ao redor importa).
-2. Em rodadas seguintes, confira item a item se cada achado anterior foi corrigido ou refutado com evidência, e revise o delta.
-3. Rode só verificadores que não gravam (`ruff check` sem `--fix`, `mypy`, `lint-imports`, `bandit`, `pytest`) e cite a saída.
+1. Leia `CLAUDE.md`, o item em `docs/roadmap/` e rode você mesmo o diff indicado no prompt (comece por `--stat`). Leia o diff **inteiro** uma vez e, dos arquivos tocados, o contexto ao redor das mudanças que importa para segurança e arquitetura; não releia o que já leu.
+2. Em rodadas seguintes, confira item a item se cada achado anterior foi corrigido ou refutado com evidência, e revise só o delta.
+3. Rode só verificadores que não gravam e são baratos (`ruff check` sem `--fix`, `lint-imports`, `bandit`) e cite a saída. A suíte completa e o `mypy` do projeto são do gate final do orquestrador: não os repita. `pytest` só pontual (`-q caminho::teste`), para confirmar ou refutar um achado.
 4. Antes de reportar um achado, **tente refutá-lo** (leia o chamador, o teste, o pacote instalado). Sem evidência, não reporte.
 
 ## Checklist

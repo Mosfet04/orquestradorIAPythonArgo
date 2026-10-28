@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
+from src.domain.entities.validation import InvalidField, require_text
+
 
 class HttpMethod(Enum):
     """Métodos HTTP suportados."""
@@ -38,9 +40,9 @@ class ToolParameter:
 
     def __post_init__(self):
         if not self.name:
-            raise ValueError("Nome do parâmetro não pode estar vazio")
+            raise InvalidField("name", "Nome do parâmetro não pode estar vazio")
         if not self.description:
-            raise ValueError("Descrição do parâmetro não pode estar vazia")
+            raise InvalidField("description", "Descrição do parâmetro não pode estar vazia")
 
 
 @dataclass
@@ -58,13 +60,12 @@ class Tool:
     active: bool = True
 
     def __post_init__(self):
-        if not self.id:
-            raise ValueError("ID da tool não pode estar vazio")
+        require_text(self.id, "id", "ID da tool")
         if not self.name:
-            raise ValueError("Nome da tool não pode estar vazio")
+            raise InvalidField("name", "Nome da tool não pode estar vazio")
         if not self.description:
-            raise ValueError("Descrição da tool não pode estar vazia")
+            raise InvalidField("description", "Descrição da tool não pode estar vazia")
         if not self.route:
-            raise ValueError("Rota da tool não pode estar vazia")
+            raise InvalidField("route", "Rota da tool não pode estar vazia")
         if self.parameters is None:
             self.parameters = []

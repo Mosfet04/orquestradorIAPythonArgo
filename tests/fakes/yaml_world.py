@@ -8,7 +8,7 @@ modelo é um ``FakeChatModel`` roteirizado por ``model_id`` e a tool HTTP do YAM
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -17,6 +17,7 @@ from unittest.mock import patch
 import httpx
 import pytest
 from agno.models.response import ModelResponse
+from fastapi import APIRouter
 from starlette.testclient import TestClient
 
 from src.infrastructure import dependency_injection as di
@@ -49,6 +50,7 @@ def yaml_app(
     text: str,
     *,
     scripts: dict[str, list[str | ModelResponse]] | None = None,
+    routers: Sequence[APIRouter] = (),
 ) -> Iterator[tuple[YamlWorld, Path, TestClient]]:
     for name in CLEAN_ENV:
         monkeypatch.delenv(name, raising=False)
@@ -86,6 +88,6 @@ def yaml_app(
         patch.object(di.ProviderRegistry, "create_model", create_model),
         patch.object(httpx, "AsyncClient", mocked_client),
     ):
-        app = app_factory.AppFactory().create_app()
+        app = app_factory.AppFactory().create_app(routers=routers)
         with TestClient(app, base_url=LOOPBACK_BASE_URL, client=LOOPBACK_CLIENT, raise_server_exceptions=False) as http:
             yield world, path, http

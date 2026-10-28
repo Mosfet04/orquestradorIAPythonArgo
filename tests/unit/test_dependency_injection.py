@@ -339,6 +339,8 @@ class TestDependencyContainer:
         container = DependencyContainer(config)
         with pytest.raises(RuntimeError, match="Container não inicializado"):
             container.get_orquestrador_controller()
+        with pytest.raises(RuntimeError, match="Container não inicializado"):
+            container.get_config_schema()
 
 
 async def test_cleanup_com_erro_no_close_loga_e_nao_propaga():

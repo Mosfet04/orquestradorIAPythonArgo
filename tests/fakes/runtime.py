@@ -2,7 +2,8 @@
 
 Devolve handles com o id da configuração, registra cada pedido (com a thread em que rodou) e
 falha nos ids pedidos com a exceção dada. Serve para testar a política de carga dos casos de
-uso (id repetido, isolamento de falha, motivo no log, I/O fora do event loop).
+uso (id repetido, isolamento de falha, motivo no log, I/O fora do event loop). ``swap`` guarda os
+handles servidos em ``served`` e conta a revisão, como a troca a quente do runtime real (FA-04).
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ from dataclasses import dataclass
 
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.team_config import TeamConfig
-from src.domain.ports import AgentHandle, AgentRuntime
+from src.domain.ports import AgentHandle, AgentRuntime, TeamHandle
 from tests.fakes.models import running_on_event_loop
 
 
@@ -45,6 +46,17 @@ class FakeAgentRuntime(AgentRuntime):
         self._failures = dict(failures or {})
         self.agent_builds: list[AgentConfig] = []
         self.team_builds: list[TeamBuild] = []
+        self.served: tuple[tuple[AgentHandle, ...], tuple[TeamHandle, ...]] = ((), ())
+        self._revision = 0
+
+    @property
+    def revision(self) -> int:
+        return self._revision
+
+    def swap(self, agents: Sequence[AgentHandle], teams: Sequence[TeamHandle]) -> int:
+        self.served = (tuple(agents), tuple(teams))
+        self._revision += 1
+        return self._revision
 
     async def build_agent(self, config: AgentConfig) -> FakeAgentHandle:
         self.agent_builds.append(config)

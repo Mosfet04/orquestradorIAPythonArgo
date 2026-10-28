@@ -5,15 +5,15 @@ from __future__ import annotations
 from src.domain.entities.team_config import TeamConfig
 from src.domain.ports import ILogger
 from src.domain.repositories.team_config_repository import ITeamConfigRepository
-from src.infrastructure.repositories.config_documents import (
-    INVALID_DOCUMENT_ERRORS,
-    map_team_document,
-)
-from src.infrastructure.repositories.mongo_base import AsyncMongoRepository
+from src.infrastructure.repositories.config_documents import map_team_document
+from src.infrastructure.repositories.mongo_base import MongoConfigRepository, MongoDocument
 
 
-class MongoTeamConfigRepository(AsyncMongoRepository, ITeamConfigRepository):
+class MongoTeamConfigRepository(MongoConfigRepository[TeamConfig], ITeamConfigRepository):
     """Implementação async do repositório de configurações de teams."""
+
+    _id_field = "team_id"
+    _invalid_message = "Documento de team inválido ignorado"
 
     def __init__(
         self,
@@ -34,22 +34,14 @@ class MongoTeamConfigRepository(AsyncMongoRepository, ITeamConfigRepository):
         """Lista os teams ativos, do documento mais antigo ao mais novo."""
         try:
             # Ordem determinística (o documento mais antigo primeiro): com id repetido, o
-            # use case fica com o primeiro.
-            cursor = self._collection.find({"active": True}).sort(self._STABLE_ORDER)
-            configs: list[TeamConfig] = []
-            async for doc in cursor:
-                self._warn_ignored_camel_case("team_id", doc)
-                # Documento inválido isola só ele: o startup segue com os válidos (F1-10).
-                try:
-                    configs.append(map_team_document(doc, self._logger))
-                except INVALID_DOCUMENT_ERRORS as exc:
-                    self._log_invalid_document(
-                        "Documento de team inválido ignorado", "team_id", doc, exc
-                    )
-            return configs
+            # use case fica com o primeiro. Documento inválido isola só ele (F1-10).
+            return await self._documents({"active": True}, self._map)
         except Exception as exc:
             self._logger.error("Erro ao buscar teams ativos", error_type=type(exc).__name__)
             raise
+
+    def _map(self, doc: MongoDocument) -> TeamConfig:
+        return map_team_document(doc, self._logger)
 
     async def get_team_by_id(self, team_id: str) -> TeamConfig | None:
         """Devolve o team pelo id, ou ``None`` se não existir."""

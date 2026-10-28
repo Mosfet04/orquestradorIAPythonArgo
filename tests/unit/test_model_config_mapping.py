@@ -171,7 +171,7 @@ async def test_agente_com_campo_novo_invalido_e_isolado_sem_vazar(
     assert [c.id for c in configs] == ["antes", "depois"]
     errors = [(r.message, r.context) for r in logger.records if r.level == "error"]
     assert errors == [
-        ("Documento de agente inválido ignorado", {"agent_id": "ruim", "mongo_id": None, "error_type": "ValueError"})
+        ("Documento de agente inválido ignorado", {"agent_id": "ruim", "mongo_id": None, "error_type": "InvalidField"})
     ]
     assert all(MARKER not in repr(r) for r in logger.records)
 

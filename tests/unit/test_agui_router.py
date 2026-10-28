@@ -21,6 +21,7 @@ from fastapi import FastAPI
 from starlette.testclient import TestClient
 
 from src.infrastructure.runtime.agno.agui_router import build_agui_router, resolve_run_id
+from src.infrastructure.runtime.agno.served_entities import ServedEntities
 from tests.fakes import FakeChatModel, RecordingLogger
 
 SENSITIVE_TEXT = "sk-" + "x" * 20  # valor de teste: simula texto sensível numa exceção
@@ -66,8 +67,11 @@ class ScriptedAgent(Agent):
 def _client(
     agents: Sequence[Agent] = (), teams: Sequence[Team] = (), logger: RecordingLogger | None = None
 ) -> TestClient:
+    logger = logger or RecordingLogger()
+    served = ServedEntities(logger)
+    served.replace(agents, teams)
     app = FastAPI()
-    app.include_router(build_agui_router(list(agents), list(teams), logger or RecordingLogger()))
+    app.include_router(build_agui_router(served, logger))
     return TestClient(app)
 
 

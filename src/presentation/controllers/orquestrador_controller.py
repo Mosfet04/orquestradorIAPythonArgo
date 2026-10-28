@@ -111,26 +111,6 @@ class OrquestradorController:
         agents = await self.get_agents()
         await self._load_teams(agents)
 
-    async def refresh_agents(self) -> None:
-        """Recarrega agentes e teams e só então troca os dois caches.
-
-        Falha ao recarregar (repositório fora, arquivo de config quebrado...) mantém o cache anterior,
-        loga só o tipo do erro e re-levanta (o ``/admin/refresh-cache`` responde erro).
-        """
-        try:
-            agents = await self._agents_use_case.execute()
-            teams = await self._teams_use_case.execute(agents)
-        except Exception as exc:
-            self._logger.error(
-                "Falha ao atualizar o cache de agentes e teams; mantido o anterior",
-                error_type=type(exc).__name__,
-            )
-            raise
-        async with self._lock:
-            self._cache = AgentCacheEntry(agents)
-            self._team_cache = TeamCacheEntry(teams)
-        self._logger.info("Cache de agentes e teams atualizado")
-
     def get_cache_stats(self) -> dict[str, Any]:
         """Estatísticas dos caches de agentes e teams (sem conteúdo das entidades)."""
         stats: dict[str, Any] = {}

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
+from src.application.use_cases.config_change import ConfigChange, ConfigNotBuildable
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.ports import AgentHandle, AgentRuntime, ILogger, InvalidModelConfigError
 from src.domain.repositories.agent_config_repository import IAgentConfigRepository
@@ -26,9 +27,14 @@ class GetActiveAgentsUseCase:
         self._repository = agent_config_repository
         self._logger = logger
 
-    async def execute(self) -> list[AgentHandle]:
-        """Busca configs e cria agentes em paralelo; falha de um não derruba os outros."""
-        configs = self._unique_ids(await self._repository.get_active_agents())
+    async def execute(self, change: ConfigChange[AgentConfig] | None = None) -> list[AgentHandle]:
+        """Busca configs e cria agentes em paralelo; falha de um não derruba os outros.
+
+        Com ``change`` (escrita pela API, FA-04), monta a config ativa com a mudança aplicada e, se o agente
+        alterado não monta, levanta ``ConfigNotBuildable`` depois de logar as falhas.
+        """
+        active = await self._repository.get_active_agents()
+        configs = self._unique_ids(change.applied(active) if change is not None else active)
         if not configs:
             return []
 
@@ -36,11 +42,16 @@ class GetActiveAgentsUseCase:
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         agents: list[AgentHandle] = []
+        refusal: ConfigNotBuildable | None = None
         for config, result in zip(configs, results, strict=True):
             if isinstance(result, BaseException):
                 self._log_failure(config.id, result)
+                if change is not None and config.id == change.entity_id:
+                    refusal = ConfigNotBuildable(type(result).__name__)
                 continue
             agents.append(result)
+        if refusal is not None:
+            raise refusal
         return agents
 
     def _unique_ids(self, configs: list[AgentConfig]) -> list[AgentConfig]:

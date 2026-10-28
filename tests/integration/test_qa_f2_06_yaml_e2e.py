@@ -98,24 +98,24 @@ def test_run_rest_e_agui_de_agente_do_yaml_executam_a_tool_http_do_yaml(
 
 
 @pytest.mark.usefixtures("offline_knowledge")
-def test_refresh_apos_editar_o_yaml_atualiza_o_cache_mas_nao_as_rotas(
+def test_refresh_cache_apos_editar_o_yaml_troca_as_rotas_como_alias_deprecated_do_reload(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
-    """Coerente com o README: o refresh relê o arquivo (cache interno); rotas só mudam reiniciando."""
-    with yaml_app(monkeypatch, tmp_path, CONFIG) as (_, path, http):
-        before = http.get("/metrics/cache", headers=ADMIN).json()
+    """FA-04: o ``/admin/refresh-cache`` virou alias do ``POST /admin/config/reload``: as rotas mudam sem restart."""
+    with yaml_app(monkeypatch, tmp_path, CONFIG, scripts={"m-novo": ["do novo"]}) as (_, path, http):
         new_agent = "  - {id: novo, nome: N, factoryIaModel: ollama, model: m-novo, prompt: p, active: true}\n"
         path.write_text(CONFIG.replace("tools:\n", new_agent + "tools:\n"), encoding="utf-8")
         refresh = http.post("/admin/refresh-cache", headers=ADMIN)
-        after = http.get("/metrics/cache", headers=ADMIN).json()
         served = http.get("/agents", headers=RUN).json()
         run_new = http.post("/agents/novo/runs", data={"message": "oi", "stream": "false"}, headers=RUN)
+        health = http.get("/admin/health", headers=ADMIN).json()
 
-    assert before["agents"]["agent_count"] == 1
-    assert refresh.status_code == 200 and refresh.json() == {"status": "cache_refreshed"}
-    assert after["agents"]["agent_count"] == 2
-    assert [a["id"] for a in served] == ["ysol"]
-    assert run_new.status_code == 404
+    assert refresh.status_code == 200 and refresh.json() == {"runtime_revision": 1}
+    assert refresh.headers["Deprecation"] == "true"
+    assert refresh.headers["Link"] == '</admin/config/reload>; rel="successor-version"'
+    assert [a["id"] for a in served] == ["ysol", "novo"]
+    assert run_new.status_code == 200 and run_new.json()["content"] == "do novo"
+    assert health["runtime_revision"] == 1
 
 
 def _break_then_refresh(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, Any]:
@@ -179,7 +179,7 @@ def test_yaml_hostil_no_startup_recusa_subir_sem_o_conteudo_no_erro(
     ["", "# só comentário\n", "agents:\n", "agents: []\nteams: []\ntools: []\n", "﻿agents: []\n"],
     ids=["vazio", "so-comentario", "secao-nula", "listas-vazias", "bom"],
 )
-def test_yaml_sem_nenhuma_entidade_sobe_sem_agentos_e_serve_saude(
+def test_yaml_sem_nenhuma_entidade_sobe_com_o_agentos_vazio_e_serve_saude(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, text: str
 ):
     with yaml_app(monkeypatch, tmp_path, text) as (_, _, http):
@@ -187,8 +187,8 @@ def test_yaml_sem_nenhuma_entidade_sobe_sem_agentos_e_serve_saude(
         health = http.get("/admin/health", headers=ADMIN)
         cache = http.get("/metrics/cache", headers=ADMIN).json()
 
-    # igual a coleções vazias no Mongo (F1-10): o AgentOS não é montado, só os endpoints admin
-    assert agents.status_code == 404
+    # igual a coleções vazias no Mongo (F1-10): o AgentOS é montado vazio (FA-04: serve o que a API criar)
+    assert agents.status_code == 200 and agents.json() == []
     assert health.status_code == 200
     assert cache["agents"]["agent_count"] == 0
 
@@ -202,7 +202,7 @@ def test_yaml_com_todos_os_documentos_invalidos_sobe_sem_entidades(
         agents = http.get("/agents", headers=RUN)
         cache = http.get("/metrics/cache", headers=ADMIN).json()
 
-    assert agents.status_code == 404
+    assert agents.status_code == 200 and agents.json() == []
     assert cache["agents"]["agent_count"] == 0
 
 

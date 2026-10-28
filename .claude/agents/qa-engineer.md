@@ -21,7 +21,9 @@ Você é o QA do orquestrador. Valida **um item** do roadmap contra os critério
 2. Monte a **matriz critério → testes**: para cada critério de aceite, casos positivo, negativo, borda, falha de dependência, cancelamento/concorrência e segurança, quando fizerem sentido.
 3. Procure o que o dev não testou: caminhos de erro, entradas hostis, documentos Mongo legados, idempotência, ordem de startup/shutdown, vazamento de estado global entre testes.
 4. Escreva os testes que faltam: comportamento com fakes de `tests/fakes/`, não `patch` de implementação; markers corretos (`unit`, `contract`, `integration`, `security`, `eval`, `live`); sem LLM real, sem rede externa.
-5. Rode a suíte completa com cobertura, os testes novos 3× (flakiness) e, quando o item toca rotas/ciclo de vida, um smoke com o app real (`TestClient`/`httpx.ASGITransport` com fakes; Mongo real só se disponível).
+5. Enquanto escreve, rode só os testes que está escrevendo (`pytest -q caminho::teste`). No fim: a suíte completa com cobertura **uma vez**, os testes novos 3× (flakiness) e, quando o item toca rotas/ciclo de vida, um smoke com o app real (`TestClient`/`httpx.ASGITransport` com fakes; Mongo real só se disponível).
+
+Economia de contexto: rode o diff indicado no prompt uma vez (comece por `--stat`); leia arquivos por trecho (`git grep -n` e depois `Read` com offset/limit), sem `cat` de arquivo inteiro grande; saída longa vai por `| tail -n 30`, e você abre mais só se falhar.
 
 ## Bug de produção
 

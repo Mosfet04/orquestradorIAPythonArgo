@@ -4,13 +4,15 @@ Mesma semântica dos adapters Mongo e YAML (suíte de ``tests/contract``): filtr
 ordem de inserção (a ordem estável do backend), id repetido mantido nas listagens de agentes e teams
 (o caso de uso fica com o primeiro), uma tool por id (a primeira), busca por id devolvendo o primeiro,
 erro/``None`` para id inexistente e cópias independentes a cada leitura (como um documento novo
-vindo do banco).
+vindo do banco). Escrita com concorrência otimista (FA-01): item semeado é a versão 0 (legado) e
+cada ``save`` grava a próxima; versão divergente levanta ``ConfigVersionConflict``.
 """
 
 from __future__ import annotations
 
 import copy
 from collections.abc import Iterable
+from typing import Generic, Protocol, TypeVar
 
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.document_node import DocumentNode
@@ -20,12 +22,60 @@ from src.domain.ports.document_tree_repository_port import IDocumentTreeReposito
 from src.domain.repositories.agent_config_repository import IAgentConfigRepository
 from src.domain.repositories.team_config_repository import ITeamConfigRepository
 from src.domain.repositories.tool_repository import IToolRepository
+from src.domain.repositories.versioning import ConfigVersionConflict, Versioned
 
 
-class InMemoryAgentConfigRepository(IAgentConfigRepository):
-    def __init__(self, configs: Iterable[AgentConfig] = ()) -> None:
-        self._items: list[AgentConfig] = [copy.deepcopy(c) for c in configs]
+class _HasId(Protocol):
+    id: str
 
+
+E = TypeVar("E", bound=_HasId)
+
+
+class _VersionedItems(Generic[E]):
+    """Itens na ordem de inserção, cada um com a versão; a escrita age no item do id na versão esperada.
+
+    Como o filtro ``{"id", "version"}`` do Mongo: com id repetido, cada versão aponta um documento.
+    """
+
+    def __init__(self, items: Iterable[E] = ()) -> None:
+        self._entries: list[Versioned[E]] = [Versioned(copy.deepcopy(item), 0) for item in items]
+
+    @property
+    def _items(self) -> list[E]:
+        return [entry.entity for entry in self._entries]
+
+    def _position(self, entity_id: str, expected_version: int) -> int | None:
+        """Posição do primeiro item do id na versão, ``None`` para id novo na versão 0; senão, conflito."""
+        valid_version = isinstance(expected_version, int) and not isinstance(expected_version, bool)
+        if not isinstance(entity_id, str) or not valid_version:
+            raise TypeError("id da config deve ser texto e a versão, inteiro")
+        same_id = [i for i, entry in enumerate(self._entries) if entry.entity.id == entity_id]
+        position = next((i for i in same_id if self._entries[i].version == expected_version), None)
+        if position is None and (same_id or expected_version != 0):
+            raise ConfigVersionConflict(entity_id, expected_version)
+        return position
+
+    async def list_all(self) -> list[Versioned[E]]:
+        return copy.deepcopy(self._entries)
+
+    async def save(self, entity: E, expected_version: int) -> int:
+        position = self._position(entity.id, expected_version)
+        saved = Versioned(copy.deepcopy(entity), expected_version + 1)
+        if position is None:
+            self._entries.append(saved)
+        else:
+            self._entries[position] = saved
+        return saved.version
+
+    async def delete(self, entity_id: str, expected_version: int) -> None:
+        position = self._position(entity_id, expected_version)
+        if position is None:
+            raise ConfigVersionConflict(entity_id, expected_version)
+        del self._entries[position]
+
+
+class InMemoryAgentConfigRepository(_VersionedItems[AgentConfig], IAgentConfigRepository):
     async def get_active_agents(self) -> list[AgentConfig]:
         return [copy.deepcopy(c) for c in self._items if c.active]
 
@@ -36,10 +86,7 @@ class InMemoryAgentConfigRepository(IAgentConfigRepository):
         return copy.deepcopy(found)
 
 
-class InMemoryTeamConfigRepository(ITeamConfigRepository):
-    def __init__(self, configs: Iterable[TeamConfig] = ()) -> None:
-        self._items: list[TeamConfig] = [copy.deepcopy(c) for c in configs]
-
+class InMemoryTeamConfigRepository(_VersionedItems[TeamConfig], ITeamConfigRepository):
     async def get_active_teams(self) -> list[TeamConfig]:
         return [copy.deepcopy(c) for c in self._items if c.active]
 
@@ -48,10 +95,7 @@ class InMemoryTeamConfigRepository(ITeamConfigRepository):
         return copy.deepcopy(found) if found else None
 
 
-class InMemoryToolRepository(IToolRepository):
-    def __init__(self, tools: Iterable[Tool] = ()) -> None:
-        self._items: list[Tool] = [copy.deepcopy(t) for t in tools]
-
+class InMemoryToolRepository(_VersionedItems[Tool], IToolRepository):
     def _first_active_per_id(self, wanted: set[str] | None) -> list[Tool]:
         unique: dict[str, Tool] = {}
         for tool in self._items:

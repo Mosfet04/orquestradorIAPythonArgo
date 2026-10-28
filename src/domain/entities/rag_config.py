@@ -6,6 +6,7 @@ from enum import Enum
 from typing import Optional
 
 from src.domain.entities.model_config import ModelConfig, ParamValue
+from src.domain.entities.validation import InvalidField
 
 # Embedder usado quando o documento não define provider/modelo do RAG.
 DEFAULT_EMBEDDER_PROVIDER = "ollama"
@@ -38,8 +39,9 @@ class RagConfig:
             value is not None for value in (self.model_params, self.base_url, self.api_key_ref)
         )
         if self.model_config is None and has_extras:
-            raise ValueError(
-                "RAG com model_params, base_url ou api_key_ref exige model e factory_ia_model"
+            missing = "factory_ia_model" if not self.factory_ia_model else "model"
+            raise InvalidField(
+                missing, "RAG com model_params, base_url ou api_key_ref exige model e factory_ia_model"
             )
 
     @property

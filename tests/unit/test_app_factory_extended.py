@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from src.application.use_cases.config_admin_use_case import ConfigAdmin
 from src.infrastructure.web.app_factory import (
     AppFactory,
     create_app,
@@ -24,8 +25,8 @@ class TestAdminEndpointsWithContainer:
         container = MagicMock()
         controller = MagicMock()
         controller.get_cache_stats = MagicMock(return_value={"agents": {"status": "active"}})
-        controller.refresh_agents = AsyncMock()
         container.get_orquestrador_controller.return_value = controller
+        container.get_agent_runtime.return_value.revision = 3
         container.health_service = MagicMock()
         container.health_service.check_async = AsyncMock(return_value={"status": "healthy", "db": "connected"})
         container.cleanup = AsyncMock()
@@ -39,7 +40,7 @@ class TestAdminEndpointsWithContainer:
         async with AsyncClient(transport=transport, base_url="http://127.0.0.1:7777") as client:
             resp = await client.get("/admin/health")
             assert resp.status_code == 200
-            assert resp.json()["status"] == "healthy"
+            assert resp.json() == {"status": "healthy", "db": "connected", "runtime_revision": 3}
 
     async def test_health_unhealthy_responde_503(self, factory_with_container):
         factory_with_container._container.health_service.check_async = AsyncMock(
@@ -50,7 +51,7 @@ class TestAdminEndpointsWithContainer:
         async with AsyncClient(transport=transport, base_url="http://127.0.0.1:7777") as client:
             resp = await client.get("/admin/health")
         assert resp.status_code == 503
-        assert resp.json() == {"status": "unhealthy", "checks": {"mongodb": {"status": "unhealthy"}}}
+        assert resp.json() == {"status": "unhealthy", "checks": {"mongodb": {"status": "unhealthy"}}, "runtime_revision": 3}
 
     async def test_cache_metrics_with_container(self, factory_with_container):
         app = factory_with_container.create_app()
@@ -60,13 +61,18 @@ class TestAdminEndpointsWithContainer:
             assert resp.status_code == 200
             assert resp.json()["agents"]["status"] == "active"
 
-    async def test_refresh_cache_with_container(self, factory_with_container):
+    async def test_refresh_cache_e_alias_deprecated_do_reload(self, factory_with_container):
         app = factory_with_container.create_app()
+        # O lifespan põe o caso de uso de config no app.state; sem ele (ASGITransport), à mão.
+        admin = app.state.config_admin = MagicMock(spec=ConfigAdmin, reload=AsyncMock(return_value=4))
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://127.0.0.1:7777") as client:
             resp = await client.post("/admin/refresh-cache")
-            assert resp.status_code == 200
-            assert resp.json()["status"] == "cache_refreshed"
+        assert resp.status_code == 200
+        assert resp.json() == {"runtime_revision": 4}
+        assert resp.headers["deprecation"] == "true"
+        assert resp.headers["link"] == '</admin/config/reload>; rel="successor-version"'
+        admin.reload.assert_awaited_once()
 
     async def test_health_no_container(self):
         """Sem container, health_check retorna healthy padrão."""
@@ -87,13 +93,13 @@ class TestAdminEndpointsWithContainer:
             assert resp.json()["status"] == "no_cache"
 
     async def test_refresh_no_container(self):
-        """Sem container, retorna no_cache."""
+        """Sem container, a administração da config está indisponível (503)."""
         factory = AppFactory()
         app = factory.create_app()
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://127.0.0.1:7777") as client:
             resp = await client.post("/admin/refresh-cache")
-            assert resp.json()["status"] == "no_cache"
+        assert resp.status_code == 503
 
 
 # ── _ensure_container ────────────────────────────────────────────────
@@ -217,7 +223,7 @@ class TestLifespan:
         mock_shutdown_tel.assert_called_once()
 
     async def test_lifespan_no_agents_no_teams(self, mock_dc_cls, mock_setup_tel, mock_shutdown_tel):
-        """Sem agentes nem teams: não monta (start do runtime sem montagem não faz nada)."""
+        """Sem agentes nem teams: monta vazio (os criados depois pela API são trocados a quente, FA-04)."""
         container = _container_with([], [])
         mock_dc_cls.create_async = AsyncMock(return_value=container)
         factory = AppFactory()
@@ -227,7 +233,8 @@ class TestLifespan:
         async with factory._lifespan(app):
             pass
 
-        runtime.mount.assert_not_called()
+        runtime.mount.assert_called_once()
+        assert runtime.mount.call_args.args[1:] == ([], [])
         runtime.close.assert_awaited_once()
         container.cleanup.assert_awaited_once()
 

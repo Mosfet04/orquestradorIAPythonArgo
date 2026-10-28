@@ -15,7 +15,7 @@ import pytest
 from agno.agent import Agent
 from agno.team.mode import TeamMode
 
-from src.domain.entities.team_config import TeamConfig
+from src.domain.entities.team_config import TEAM_MODES, TeamConfig
 from src.infrastructure.runtime.agno.team_factory_service import TeamFactoryService
 from tests.fakes import FakeChatModel, FakeModelFactory, RecordingLogger
 from tests.fakes.session_db import fake_session_db
@@ -99,6 +99,14 @@ def test_modo_do_team_segue_a_config_e_so_o_route_responde_direto(
 
     assert team.mode is expected
     assert team.respond_directly is respond_directly
+
+
+@pytest.mark.parametrize("mode", TEAM_MODES)
+def test_todo_modo_aceito_pelo_dominio_vira_o_teammode_de_mesmo_nome(mode: str) -> None:
+    """Sem lista paralela no adapter: modo anunciado no ``/admin/schema`` nunca cai em outro em silêncio."""
+    team = _service(RecordingLogger()).create_team(_config(mode=mode), [_agent("agent-a"), _agent("agent-b")])
+
+    assert team.mode is TeamMode(mode)
 
 
 @pytest.mark.parametrize(

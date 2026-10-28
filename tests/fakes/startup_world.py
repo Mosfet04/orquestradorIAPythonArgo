@@ -28,6 +28,7 @@ from unittest.mock import patch
 
 import agno.os.app as agno_os_app
 from agno.models.response import ModelResponse
+from bson import ObjectId
 from fastapi import FastAPI
 
 from src.infrastructure import dependency_injection as di
@@ -36,6 +37,7 @@ from src.infrastructure.runtime.agno import AgnoRuntime
 from src.infrastructure.runtime.agno import runtime as agno_runtime_module
 from src.infrastructure.runtime.agno.session_db import SessionDb
 from src.infrastructure.web import app_factory
+from tests.fakes.dns import public_dns
 from tests.fakes.models import FakeChatModel, running_on_event_loop
 from tests.fakes.mongo import FakeMongoClient, FakeMongoCollection, FakeMotorClient
 
@@ -43,6 +45,7 @@ FAIL_STEPS = ("container", "entities", "mount", "start")
 CLEAN_ENV = (
     "API_KEY_RUN", "API_KEY_ADMIN", "APP_HOST", "ENVIRONMENT", "ENABLE_DOCS", "CORS_ALLOWED_ORIGINS",
     "PLUGIN_ALLOWLIST", "ALLOW_DYNAMIC_IMPORT", "DYNAMIC_PROVIDER_SPECS", "MODEL_BASE_URL_ALLOWLIST", "SECRETS_DIR",
+    "TOOL_ROUTE_ALLOWLIST",
 )
 
 
@@ -206,6 +209,14 @@ def _failing(step: str) -> Any:
     return fail
 
 
+def assign_seed_ids() -> None:
+    """Dá ``_id`` aos documentos semeados (o Mongo real sempre grava); chamar dentro do ``startup_world``."""
+    database = mongo_base.MongoClientFactory.get_client("qualquer")["qualquer"]
+    for name in ("agents_config", "teams_config"):
+        for doc in database[name].docs:
+            doc.setdefault("_id", ObjectId())
+
+
 @contextmanager
 def startup_world(
     events: Events,
@@ -221,7 +232,8 @@ def startup_world(
     ``fail_at``: etapa do startup que levanta ``RuntimeError("falha injetada: <etapa>")``
     (``container``: no wiring, depois de o cliente motor existir; ``entities``: na carga;
     ``mount``: ao montar as rotas do runtime; ``start``: num lifespan do agno).
-    ``startup_delay``: espera (async) antes da carga das entidades. Devolve os clientes motor criados.
+    ``startup_delay``: espera (async) antes da carga das entidades. DNS falso (``public_dns``) na guarda da
+    ``route`` de tool. Devolve os clientes motor criados.
     """
     if fail_at is not None and fail_at not in FAIL_STEPS:
         raise ValueError(f"etapa desconhecida: {fail_at}")
@@ -258,6 +270,7 @@ def startup_world(
         enter(patch.object(app_factory, "shutdown_telemetry", lambda: events.add("telemetry:shutdown")))
         enter(patch.object(di, "create_session_db", new_session_db))
         enter(patch.object(di.ProviderRegistry, "create_model", create_model))
+        enter(patch.object(di, "system_resolver", public_dns))  # a guarda da route de tool não resolve host real
         enter(patch.object(agno_os_app, "db_lifespan", db_lifespan))
         enter(patch.object(agno_os_app, "http_client_lifespan", http_lifespan))
         enter(patch.object(AgnoRuntime, "close", close))

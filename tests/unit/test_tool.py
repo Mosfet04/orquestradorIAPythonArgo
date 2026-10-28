@@ -164,3 +164,16 @@ class TestToolParameter:
                 type=ParameterType.STRING,
                 description=""
             )
+
+
+def test_tool_com_id_que_nao_e_texto_e_recusada_sem_ecoar_o_valor():
+    """Id operador (``{"$ne": ""}``) viraria injeção NoSQL na escrita (FA-01); como Agent e Team."""
+    with pytest.raises(ValueError, match=r"^ID da tool deve ser texto$"):
+        Tool(
+            id={"$ne": ""},
+            name="Tool",
+            description="Descrição",
+            route="https://api.example.com",
+            http_method=HttpMethod.GET,
+            parameters=[],
+        )

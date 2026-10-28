@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import math
 import os
 import re
 from dataclasses import dataclass, field
@@ -27,6 +28,9 @@ DEFAULT_CORS_ALLOWED_ORIGINS = (
 # Chaves de API da borda (F1-04): tamanho mínimo e como gerar uma.
 API_KEY_MIN_LENGTH = 32
 API_KEY_HINT = 'python -c "import secrets; print(secrets.token_urlsafe(32))"'
+
+# Consulta à revisão da config (FA-05): uma réplica serve a escrita de outra em até um ciclo.
+DEFAULT_CONFIG_REVISION_POLL_SECONDS = 2.0
 
 # Rótulo DNS (RFC 1123): letras, dígitos e hífen, sem hífen nas pontas, até 63 caracteres.
 _DNS_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
@@ -78,6 +82,9 @@ class AppConfig:
     secrets_dir: str = DEFAULT_SECRETS_DIR
     # Hosts aceitos em base_url de modelo/embedder vinda da config (F2-02), normalizados.
     model_base_url_allowlist: tuple[str, ...] = ()
+    # Hosts do operador para a route de tool gravada pela API (FA-06), normalizados: aceitos em IP
+    # privado/loopback e os únicos que recebem header por referência.
+    tool_route_allowlist: tuple[str, ...] = ()
     # Plugins de provider por entry point (F2-03): "distribuição:nome", distribuição pela PEP 503.
     plugin_allowlist: tuple[str, ...] = ()
     # "módulo:atributo" de ProviderSpec por env: só com o flag e no modo dev local (F2-03).
@@ -87,6 +94,9 @@ class AppConfig:
     # absoluto, conferido no startup; None com "mongo").
     config_store: ConfigStoreName = "mongo"
     config_yaml_path: str | None = None
+    # Segundos entre as consultas à revisão da config no Mongo (FA-05): cada réplica relê e troca o runtime
+    # quando outra grava. Sem efeito com "yaml" (a API não grava; o reload é manual).
+    config_revision_poll_seconds: float = DEFAULT_CONFIG_REVISION_POLL_SECONDS
 
     def __post_init__(self) -> None:
         """``config_store`` só ``mongo`` ou ``yaml``; ``yaml`` exige caminho.
@@ -130,7 +140,10 @@ class AppConfig:
             api_key_run=_api_key("API_KEY_RUN", os.getenv("API_KEY_RUN")),
             api_key_admin=_api_key("API_KEY_ADMIN", os.getenv("API_KEY_ADMIN")),
             secrets_dir=_secrets_dir(),
-            model_base_url_allowlist=_model_base_url_allowlist(),
+            model_base_url_allowlist=_host_allowlist(
+                "MODEL_BASE_URL_ALLOWLIST", os.getenv("MODEL_BASE_URL_ALLOWLIST")
+            ),
+            tool_route_allowlist=_host_allowlist("TOOL_ROUTE_ALLOWLIST", os.getenv("TOOL_ROUTE_ALLOWLIST")),
             plugin_allowlist=_plugin_allowlist(),
             allow_dynamic_import=_optional_bool(
                 "ALLOW_DYNAMIC_IMPORT", os.getenv("ALLOW_DYNAMIC_IMPORT"), default=False
@@ -138,6 +151,7 @@ class AppConfig:
             dynamic_provider_specs=_dynamic_provider_specs(),
             config_store=config_store,
             config_yaml_path=config_yaml_path,
+            config_revision_poll_seconds=_config_revision_poll_seconds(),
         )
         config._validate()
         return config
@@ -202,21 +216,20 @@ def _secrets_dir() -> str:
     return value
 
 
-def _model_base_url_allowlist() -> tuple[str, ...]:
-    """``MODEL_BASE_URL_ALLOWLIST``: hosts separados por vírgula; vazio = nenhum.
+def _host_allowlist(env_name: str, raw: str | None) -> tuple[str, ...]:
+    """``MODEL_BASE_URL_ALLOWLIST``/``TOOL_ROUTE_ALLOWLIST``: hosts separados por vírgula; vazio = nenhum.
 
     Só o host (nome DNS ou IP literal), sem esquema, porta, caminho nem curinga: a comparação
-    é exata com o host da ``base_url``. Normaliza caixa, ponto final e a forma do IPv6.
+    é exata com o host da URL. Normaliza caixa, ponto final e a forma do IPv6.
     """
-    raw = os.getenv("MODEL_BASE_URL_ALLOWLIST") or ""
     hosts: dict[str, None] = {}
-    for position, entry in enumerate((item.strip() for item in raw.split(",")), start=1):
+    for position, entry in enumerate((item.strip() for item in (raw or "").split(",")), start=1):
         if entry:
-            hosts[_allowlisted_host(entry, position)] = None
+            hosts[_allowlisted_host(entry, position, env_name)] = None
     return tuple(hosts)
 
 
-def _allowlisted_host(entry: str, position: int) -> str:
+def _allowlisted_host(entry: str, position: int, env_name: str) -> str:
     """Host normalizado; inválido = ``ValueError`` com a posição, nunca a entrada.
 
     A entrada pode ser uma URL com credencial colada por engano.
@@ -229,7 +242,7 @@ def _allowlisted_host(entry: str, position: int) -> str:
         pass
     if len(name) > 253 or not all(_DNS_LABEL.fullmatch(label) for label in name.split(".")):
         raise ValueError(
-            f"MODEL_BASE_URL_ALLOWLIST inválida: entrada {position} (contando da esquerda, separadas por "
+            f"{env_name} inválida: entrada {position} (contando da esquerda, separadas por "
             "vírgula) não é um host; use só o host (ex.: llm.interno.example), sem esquema, credencial, "
             "porta, caminho nem '*'"
         )
@@ -273,6 +286,20 @@ def _dynamic_provider_specs() -> tuple[str, ...]:
             )
         targets.append(entry)
     return tuple(targets)
+
+
+def _config_revision_poll_seconds() -> float:
+    """``CONFIG_REVISION_POLL_SECONDS`` (vazio = 2): número finito maior que zero."""
+    raw = (os.getenv("CONFIG_REVISION_POLL_SECONDS") or "").strip()
+    if not raw:
+        return DEFAULT_CONFIG_REVISION_POLL_SECONDS
+    try:
+        value = float(raw)
+    except ValueError:
+        value = math.nan
+    if not (math.isfinite(value) and value > 0):
+        raise ValueError("CONFIG_REVISION_POLL_SECONDS deve ser um número de segundos maior que zero")
+    return value
 
 
 def _config_store() -> tuple[ConfigStoreName, str | None]:
