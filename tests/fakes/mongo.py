@@ -3,13 +3,14 @@ e para o db de sessões do agno (``SessionDb``, F2-08).
 
 Só o que os repositórios e o ``AsyncMongoDb`` do agno 2.5.8 usam em sessões e memória:
 ``find``/``find_one`` com filtro de igualdade em campos de topo (ex.: ``{"active": True}``), ``$in``,
-``$ne``, ``$exists`` e ``$or``, projeção de inclusão, ``sort`` por um campo ou por uma lista de campos (no
+``$nin``, ``$ne``, ``$exists`` e ``$or``, projeção de inclusão, ``sort`` por um campo ou por uma lista de campos (no
 cursor ou no kwarg ``sort=``), ``skip``/``limit``/``to_list``, iteração com ``async for``,
 ``insert_one``/``insert_many`` (com ``_id`` gerado), ``replace_one``/``find_one_and_replace`` (com ``upsert``),
 ``find_one_and_update`` só com ``$inc`` (com ``upsert``),
 ``delete_one``/``delete_many``, ``distinct``, ``count_documents`` e o ``aggregate`` mínimo das
 estatísticas de memória (``$match``, ``$group`` com ``$sum: 1``/``$max``, ``$sort``, ``$skip``,
-``$limit``, ``$count``). O índice único de
+``$limit``, ``$count``) e dos runs da sessão do agno 3.x (``$addFields`` só com
+``{"$ifNull": ["$campo", default]}``). O índice único de
 ``create_index(..., unique=True)`` é emulado: repetido vira ``BulkWriteError`` código 11000 no
 ``insert_many`` e ``DuplicateKeyError`` nas demais escritas, como no pymongo. Cada leitura devolve
 uma cópia do documento, como um documento novo vindo do banco. Igualdade como no BSON: booleano só
@@ -123,10 +124,15 @@ def _matches(doc: dict[str, Any], query: dict[str, Any]) -> bool:
 
 
 def _operator_matches(doc: dict[str, Any], key: str, expected: dict[str, Any]) -> bool:
-    """Condição de operador num campo: ``$in``, ``$exists`` ou ``$ne``; outro falha alto."""
+    """Condição de operador num campo: ``$in``, ``$nin``, ``$exists`` ou ``$ne``; outro falha alto.
+
+    ``$nin`` é a negação do ``$in``: campo nulo ou ausente passa, salvo se ``None`` estiver na lista.
+    """
     actual = doc.get(key)
     if set(expected) == {"$in"}:
         return any(_field_equal(actual, option) for option in expected["$in"])
+    if set(expected) == {"$nin"}:
+        return not any(_field_equal(actual, option) for option in expected["$nin"])
     if set(expected) == {"$exists"}:
         return (key in doc) is bool(expected["$exists"])
     if set(expected) == {"$ne"}:
@@ -144,13 +150,17 @@ def _projected(doc: dict[str, Any], projection: dict[str, Any] | None) -> dict[s
 
 
 def _aggregate(docs: list[dict[str, Any]], pipeline: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Pipeline mínimo: ``$match``, ``$group`` (``_id: "$campo"``, ``$sum: 1``, ``$max: "$campo"``),
-    ``$sort``, ``$skip``, ``$limit`` e ``$count``. Estágio ou acumulador fora disso falha alto."""
+    """Pipeline mínimo: ``$match``, ``$addFields`` (só ``$ifNull``), ``$group`` (``_id: "$campo"``,
+    ``$sum: 1``, ``$max: "$campo"``), ``$sort``, ``$skip``, ``$limit`` e ``$count``. Estágio,
+    expressão ou acumulador fora disso falha alto."""
     rows = [copy.deepcopy(doc) for doc in docs]
     for stage in pipeline:
         ((name, spec),) = stage.items()
         if name == "$match":
             rows = [row for row in rows if _matches(row, spec)]
+        elif name == "$addFields":
+            for row in rows:
+                row.update({field_name: _if_null(row, expression) for field_name, expression in spec.items()})
         elif name == "$group":
             rows = _group(rows, spec)
         elif name == "$sort":
@@ -164,6 +174,41 @@ def _aggregate(docs: list[dict[str, Any]], pipeline: list[dict[str, Any]]) -> li
         else:
             raise NotImplementedError(f"FakeMongoCollection.aggregate: estágio não suportado: {name}")
     return rows
+
+
+def _is_expression(value: Any) -> bool:
+    """``True`` se o valor seria avaliado como expressão pelo Mongo (``"$campo"``, ``{"$op": ...}``)."""
+    if isinstance(value, str):
+        return value.startswith("$")
+    if isinstance(value, dict):
+        return any(key.startswith("$") or _is_expression(item) for key, item in value.items())
+    if isinstance(value, list):
+        return any(_is_expression(item) for item in value)
+    return False
+
+
+def _if_null(row: dict[str, Any], expression: Any) -> Any:
+    """Expressão ``{"$ifNull": ["$campo", default]}``: o valor do campo, ou o default se nulo ou ausente.
+
+    Só a forma que o agno 3.x usa nos runs da sessão (campo de topo, default literal); o Mongo real
+    avaliaria diferente caminho pontilhado, default que é expressão e campo sem ``$``, e o fake não
+    os emula: qualquer outra forma falha alto.
+    """
+    if not (isinstance(expression, dict) and set(expression) == {"$ifNull"}):
+        raise NotImplementedError(f"FakeMongoCollection.aggregate: expressão fora do fake: {expression!r}")
+    args = expression["$ifNull"]
+    if not (isinstance(args, (list, tuple)) and len(args) == 2):
+        raise NotImplementedError(f"FakeMongoCollection.aggregate: $ifNull só com [campo, default]: {args!r}")
+    field_path, default = args
+    if not (isinstance(field_path, str) and field_path.startswith("$") and not field_path.startswith("$$")):
+        raise NotImplementedError(f"FakeMongoCollection.aggregate: $ifNull exige '$campo': {field_path!r}")
+    field_name = field_path.removeprefix("$")
+    if not field_name or "." in field_name:
+        raise NotImplementedError(f"FakeMongoCollection.aggregate: $ifNull só com campo de topo: {field_path!r}")
+    if _is_expression(default):
+        raise NotImplementedError(f"FakeMongoCollection.aggregate: $ifNull com default expressão: {default!r}")
+    value = row.get(field_name)
+    return default if value is None else value
 
 
 def _group(rows: list[dict[str, Any]], spec: dict[str, Any]) -> list[dict[str, Any]]:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from typing import TypeVar
 
 import pytest
 from agno.agent import Agent
@@ -28,6 +29,7 @@ from tests.fakes import (
 )
 
 SRC = Path(__file__).resolve().parents[2] / "src"
+EntityT = TypeVar("EntityT", Agent, Team)
 
 
 class _NoTools:
@@ -141,8 +143,92 @@ def test_requires_user_id_so_aceita_true_estrito() -> None:
     assert requires_user_id(agent) is False
     agentic_only = Agent(model=FakeChatModel(), enable_agentic_memory=True, telemetry=False)
     assert requires_user_id(agentic_only) is True
-    classic_only = Agent(model=FakeChatModel(), enable_user_memories=True, telemetry=False)
+    classic_only = Agent(model=FakeChatModel(), update_memory_on_run=True, telemetry=False)
     assert requires_user_id(classic_only) is True
+
+
+def _without_legacy_memory_flag(entity: EntityT) -> EntityT:
+    """Tira o espelho legado ``enable_user_memories`` da instância, como no agno 3.x.
+
+    No 2.5.8 o ``__init__`` copia ``update_memory_on_run`` para ``enable_user_memories``
+    (``agno/agent/agent.py:504-508``, ``agno/team/_init.py:313-317``); no 3.1.12 o campo
+    não existe. Sem a cópia, o atributo cai no default da classe (``None``) aqui e some lá.
+    """
+    vars(entity).pop("enable_user_memories", None)
+    return entity
+
+
+def test_agent_com_memoria_exige_user_id_sem_depender_de_enable_user_memories() -> None:
+    """F3-02: o guardrail lê ``update_memory_on_run``; o renome do 3.x não o desliga em silêncio."""
+    classic = _without_legacy_memory_flag(
+        Agent(model=FakeChatModel(), update_memory_on_run=True, telemetry=False)
+    )
+    agentic = _without_legacy_memory_flag(
+        Agent(model=FakeChatModel(), enable_agentic_memory=True, telemetry=False)
+    )
+    quiet = _without_legacy_memory_flag(Agent(model=FakeChatModel(), telemetry=False))
+
+    assert (requires_user_id(classic), requires_user_id(agentic), requires_user_id(quiet)) == (
+        True,
+        True,
+        False,
+    )
+
+
+def test_team_com_memoria_exige_user_id_sem_depender_de_enable_user_memories() -> None:
+    """F3-02: Team com memória própria ou de membro recebe o guardrail sem o kwarg legado."""
+    quiet = _without_legacy_memory_flag(Agent(id="quieto", model=FakeChatModel(), telemetry=False))
+    member = _without_legacy_memory_flag(
+        Agent(id="membro", model=FakeChatModel(), update_memory_on_run=True, telemetry=False)
+    )
+    own_memory = _without_legacy_memory_flag(
+        Team(members=[quiet], model=FakeChatModel(), update_memory_on_run=True, telemetry=False)
+    )
+
+    by_member = _team("t", [quiet, member], memory=False)
+
+    assert requires_user_id(own_memory) is True
+    assert requires_user_id(by_member) is False
+    assert by_member.pre_hooks
+    (guardrail,) = by_member.pre_hooks
+    assert isinstance(guardrail, UserIdRequiredGuardrail) and guardrail.entity_id == "t"
+
+
+def _only_canonical_memory_flag(entity: EntityT) -> EntityT:
+    """Deixa só ``update_memory_on_run``: tira também ``enable_agentic_memory`` (a factory liga os dois juntos).
+
+    Sem isto o guardrail continuaria verdadeiro pelo flag agêntico e o teste não distinguiria o nome
+    canônico do legado.
+    """
+    vars(entity).pop("enable_agentic_memory", None)
+    return _without_legacy_memory_flag(entity)
+
+
+@pytest.mark.parametrize(
+    ("team_memory", "member_memory"),
+    [(False, True), (True, False), (True, True)],
+    ids=["so-membro", "so-team", "ambos"],
+)
+async def test_factories_ligam_memoria_pelo_nome_canonico(team_memory: bool, member_memory: bool) -> None:
+    """F3-02: a factory grava ``update_memory_on_run``; sem o espelho legado o team ainda é guardado.
+
+    Com ``team_memory=False`` e ``member_memory=True`` o guardrail do Team vem só de
+    ``requires_user_id(membro)`` sobre o membro montado pela factory (não do flag do próprio Team).
+    A factory liga ``enable_agentic_memory`` junto; os helpers o tiram para que só o nome canônico conte.
+    """
+    member = _only_canonical_memory_flag(await _agent("membro", memory=member_memory))
+    quiet = _only_canonical_memory_flag(await _agent("quieto", memory=False))
+    team = _only_canonical_memory_flag(_team("t", [quiet, member], memory=team_memory))
+
+    assert (member.update_memory_on_run, quiet.update_memory_on_run) == (member_memory, False)
+    assert team.update_memory_on_run is team_memory
+    assert requires_user_id(member) is member_memory
+    assert requires_user_id(team) is team_memory
+    assert bool(member.pre_hooks) is member_memory
+    assert not quiet.pre_hooks
+    assert team.pre_hooks, "team com memória própria ou de membro precisa do guardrail"
+    (guardrail,) = team.pre_hooks
+    assert isinstance(guardrail, UserIdRequiredGuardrail) and guardrail.entity_id == "t"
 
 
 def test_nenhuma_chamada_em_src_passa_user_id_literal() -> None:

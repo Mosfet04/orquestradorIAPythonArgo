@@ -452,7 +452,7 @@ class AgentFactoryService:
             add_datetime_to_context=config.add_datetime_to_context,
             num_history_runs=config.num_history_runs,
             enable_agentic_memory=agentic_memory,
-            enable_user_memories=user_memories,
+            update_memory_on_run=user_memories,
             enable_session_summaries=config.summary_active,
             # ── persistência de mensagens ──
             store_history_messages=True,

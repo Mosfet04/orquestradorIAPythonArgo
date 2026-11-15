@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from agno.db.base import SessionType
 from agno.db.schemas import UserMemory
 
 from src.infrastructure import dependency_injection as di
@@ -63,3 +64,15 @@ def memory_rows(db: SessionDb) -> list[tuple[str | None, str | None]]:
 def session_docs(db: SessionDb) -> list[dict[str, Any]]:
     """Documentos de ``agno_sessions`` como gravados."""
     return list(collection(db, db.session_table_name).docs)
+
+
+async def stored_runs(db: SessionDb, session_id: str, *, user_id: str | None = None) -> list[dict[str, Any]]:
+    """Runs gravados da sessão, pela API pública (``get_session(..., deserialize=False)``).
+
+    Não lê o campo ``runs`` do documento: no agno 3.x os runs saem de ``agno_sessions`` para
+    ``agno_runs`` e o ``get_session`` os anexa à sessão devolvida. O ``SessionDb`` não filtra por
+    ``session_type`` e, sem desserializar, o tipo não escolhe nada: vale para sessão de agente e de team.
+    """
+    session = await db.get_session(session_id, SessionType.AGENT, user_id=user_id, deserialize=False)
+    assert isinstance(session, dict), f"sessão {session_id!r} não encontrada"
+    return list(session.get("runs") or [])

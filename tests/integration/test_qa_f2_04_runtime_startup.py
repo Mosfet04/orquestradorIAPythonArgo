@@ -376,7 +376,7 @@ def test_agente_com_rag_semantico_e_com_memoria_expoem_as_tools_do_framework(boo
     mem = boot.agent_details["a-mem"]
 
     assert "search_knowledge_base" in sem
-    assert mem["memory"]["enable_user_memories"] is True and mem["memory"]["enable_agentic_memory"] is True
+    assert mem["memory"]["update_memory_on_run"] is True and mem["memory"]["enable_agentic_memory"] is True
     assert boot.agent_details["a-simples"].get("knowledge") is None
 
 

@@ -41,6 +41,7 @@ from tests.fakes import (
     RecordingLogger,
 )
 from tests.fakes.live_mongo import LiveMongo
+from tests.fakes.session_db import stored_runs
 
 pytestmark = pytest.mark.live
 
@@ -136,7 +137,7 @@ async def test_sessao_persiste_entre_processos_e_o_historico_volta_no_run_seguin
     assert [(d["session_id"], d["session_type"], d["agent_id"], d["user_id"]) for d in stored] == [
         ("s1", "agent", "agente", "ana")
     ]
-    assert len(stored[0]["runs"]) == 2
+    assert len(await stored_runs(restarted_db, "s1", user_id="ana")) == 2
     loaded = await restarted_db.get_session(session_id="s1", session_type=SessionType.AGENT, user_id="ana")
     assert isinstance(loaded, AgentSession) and len(loaded.runs or []) == 2
 
@@ -145,7 +146,7 @@ async def test_sessao_de_um_usuario_nao_e_lida_nem_trocada_por_outro(live_mongo:
     db = _session_db(live_mongo)
     agent = await _agent(db)
     await agent.arun("meu código de cliente é 4815", user_id="ana", session_id="s1")
-    before = _sessions(live_mongo)
+    runs_before = await stored_runs(db, "s1", user_id="ana")
 
     other = await _agent(_session_db(live_mongo))
     run = await other.arun("qual é o código?", user_id="bruno", session_id="s1")
@@ -154,9 +155,9 @@ async def test_sessao_de_um_usuario_nao_e_lida_nem_trocada_por_outro(live_mongo:
     assert "4815" not in _prompt(other)
     assert await db.get_session(session_id="s1", session_type=SessionType.AGENT, user_id="bruno") is None
     # O índice único de session_id e o filtro por usuário do upsert: o documento da Ana fica como estava.
-    after = _sessions(live_mongo)
-    assert [(d["user_id"], len(d["runs"])) for d in after] == [("ana", 1)]
-    assert after[0]["runs"] == before[0]["runs"]
+    assert [d["user_id"] for d in _sessions(live_mongo)] == ["ana"]
+    runs_after = await stored_runs(db, "s1", user_id="ana")
+    assert len(runs_after) == 1 and runs_after == runs_before
 
 
 # ── memória por user_id ──────────────────────────────────────────────
@@ -226,7 +227,8 @@ async def test_run_cancelado_fica_gravado_como_cancelado_na_sessao_do_usuario(li
     assert manager.get_active_runs() == {}
     stored = _sessions(live_mongo)
     assert [(d["session_id"], d["user_id"]) for d in stored] == [("s-cancel", "ana")]
-    assert [(r["run_id"], r["status"]) for r in stored[0]["runs"]] == [(run_id, "CANCELLED")]
+    runs = await stored_runs(_session_db(live_mongo), "s-cancel", user_id="ana")
+    assert [(r["run_id"], r["status"]) for r in runs] == [(run_id, "CANCELLED")]
 
 
 # ── compatibilidade com o MongoDb síncrono (dados de antes do F2-08) ──
@@ -322,9 +324,11 @@ async def test_team_que_reusa_o_session_id_de_um_agente_continua_a_conversa_como
         _, team = await _agent_then_team(make_db(live_mongo), make_db(live_mongo), session_id)
         docs = [d for d in _sessions(live_mongo) if d["session_id"] == session_id]
         assert len(docs) == 1  # o índice único de session_id deixa um documento só por sessão
+        # Os runs pela API pública do db, os dois roteiros lidos pelo mesmo leitor (o mesmo Mongo).
+        runs = await stored_runs(_session_db(live_mongo), session_id)
         observed[label] = {
             "tipo_do_documento_final": docs[0]["session_type"],
-            "runs_por_entidade": [(r.get("agent_id"), r.get("team_id")) for r in docs[0].get("runs") or []],
+            "runs_por_entidade": [(r.get("agent_id"), r.get("team_id")) for r in runs],
             "team_viu_a_mensagem_do_agente": "4815" in _prompt(team),
         }
 

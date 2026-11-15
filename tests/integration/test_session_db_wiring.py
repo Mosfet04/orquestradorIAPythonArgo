@@ -16,6 +16,7 @@ from src.infrastructure import dependency_injection as di
 from src.infrastructure.config.app_config import AppConfig
 from src.infrastructure.runtime.agno.session_db import SessionDb
 from tests.fakes import RecordingLogger
+from tests.fakes.session_db import stored_runs
 from tests.fakes.startup_world import CLEAN_ENV, Events, startup_world
 
 MARKER = "mongodb://usuario:s3nh4-do-banco@mongo.invalid"
@@ -132,10 +133,10 @@ async def test_agente_e_team_do_container_continuam_a_mesma_conversa_no_mesmo_se
             session_db = container._session_db
             assert session_db is not None
             docs = list(session_db.db_client[session_db.db_name]["agno_sessions"].docs)
+            runs = await stored_runs(session_db, "s1", user_id="ana")
         finally:
             await container.cleanup()
 
     assert [(d["session_id"], d["user_id"], d["session_type"]) for d in docs] == [("s1", "ana", "agent")]
-    runs = [(r.get("agent_id"), r.get("team_id")) for r in docs[0]["runs"]]
-    assert runs == [("a1", None), (None, "t1"), ("a1", None)]
-    assert docs[0]["runs"][0]["input"]["input_content"] == "meu código de cliente é 4815"
+    assert [(r.get("agent_id"), r.get("team_id")) for r in runs] == [("a1", None), (None, "t1"), ("a1", None)]
+    assert runs[0]["input"]["input_content"] == "meu código de cliente é 4815"

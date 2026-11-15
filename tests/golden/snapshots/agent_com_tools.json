@@ -13,7 +13,6 @@
       "description": "Descrição de com-tools",
       "enable_agentic_memory": true,
       "enable_session_summaries": true,
-      "enable_user_memories": true,
       "id": "com-tools",
       "instructions": "Você é o com-tools.",
       "knowledge": null,
@@ -85,7 +84,8 @@
             "type": "object"
           }
         }
-      ]
+      ],
+      "update_memory_on_run": true
     }
   ],
   "Team": [],

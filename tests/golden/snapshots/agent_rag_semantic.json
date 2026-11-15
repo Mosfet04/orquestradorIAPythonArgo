@@ -13,7 +13,6 @@
       "description": "Descrição de rag-semantic",
       "enable_agentic_memory": false,
       "enable_session_summaries": false,
-      "enable_user_memories": false,
       "id": "rag-semantic",
       "instructions": "Você é o rag-semantic.",
       "knowledge": {
@@ -54,7 +53,8 @@
       "store_history_messages": true,
       "store_tool_messages": true,
       "telemetry": false,
-      "tools": null
+      "tools": null,
+      "update_memory_on_run": false
     }
   ],
   "Team": [],

@@ -71,6 +71,7 @@ Fora de escopo: esquema do banco; telemetria dos evals; motor.
 Critérios de aceite: ruff, mypy, lint-imports, bandit e suíte verdes no 3.1.12; `pip-audit` sem ignore; diferenças de comportamento listadas no item.
 Testes exigidos: suíte completa; dual-run local do conjunto neutro nas duas venvs.
 Riscos e dependências: depende de F3-01..F3-04; maior item (excluindo lock e snapshots).
+Pendências herdadas do F3-02: `tests/integration/test_qa_f2_04_runtime_startup.py` asserta `memory.update_memory_on_run` em `GET /agents/{id}` (some no 3.x); contagens de runs via `stored_runs` em testes de Team podem incluir sub-runs de membro (`parent_run_id`) no 3.x.
 
 ## F3-06 — Esquema do banco e `MigrationManager`
 Modelo: opus
