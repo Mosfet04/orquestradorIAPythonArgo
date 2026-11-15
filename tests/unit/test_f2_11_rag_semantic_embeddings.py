@@ -298,7 +298,8 @@ async def test_reindexacao_que_falha_sobe_sem_rag_sem_apagar_os_chunks(fake_vect
     agent = await _service(logger, _scripted(8, lambda _text: 0)).create_agent(_config(dimensions=8))
 
     assert agent.knowledge is None
-    assert _collection(fake_vector_mongo).docs == before  # nada apagado; o próximo startup tenta de novo
+    # nada apagado nem reindexado (o próximo startup tenta de novo); só marcados como compartilhados (F3-03)
+    assert _collection(fake_vector_mongo).docs == {key: {**doc, "user_id": None} for key, doc in before.items()}
     [record] = [r for r in logger.records if r.level == "error"]
     assert record.context == {
         "agent_id": AGENT_ID,

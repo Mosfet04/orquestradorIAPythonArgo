@@ -305,11 +305,20 @@ class AgentFactoryService:
         collection = vector_db.collection_name
         if report.index_rebuilt:
             self._logger.warning(
-                "Índice vetorial do RAG ausente ou com dimensão diferente do embedder; recriado",
+                "Índice vetorial do RAG ausente, com dimensão diferente do embedder ou sem o "
+                "filtro user_id; recriado",
                 agent_id=agent_id,
                 collection=collection,
                 previous_dimensions=report.previous_dimensions,
                 dimensions=vector_db.dimensions,
+            )
+        if report.shared:
+            self._logger.info(
+                "Chunks do RAG sem user_id marcados como compartilhados (user_id nulo), para o "
+                "filtro por usuário da busca vetorial",
+                agent_id=agent_id,
+                collection=collection,
+                shared=report.shared,
             )
         if report.reembedded:
             self._logger.warning(
@@ -325,7 +334,7 @@ class AgentFactoryService:
                 agent_id=agent_id,
                 collection=collection,
                 failed=report.failed,
-                error_type=EmbeddingDimensionError.__name__,
+                error_type=report.error_type,
             )
             return False
         return True

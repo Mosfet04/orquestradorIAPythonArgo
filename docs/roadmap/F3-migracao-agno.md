@@ -72,6 +72,7 @@ Critérios de aceite: ruff, mypy, lint-imports, bandit e suíte verdes no 3.1.12
 Testes exigidos: suíte completa; dual-run local do conjunto neutro nas duas venvs.
 Riscos e dependências: depende de F3-01..F3-04; maior item (excluindo lock e snapshots).
 Pendências herdadas do F3-02: `tests/integration/test_qa_f2_04_runtime_startup.py` asserta `memory.update_memory_on_run` em `GET /agents/{id}` (some no 3.x); contagens de runs via `stored_runs` em testes de Team podem incluir sub-runs de membro (`parent_run_id`) no 3.x.
+Pendências herdadas do F3-03: (1) o caminho de fallback do RAG (sonda falhou, dimensão do índice existente, `_knowledge_from_existing_index`) não roda o `repair`: índice antigo sem o filtro `user_id` fica até um startup com a sonda ok, e no 3.x a busca com `user_id` nele falha (o agno loga e devolve `[]`); (2) no 3.x o `Knowledge.insert` trata `EmbeddingError` (`knowledge/knowledge.py:4512-4547`, status `FAILED`) fora do `prepare_doc`: conferir que o `_accept_insert`/`_load_document` deixam o agente coerente (documento não indexado e refeito no próximo startup); (3) provado no live (Atlas Local 8.0.32): o pré-filtro `{user_id: null}` do `$vectorSearch` não casa com o campo ausente; por isso o `GuardedMongoVectorDb` grava `user_id: null` e o `repair` marca os chunks antigos: no dual-run, confirmar que o 3.x acha os chunks gravados pelo 2.5.8 com e sem `user_id` na busca.
 
 ## F3-06 — Esquema do banco e `MigrationManager`
 Modelo: opus
