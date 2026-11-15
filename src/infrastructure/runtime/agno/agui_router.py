@@ -19,28 +19,44 @@ sumir (o conversor do agno não mapeia ``RunError``). Aqui:
   andamento (F1-10); senão, o servidor gera um UUID4 e devolve no ``RUN_STARTED``;
 - ``GET /status`` da interface do agno é mantido (``{"status": "available"}``).
 
-A conversão de mensagens e de eventos é a do próprio agno
-(``agno/os/interfaces/agui/utils.py``). ``user_id`` continua vindo de
-``forwardedProps.user_id``; só passa se for ``str`` (outro tipo vira ``None``: um
-``{"$ne": null}`` chegaria ao filtro do ``MongoDb`` do agno). O resto da validade é do
-guardrail do F1-06 em entidade com memória de usuário; amarrar à credencial é o F5-02.
+Entrada e saída neutras à versão do agno (F3-04):
+
+- a entrada é nossa: o run recebe só o texto da última mensagem ``user`` (partes de texto juntadas
+  por quebra de linha; sem ela, texto vazio) e o ``forwardedProps.user_id``. Histórico, ``state``,
+  ``tools`` e ``context`` do cliente e mídia ficam de fora: o histórico vem da sessão
+  (``threadId``), como no AG-UI do agno 3.x, e o cliente não injeta mensagem de assistente,
+  estado de sessão, tool para o modelo chamar nem URL para o servidor baixar;
+- a saída usa o conversor de eventos do agno (``agno/os/interfaces/agui/utils.py`` no 2.5.8) e
+  passa por ``filter_agui_events``: só os tipos de ``EMITTED_EVENT_TYPES`` chegam ao cliente
+  (``RAW``, ``CUSTOM``, estado e raciocínio do 3.x são descartados, com log ``debug`` só do tipo:
+  nenhum ``CUSTOM`` é previsto hoje) e o terminal é decidido aqui (o ``RUN_ERROR`` do conversor
+  do 3.x leva o texto do erro e o evento cru).
+
+``user_id`` só passa se for ``str`` (outro tipo vira ``None``: um ``{"$ne": null}`` chegaria ao
+filtro do ``MongoDb`` do agno). O resto da validade é do guardrail do F1-06 em entidade com
+memória de usuário; amarrar à credencial é o F5-02.
 """
 
 from __future__ import annotations
 
 import re
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from typing import cast
 from urllib.parse import quote
 
-from ag_ui.core import BaseEvent, EventType, RunAgentInput, RunErrorEvent, RunStartedEvent
-from ag_ui.encoder import EventEncoder
-from agno.os.interfaces.agui.utils import (
-    async_stream_agno_response_as_agui_events,
-    convert_agui_messages_to_agno_messages,
-    validate_agui_state,
+from ag_ui.core import (
+    BaseEvent,
+    EventType,
+    Message,
+    RunAgentInput,
+    RunErrorEvent,
+    RunStartedEvent,
+    TextInputContent,
+    UserMessage,
 )
+from ag_ui.encoder import EventEncoder
+from agno.os.interfaces.agui.utils import async_stream_agno_response_as_agui_events
 from agno.run.agent import RunCancelledEvent as AgentRunCancelledEvent
 from agno.run.agent import RunErrorEvent as AgentRunErrorEvent
 from agno.run.agent import RunOutputEvent
@@ -67,6 +83,25 @@ _ENTITY_NOT_FOUND = "entidade não encontrada"
 
 AgnoEvent = RunOutputEvent | TeamRunOutputEvent
 _FAILURE_EVENTS = (AgentRunErrorEvent, TeamRunErrorEvent, AgentRunCancelledEvent, TeamRunCancelledEvent)
+
+_TERMINAL_EVENT_TYPES = frozenset({EventType.RUN_FINISHED, EventType.RUN_ERROR})
+# Do conversor do agno, passam sem mudança (o RUN_STARTED é nosso; os terminais são decididos aqui).
+_PASSTHROUGH_EVENT_TYPES = frozenset(
+    {
+        EventType.TEXT_MESSAGE_START,
+        EventType.TEXT_MESSAGE_CONTENT,
+        EventType.TEXT_MESSAGE_END,
+        EventType.TOOL_CALL_START,
+        EventType.TOOL_CALL_ARGS,
+        EventType.TOOL_CALL_END,
+        EventType.TOOL_CALL_RESULT,
+        # Raciocínio do agno 2.5.8 (``reasoning_started``/``reasoning_completed``), sem conteúdo.
+        EventType.STEP_STARTED,
+        EventType.STEP_FINISHED,
+    }
+)
+EMITTED_EVENT_TYPES = _PASSTHROUGH_EVENT_TYPES | _TERMINAL_EVENT_TYPES | {EventType.RUN_STARTED}
+"""Todos os tipos de evento que o AG-UI deste app emite."""
 
 
 def resolve_run_id(candidate: str) -> str:
@@ -143,17 +178,65 @@ async def _run_events(
     try:
         user_id = _forwarded_user_id(run_input, entity_id, run_id, logger)
         stream = _start_run(entity, run_input, run_id, user_id)
-        async for event in async_stream_agno_response_as_agui_events(
+        converted = async_stream_agno_response_as_agui_events(
             response_stream=_watch_failure(stream, run_id, failures), thread_id=thread_id, run_id=run_id
-        ):
-            if event.type == EventType.RUN_FINISHED and failures:
-                yield _failure_event(failures[0], entity_id, run_id, logger)
-                return
+        )
+        async for event in filter_agui_events(converted, failures, entity_id=entity_id, run_id=run_id, logger=logger):
             yield event
     except Exception as exc:  # noqa: BLE001 - o SSE já respondeu 200: a falha vira RUN_ERROR, com log
         # Nunca str(exc): texto de exceção de SDK pode trazer segredo.
         logger.error("Falha no run AG-UI", entity_id=entity_id, run_id=run_id, error_type=type(exc).__name__)
         yield RunErrorEvent(type=EventType.RUN_ERROR, message=_GENERIC_ERROR, code="run_error")
+
+
+async def filter_agui_events(
+    events: AsyncIterator[BaseEvent],
+    failures: Sequence[AgnoEvent],
+    *,
+    entity_id: str,
+    run_id: str,
+    logger: ILogger,
+) -> AsyncIterator[BaseEvent]:
+    """Saída do conversor do agno reduzida à lista: o resto é descartado e o terminal é decidido aqui.
+
+    ``failures`` é a lista que o ``_watch_failure`` preenche enquanto o stream é consumido: no
+    terminal, já tem a falha do próprio run, se houve. Nada passa depois do terminal.
+    """
+    async for event in events:
+        if event.type in _TERMINAL_EVENT_TYPES:
+            yield _terminal_event(event, failures, entity_id, run_id, logger)
+            return
+        if event.type in _PASSTHROUGH_EVENT_TYPES:
+            yield event
+            continue
+        logger.debug(
+            "Evento AG-UI fora da lista descartado", entity_id=entity_id, run_id=run_id, event_type=event.type.value
+        )
+
+
+def _terminal_event(
+    event: BaseEvent, failures: Sequence[AgnoEvent], entity_id: str, run_id: str, logger: ILogger
+) -> BaseEvent:
+    """Falha do próprio run vence; ``RUN_ERROR`` do conversor (texto do erro) vira o genérico."""
+    if failures:
+        return _failure_event(failures[0], entity_id, run_id, logger)
+    if event.type == EventType.RUN_ERROR:
+        logger.warning("Run AG-UI terminou sem sucesso", entity_id=entity_id, run_id=run_id, code="run_error")
+        return RunErrorEvent(type=EventType.RUN_ERROR, message=_GENERIC_ERROR, code="run_error")
+    return event
+
+
+def last_user_text(messages: Sequence[Message]) -> str:
+    """Texto da última mensagem ``user`` (partes de texto juntadas por quebra de linha); sem ela, ``""``.
+
+    Partes de mídia ficam de fora (o servidor não baixa URL nem decodifica arquivo do cliente).
+    """
+    for message in reversed(messages):
+        if isinstance(message, UserMessage):
+            if isinstance(message.content, str):
+                return message.content
+            return "\n".join(part.text for part in message.content if isinstance(part, TextInputContent))
+    return ""
 
 
 def _forwarded_user_id(run_input: RunAgentInput, entity_id: str, run_id: str, logger: ILogger) -> str | None:
@@ -174,25 +257,22 @@ def _forwarded_user_id(run_input: RunAgentInput, entity_id: str, run_id: str, lo
 def _start_run(
     entity: Entity, run_input: RunAgentInput, run_id: str, user_id: str | None
 ) -> AsyncIterator[AgnoEvent]:
-    """Mesmos argumentos do router do agno 2.5.8 (``stream_steps`` do team era ignorado)."""
-    messages = convert_agui_messages_to_agno_messages(run_input.messages or [])
-    session_state = validate_agui_state(run_input.state, run_input.thread_id)
+    """Run com o texto da última mensagem do usuário; o histórico é o da sessão ``thread_id``.
+
+    Sem ``session_state`` do cliente (era o ``state`` do AG-UI até o F3-04). O team não recebe
+    ``stream_events`` (o router do agno 2.5.8 também não passava).
+    """
+    text = last_user_text(run_input.messages or [])
     if isinstance(entity, Team):
         return entity.arun(
-            input=messages,
-            session_id=run_input.thread_id,
-            stream=True,
-            user_id=user_id,
-            session_state=session_state,
-            run_id=run_id,
+            input=text, session_id=run_input.thread_id, stream=True, user_id=user_id, run_id=run_id
         )
     agent_stream = entity.arun(
-        input=messages,
+        input=text,
         session_id=run_input.thread_id,
         stream=True,
         stream_events=True,
         user_id=user_id,
-        session_state=session_state,
         run_id=run_id,
     )
     # O overload do agno inclui RunOutput no stream, que só aparece com yield_run_output=True.

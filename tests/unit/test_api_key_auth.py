@@ -1,16 +1,22 @@
 """Classificador de rotas e política de chaves do F1-04 (``api_key_auth``).
 
-A tabela abaixo é a de rotas REAIS do app com o AgentOS (agno 2.5.8) montado com um
-Agent e um Team de modelo fake e com ``db=`` (o db de sessões, assíncrono, como em produção desde
-o F2-08: ``/schedules`` e ``/approvals`` são as rotas reais; ``/components`` segue stub). Rota nova
-no agno (ou no app) quebra ``test_tabela_cobre_todas_as_rotas_do_app``: classifique-a aqui antes de
-seguir.
+A tabela abaixo é a de rotas REAIS do app com o AgentOS montado com um Agent e um Team de modelo
+fake e com ``db=`` (o db de sessões, assíncrono, como em produção desde o F2-08: ``/schedules`` e
+``/approvals`` são as rotas reais; ``/components`` segue stub). Rota nova no agno (ou no app) quebra
+``test_tabela_cobre_todas_as_rotas_do_app``: classifique-a aqui antes de seguir.
+
+F3-04: a tabela cobre as duas linhas do agno. ``ROUTE_TABLE`` vale nas duas; ``AGNO2_ONLY`` só no
+2.5.8 e ``AGNO3_ONLY`` só no 3.1.12 (levantada da fonte do 3.1.12, ``agno/os/app.py`` e
+``agno/os/routers``, para a mesma montagem: sem ``company=``, ``authorization=`` nem
+``user_directory=``, e com a fila não durável, que deixa ``/queue`` como stub 503). A cobertura
+compara o app com as linhas da versão instalada; a classificação roda nas linhas das duas.
 """
 
 from __future__ import annotations
 
 import re
 from collections.abc import Iterator
+from importlib.metadata import version
 
 import pytest
 from agno.agent import Agent
@@ -92,7 +98,6 @@ POST /optimize-memories ADMIN
 GET / RUN
 GET /health RUN
 GET /config RUN
-GET /models RUN
 GET /status RUN
 POST /agui RUN
 POST /agui/{entity_id} RUN
@@ -148,12 +153,73 @@ POST /approvals/{approval_id}/resolve ADMIN
 """
 
 
-def _table() -> dict[tuple[str, str], str]:
-    rows = [line.split() for line in ROUTE_TABLE.strip().splitlines()]
+# Só no agno 2.5.8: o 3.x tirou o ``GET /models``.
+AGNO2_ONLY = """
+GET /models RUN
+"""
+
+# Só no agno 3.1.12. Admin: fila durável (DLQ, requeue), contas de serviço (credenciais), arquivos
+# de todos os agentes e learnings de qualquer usuário; ``/metrics*`` e escrita em ``/knowledge*``
+# seguem a regra de antes. As novas de run (checkpoints, resume, continue, fork, compact) seguem
+# como as rotas de run e de sessão que já existem: o dono do run/sessão é a F5-02.
+AGNO3_ONLY = """
+GET /info RUN
+GET /queue ADMIN
+POST /queue ADMIN
+PUT /queue ADMIN
+PATCH /queue ADMIN
+DELETE /queue ADMIN
+GET /queue/{path:path} ADMIN
+POST /queue/{path:path} ADMIN
+PUT /queue/{path:path} ADMIN
+PATCH /queue/{path:path} ADMIN
+DELETE /queue/{path:path} ADMIN
+GET /service-accounts ADMIN
+POST /service-accounts ADMIN
+DELETE /service-accounts/{service_account_id} ADMIN
+GET /filesystem/files ADMIN
+GET /filesystem/entries ADMIN
+GET /filesystem/content ADMIN
+GET /filesystem/search ADMIN
+GET /learnings ADMIN
+POST /learnings ADMIN
+GET /learnings/users ADMIN
+DELETE /learnings/users/{user_id} ADMIN
+GET /learnings/{learning_id} ADMIN
+PATCH /learnings/{learning_id} ADMIN
+DELETE /learnings/{learning_id} ADMIN
+GET /metrics/refresh/status ADMIN
+POST /knowledge/content/{content_id}/refresh ADMIN
+GET /sessions/filter-schema RUN
+POST /sessions/search RUN
+GET /sessions/{session_id}/run-previews RUN
+GET /sessions/{session_id}/media/{storage_key:path} RUN
+GET /agents/{agent_id}/runs/{run_id}/checkpoints RUN
+GET /agents/{agent_id}/runs/{run_id}/checkpoints/{message_index} RUN
+POST /agents/{agent_id}/runs/{run_id}/resume RUN
+POST /agents/{agent_id}/sessions/{session_id}/fork RUN
+POST /agents/{agent_id}/sessions/{session_id}/compact RUN
+GET /teams/{team_id}/runs/{run_id}/checkpoints RUN
+GET /teams/{team_id}/runs/{run_id}/checkpoints/{message_index} RUN
+POST /teams/{team_id}/runs/{run_id}/continue RUN
+POST /teams/{team_id}/runs/{run_id}/resume RUN
+POST /teams/{team_id}/sessions/{session_id}/fork RUN
+GET /workflows/{workflow_id}/runs RUN
+POST /workflows/{workflow_id}/runs/{run_id}/continue RUN
+POST /workflows/{workflow_id}/runs/{run_id}/resume RUN
+"""
+
+
+def _table(text: str) -> dict[tuple[str, str], str]:
+    rows = [line.split() for line in text.strip().splitlines()]
     return {(method, path): access for method, path, access in rows}
 
 
-TABLE = _table()
+COMMON, ONLY_AGNO2, ONLY_AGNO3 = _table(ROUTE_TABLE), _table(AGNO2_ONLY), _table(AGNO3_ONLY)
+AGNO_MAJOR = int(version("agno").split(".")[0])
+# Rotas do app na versão instalada (cobertura) e de todas as versões (classificação).
+TABLE = {**COMMON, **(ONLY_AGNO3 if AGNO_MAJOR >= 3 else ONLY_AGNO2)}
+ALL_VERSIONS = {**COMMON, **ONLY_AGNO2, **ONLY_AGNO3}
 
 
 def _sample(template: str) -> str:
@@ -204,9 +270,9 @@ def test_tabela_cobre_todas_as_rotas_do_app(mounted_app: FastAPI):
 
 
 @pytest.mark.parametrize("docs_require_admin", [True, False], ids=["fora-de-development", "development"])
-@pytest.mark.parametrize(("method", "template"), sorted(TABLE), ids=str)
+@pytest.mark.parametrize(("method", "template"), sorted(ALL_VERSIONS), ids=str)
 def test_toda_rota_real_cai_na_classe_esperada(method: str, template: str, docs_require_admin: bool):
-    expected = _expected(TABLE[(method, template)], docs_require_admin=docs_require_admin)
+    expected = _expected(ALL_VERSIONS[(method, template)], docs_require_admin=docs_require_admin)
     http_method = "GET" if method == "WS" else method
 
     assert classify_route(http_method, _sample(template), docs_require_admin=docs_require_admin) is expected
@@ -223,6 +289,10 @@ def test_toda_rota_real_cai_na_classe_esperada(method: str, template: str, docs_
         ("GET", "/metricsx"),
         ("DELETE", "/sessionsx"),
         ("POST", "/optimize-memoriesx"),
+        ("GET", "/queuex"),
+        ("POST", "/service-accountsx"),
+        ("GET", "/filesystemx/files"),
+        ("GET", "/learningsx"),
         ("OPTIONS", "/agents"),
     ],
 )

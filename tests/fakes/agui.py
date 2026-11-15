@@ -27,6 +27,16 @@ from pydantic import TypeAdapter
 
 _EVENT = TypeAdapter(Event)
 TERMINALS = (EventType.RUN_FINISHED, EventType.RUN_ERROR)
+# Contrato do F3-04: os únicos tipos que o AG-UI do app emite, nas duas linhas do agno (``RAW``,
+# ``CUSTOM``, estado e raciocínio do 3.x ficam de fora). Lista própria do teste, não a do ``src``.
+ALLOWED_TYPES = frozenset(
+    {
+        "RUN_STARTED", "RUN_FINISHED", "RUN_ERROR",
+        "TEXT_MESSAGE_START", "TEXT_MESSAGE_CONTENT", "TEXT_MESSAGE_END",
+        "TOOL_CALL_START", "TOOL_CALL_ARGS", "TOOL_CALL_END", "TOOL_CALL_RESULT",
+        "STEP_STARTED", "STEP_FINISHED",
+    }
+)
 
 
 def parse_agui_sse(text: str) -> list[BaseEvent]:
@@ -41,8 +51,10 @@ def parse_agui_sse(text: str) -> list[BaseEvent]:
 
 
 def assert_valid_run(events: list[BaseEvent]) -> None:
-    """Regras de ciclo de vida do AG-UI: RUN_STARTED primeiro, um só terminal, no fim;
-    mensagens de texto e tool calls abertas e fechadas, na ordem."""
+    """Regras de ciclo de vida do AG-UI: só tipos da lista, RUN_STARTED primeiro, um só terminal,
+    no fim; mensagens de texto e tool calls abertas e fechadas, na ordem."""
+    unexpected = {e.type.value for e in events} - ALLOWED_TYPES
+    assert not unexpected, f"tipos de evento fora da lista: {sorted(unexpected)}"
     _assert_run_envelope(events)
     _assert_text_messages(events[1:-1])
     _assert_tool_calls(events[1:-1])

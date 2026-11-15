@@ -162,7 +162,7 @@ async def test_cancel_de_run_background_registrado_antes_da_task_cancela_e_limpa
     app = _mount(monkeypatch, [_agent("bg", _TickingModel(), db=db)], [])
 
     async with _client(app) as client:
-        started = await client.post("/agents/bg/runs", data={"message": "oi", "background": "true"})
+        started = await client.post("/agents/bg/runs", data={"message": "oi", "background": "true", "stream": "false"})
         assert started.status_code == 202, started.text
         body = started.json()
         cancel = await client.post(f"/agents/bg/runs/{body['run_id']}/cancel")
@@ -179,7 +179,7 @@ async def test_run_background_que_termina_sozinho_nao_deixa_resto(monkeypatch: p
     app = _mount(monkeypatch, [_agent("bg", FakeChatModel(responses=["pronto"]), db=db)], [])
 
     async with _client(app) as client:
-        started = await client.post("/agents/bg/runs", data={"message": "oi", "background": "true"})
+        started = await client.post("/agents/bg/runs", data={"message": "oi", "background": "true", "stream": "false"})
         assert started.status_code == 202
         await _wait_for(lambda: _tracked() == {}, "cleanup do run de background")
         late = await client.post(f"/agents/bg/runs/{started.json()['run_id']}/cancel")

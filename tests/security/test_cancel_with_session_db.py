@@ -114,7 +114,7 @@ async def test_cancel_de_run_de_background_com_db_de_sessoes_cancela_e_o_run_fic
 ) -> None:
     async with _client(app) as client:
         started = await client.post(
-            "/agents/tic/runs", data={"message": "oi", "background": "true", "user_id": "ana"}
+            "/agents/tic/runs", data={"message": "oi", "background": "true", "stream": "false", "user_id": "ana"}
         )
         assert started.status_code == 202, started.text
         body = started.json()
