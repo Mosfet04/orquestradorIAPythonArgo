@@ -116,6 +116,26 @@ Never edit a `.lock` file by hand. Use the `pip-tools` installed by the dev lock
 pip install --dry-run --require-hashes -r requirements.lock -r requirements-dev.lock
 ```
 
+#### Temporary venv to try agno 3.x (dual-run, F3)
+
+To run the version-neutral tests against agno 3.x without touching `.venv` or the committed locks, resolve a throwaway lock in a temp directory (outside the repo) and install it in a separate venv. `requirements.in` pins `agno==2.5.8` exactly, so the temp copy swaps that line; the dev copy keeps `-c requirements.lock`, which then points at the temp runtime lock. Nothing here is committed.
+
+```bash
+T=$(mktemp -d); V=$(mktemp -d)   # locks (temporary) and venv (kept for the runs), both outside the repo
+sed 's/^agno==2.5.8/agno==3.1.12/' requirements.in > $T/requirements.in
+printf 'python-multipart\nsqlalchemy\n' >> $T/requirements.in   # agno 3.x needs them; F3-05 adds them to the real file
+cp requirements.lock requirements-dev.in requirements-dev.lock $T/
+.venv/bin/pip-compile --upgrade-package agno==3.1.12 --generate-hashes --allow-unsafe --strip-extras \
+    --output-file=$T/requirements.lock $T/requirements.in
+.venv/bin/pip-compile --upgrade-package agno==3.1.12 --generate-hashes --allow-unsafe --strip-extras \
+    --output-file=$T/requirements-dev.lock $T/requirements-dev.in
+.venv/bin/python -m venv $V
+$V/bin/pip install --require-hashes -r $T/requirements.lock -r $T/requirements-dev.lock
+rm -rf "$T"   # the temp locks are not needed after the install
+$V/bin/python -m pytest -m "not live" -n auto   # expected to fail until the F3-05 adaptation
+# when finished: rm -rf "$V"
+```
+
 Without `--upgrade`/`--upgrade-package`, `pip-compile` keeps the current pins, so it never
 fixes a vulnerable version by itself. Every remaining `pip-audit` finding must be
 justified in the PR description (why it does not apply or why it cannot be fixed yet).
