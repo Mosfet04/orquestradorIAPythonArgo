@@ -8,6 +8,7 @@
    "CORSMiddleware",
    "ApiKeyAuthMiddleware",
    "TrailingSlashMiddleware",
+   "RunAuthorizationMiddleware",
    "MetricsMiddleware",
    "ExceptionMiddleware",
    "AsyncExitStackMiddleware",
@@ -16,12 +17,14 @@
   ],
   "cors": [
    {
-    "allow_credentials": true,
-    "allow_headers": [
-     "Authorization",
-     "Content-Type",
-     "X-API-Key"
+    "allow_origins": [
+     "http://localhost:3000",
+     "http://localhost:7777",
+     "https://app.agno.com",
+     "https://os.agno.com",
+     "https://www.agno.com"
     ],
+    "allow_credentials": true,
     "allow_methods": [
      "DELETE",
      "GET",
@@ -30,12 +33,10 @@
      "POST",
      "PUT"
     ],
-    "allow_origins": [
-     "http://localhost:3000",
-     "http://localhost:7777",
-     "https://app.agno.com",
-     "https://os.agno.com",
-     "https://www.agno.com"
+    "allow_headers": [
+     "Authorization",
+     "Content-Type",
+     "X-API-Key"
     ],
     "expose_headers": [
      "Deprecation",
@@ -176,7 +177,7 @@
    ],
    [
     "APIRoute",
-    "/config",
+    "/info",
     [
      "GET"
     ],
@@ -186,7 +187,7 @@
    ],
    [
     "APIRoute",
-    "/models",
+    "/config",
     [
      "GET"
     ],
@@ -207,6 +208,26 @@
    [
     "APIRoute",
     "/agents/{agent_id}/runs/{run_id}/continue",
+    [
+     "POST"
+    ],
+    {
+     "POST": "RUN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/agents/{agent_id}/sessions/{session_id}/fork",
+    [
+     "POST"
+    ],
+    {
+     "POST": "RUN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/agents/{agent_id}/sessions/{session_id}/compact",
     [
      "POST"
     ],
@@ -246,6 +267,36 @@
    ],
    [
     "APIRoute",
+    "/agents/{agent_id}/runs/{run_id}/checkpoints",
+    [
+     "GET"
+    ],
+    {
+     "GET": "RUN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/agents/{agent_id}/runs/{run_id}/checkpoints/{message_index}",
+    [
+     "GET"
+    ],
+    {
+     "GET": "RUN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/agents/{agent_id}/runs/{run_id}/resume",
+    [
+     "POST"
+    ],
+    {
+     "POST": "RUN"
+    }
+   ],
+   [
+    "APIRoute",
     "/agents/{agent_id}/runs",
     [
      "GET"
@@ -257,6 +308,36 @@
    [
     "APIRoute",
     "/teams/{team_id}/runs",
+    [
+     "POST"
+    ],
+    {
+     "POST": "RUN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/teams/{team_id}/runs/{run_id}/resume",
+    [
+     "POST"
+    ],
+    {
+     "POST": "RUN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/teams/{team_id}/runs/{run_id}/continue",
+    [
+     "POST"
+    ],
+    {
+     "POST": "RUN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/teams/{team_id}/sessions/{session_id}/fork",
     [
      "POST"
     ],
@@ -287,6 +368,26 @@
    [
     "APIRoute",
     "/teams/{team_id}/runs/{run_id}",
+    [
+     "GET"
+    ],
+    {
+     "GET": "RUN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/teams/{team_id}/runs/{run_id}/checkpoints",
+    [
+     "GET"
+    ],
+    {
+     "GET": "RUN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/teams/{team_id}/runs/{run_id}/checkpoints/{message_index}",
     [
      "GET"
     ],
@@ -336,6 +437,16 @@
    ],
    [
     "APIRoute",
+    "/workflows/{workflow_id}/runs/{run_id}/continue",
+    [
+     "POST"
+    ],
+    {
+     "POST": "RUN"
+    }
+   ],
+   [
+    "APIRoute",
     "/workflows/{workflow_id}/runs/{run_id}/cancel",
     [
      "POST"
@@ -346,7 +457,27 @@
    ],
    [
     "APIRoute",
+    "/workflows/{workflow_id}/runs/{run_id}/resume",
+    [
+     "POST"
+    ],
+    {
+     "POST": "RUN"
+    }
+   ],
+   [
+    "APIRoute",
     "/workflows/{workflow_id}/runs/{run_id}",
+    [
+     "GET"
+    ],
+    {
+     "GET": "RUN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/workflows/{workflow_id}/runs",
     [
      "GET"
     ],
@@ -366,12 +497,100 @@
    ],
    [
     "APIRoute",
+    "/queue",
+    [
+     "GET"
+    ],
+    {
+     "GET": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/queue",
+    [
+     "POST"
+    ],
+    {
+     "POST": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/queue",
+    [
+     "PUT"
+    ],
+    {
+     "PUT": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/queue",
+    [
+     "PATCH"
+    ],
+    {
+     "PATCH": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/queue",
+    [
+     "DELETE"
+    ],
+    {
+     "DELETE": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/queue/{path:path}",
+    [
+     "DELETE",
+     "GET",
+     "PATCH",
+     "POST",
+     "PUT"
+    ],
+    {
+     "DELETE": "ADMIN",
+     "GET": "ADMIN",
+     "PATCH": "ADMIN",
+     "POST": "ADMIN",
+     "PUT": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
     "/sessions",
     [
      "GET"
     ],
     {
      "GET": "RUN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/sessions/filter-schema",
+    [
+     "GET"
+    ],
+    {
+     "GET": "RUN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/sessions/search",
+    [
+     "POST"
+    ],
+    {
+     "POST": "RUN"
     }
    ],
    [
@@ -397,6 +616,16 @@
    [
     "APIRoute",
     "/sessions/{session_id}/runs",
+    [
+     "GET"
+    ],
+    {
+     "GET": "RUN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/sessions/{session_id}/run-previews",
     [
      "GET"
     ],
@@ -452,6 +681,16 @@
     ],
     {
      "PATCH": "RUN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/sessions/{session_id}/media/{storage_key:path}",
+    [
+     "GET"
+    ],
+    {
+     "GET": "RUN"
     }
    ],
    [
@@ -546,6 +785,76 @@
    ],
    [
     "APIRoute",
+    "/learnings",
+    [
+     "GET"
+    ],
+    {
+     "GET": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/learnings",
+    [
+     "POST"
+    ],
+    {
+     "POST": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/learnings/users",
+    [
+     "GET"
+    ],
+    {
+     "GET": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/learnings/users/{user_id}",
+    [
+     "DELETE"
+    ],
+    {
+     "DELETE": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/learnings/{learning_id}",
+    [
+     "GET"
+    ],
+    {
+     "GET": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/learnings/{learning_id}",
+    [
+     "PATCH"
+    ],
+    {
+     "PATCH": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/learnings/{learning_id}",
+    [
+     "DELETE"
+    ],
+    {
+     "DELETE": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
     "/eval-runs",
     [
      "GET"
@@ -616,6 +925,16 @@
    ],
    [
     "APIRoute",
+    "/metrics/refresh/status",
+    [
+     "GET"
+    ],
+    {
+     "GET": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
     "/knowledge/content",
     [
      "POST"
@@ -682,6 +1001,16 @@
     ],
     {
      "DELETE": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/knowledge/content/{content_id}/refresh",
+    [
+     "POST"
+    ],
+    {
+     "POST": "ADMIN"
     }
    ],
    [
@@ -802,6 +1131,46 @@
     ],
     {
      "POST": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/filesystem/files",
+    [
+     "GET"
+    ],
+    {
+     "GET": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/filesystem/entries",
+    [
+     "GET"
+    ],
+    {
+     "GET": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/filesystem/content",
+    [
+     "GET"
+    ],
+    {
+     "GET": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/filesystem/search",
+    [
+     "GET"
+    ],
+    {
+     "GET": "ADMIN"
     }
    ],
    [
@@ -1034,6 +1403,36 @@
    ],
    [
     "APIRoute",
+    "/service-accounts",
+    [
+     "POST"
+    ],
+    {
+     "POST": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/service-accounts",
+    [
+     "GET"
+    ],
+    {
+     "GET": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/service-accounts/{service_account_id}",
+    [
+     "DELETE"
+    ],
+    {
+     "DELETE": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
     "/registry",
     [
      "GET"
@@ -1077,6 +1476,7 @@
    "CORSMiddleware",
    "ApiKeyAuthMiddleware",
    "TrailingSlashMiddleware",
+   "RunAuthorizationMiddleware",
    "MetricsMiddleware"
   ]
  },
@@ -1089,6 +1489,7 @@
    "CORSMiddleware",
    "ApiKeyAuthMiddleware",
    "TrailingSlashMiddleware",
+   "RunAuthorizationMiddleware",
    "MetricsMiddleware",
    "ExceptionMiddleware",
    "AsyncExitStackMiddleware",
@@ -1097,12 +1498,10 @@
   ],
   "cors": [
    {
-    "allow_credentials": true,
-    "allow_headers": [
-     "Authorization",
-     "Content-Type",
-     "X-API-Key"
+    "allow_origins": [
+     "https://x.example.com"
     ],
+    "allow_credentials": true,
     "allow_methods": [
      "DELETE",
      "GET",
@@ -1111,8 +1510,10 @@
      "POST",
      "PUT"
     ],
-    "allow_origins": [
-     "https://x.example.com"
+    "allow_headers": [
+     "Authorization",
+     "Content-Type",
+     "X-API-Key"
     ],
     "expose_headers": [
      "Deprecation",
@@ -1253,7 +1654,7 @@
    ],
    [
     "APIRoute",
-    "/config",
+    "/info",
     [
      "GET"
     ],
@@ -1263,7 +1664,7 @@
    ],
    [
     "APIRoute",
-    "/models",
+    "/config",
     [
      "GET"
     ],
@@ -1284,6 +1685,26 @@
    [
     "APIRoute",
     "/agents/{agent_id}/runs/{run_id}/continue",
+    [
+     "POST"
+    ],
+    {
+     "POST": "RUN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/agents/{agent_id}/sessions/{session_id}/fork",
+    [
+     "POST"
+    ],
+    {
+     "POST": "RUN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/agents/{agent_id}/sessions/{session_id}/compact",
     [
      "POST"
     ],
@@ -1323,6 +1744,36 @@
    ],
    [
     "APIRoute",
+    "/agents/{agent_id}/runs/{run_id}/checkpoints",
+    [
+     "GET"
+    ],
+    {
+     "GET": "RUN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/agents/{agent_id}/runs/{run_id}/checkpoints/{message_index}",
+    [
+     "GET"
+    ],
+    {
+     "GET": "RUN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/agents/{agent_id}/runs/{run_id}/resume",
+    [
+     "POST"
+    ],
+    {
+     "POST": "RUN"
+    }
+   ],
+   [
+    "APIRoute",
     "/agents/{agent_id}/runs",
     [
      "GET"
@@ -1334,6 +1785,36 @@
    [
     "APIRoute",
     "/teams/{team_id}/runs",
+    [
+     "POST"
+    ],
+    {
+     "POST": "RUN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/teams/{team_id}/runs/{run_id}/resume",
+    [
+     "POST"
+    ],
+    {
+     "POST": "RUN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/teams/{team_id}/runs/{run_id}/continue",
+    [
+     "POST"
+    ],
+    {
+     "POST": "RUN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/teams/{team_id}/sessions/{session_id}/fork",
     [
      "POST"
     ],
@@ -1364,6 +1845,26 @@
    [
     "APIRoute",
     "/teams/{team_id}/runs/{run_id}",
+    [
+     "GET"
+    ],
+    {
+     "GET": "RUN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/teams/{team_id}/runs/{run_id}/checkpoints",
+    [
+     "GET"
+    ],
+    {
+     "GET": "RUN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/teams/{team_id}/runs/{run_id}/checkpoints/{message_index}",
     [
      "GET"
     ],
@@ -1413,6 +1914,16 @@
    ],
    [
     "APIRoute",
+    "/workflows/{workflow_id}/runs/{run_id}/continue",
+    [
+     "POST"
+    ],
+    {
+     "POST": "RUN"
+    }
+   ],
+   [
+    "APIRoute",
     "/workflows/{workflow_id}/runs/{run_id}/cancel",
     [
      "POST"
@@ -1423,7 +1934,27 @@
    ],
    [
     "APIRoute",
+    "/workflows/{workflow_id}/runs/{run_id}/resume",
+    [
+     "POST"
+    ],
+    {
+     "POST": "RUN"
+    }
+   ],
+   [
+    "APIRoute",
     "/workflows/{workflow_id}/runs/{run_id}",
+    [
+     "GET"
+    ],
+    {
+     "GET": "RUN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/workflows/{workflow_id}/runs",
     [
      "GET"
     ],
@@ -1443,12 +1974,100 @@
    ],
    [
     "APIRoute",
+    "/queue",
+    [
+     "GET"
+    ],
+    {
+     "GET": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/queue",
+    [
+     "POST"
+    ],
+    {
+     "POST": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/queue",
+    [
+     "PUT"
+    ],
+    {
+     "PUT": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/queue",
+    [
+     "PATCH"
+    ],
+    {
+     "PATCH": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/queue",
+    [
+     "DELETE"
+    ],
+    {
+     "DELETE": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/queue/{path:path}",
+    [
+     "DELETE",
+     "GET",
+     "PATCH",
+     "POST",
+     "PUT"
+    ],
+    {
+     "DELETE": "ADMIN",
+     "GET": "ADMIN",
+     "PATCH": "ADMIN",
+     "POST": "ADMIN",
+     "PUT": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
     "/sessions",
     [
      "GET"
     ],
     {
      "GET": "RUN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/sessions/filter-schema",
+    [
+     "GET"
+    ],
+    {
+     "GET": "RUN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/sessions/search",
+    [
+     "POST"
+    ],
+    {
+     "POST": "RUN"
     }
    ],
    [
@@ -1474,6 +2093,16 @@
    [
     "APIRoute",
     "/sessions/{session_id}/runs",
+    [
+     "GET"
+    ],
+    {
+     "GET": "RUN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/sessions/{session_id}/run-previews",
     [
      "GET"
     ],
@@ -1529,6 +2158,16 @@
     ],
     {
      "PATCH": "RUN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/sessions/{session_id}/media/{storage_key:path}",
+    [
+     "GET"
+    ],
+    {
+     "GET": "RUN"
     }
    ],
    [
@@ -1623,6 +2262,76 @@
    ],
    [
     "APIRoute",
+    "/learnings",
+    [
+     "GET"
+    ],
+    {
+     "GET": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/learnings",
+    [
+     "POST"
+    ],
+    {
+     "POST": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/learnings/users",
+    [
+     "GET"
+    ],
+    {
+     "GET": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/learnings/users/{user_id}",
+    [
+     "DELETE"
+    ],
+    {
+     "DELETE": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/learnings/{learning_id}",
+    [
+     "GET"
+    ],
+    {
+     "GET": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/learnings/{learning_id}",
+    [
+     "PATCH"
+    ],
+    {
+     "PATCH": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/learnings/{learning_id}",
+    [
+     "DELETE"
+    ],
+    {
+     "DELETE": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
     "/eval-runs",
     [
      "GET"
@@ -1693,6 +2402,16 @@
    ],
    [
     "APIRoute",
+    "/metrics/refresh/status",
+    [
+     "GET"
+    ],
+    {
+     "GET": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
     "/knowledge/content",
     [
      "POST"
@@ -1759,6 +2478,16 @@
     ],
     {
      "DELETE": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/knowledge/content/{content_id}/refresh",
+    [
+     "POST"
+    ],
+    {
+     "POST": "ADMIN"
     }
    ],
    [
@@ -1879,6 +2608,46 @@
     ],
     {
      "POST": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/filesystem/files",
+    [
+     "GET"
+    ],
+    {
+     "GET": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/filesystem/entries",
+    [
+     "GET"
+    ],
+    {
+     "GET": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/filesystem/content",
+    [
+     "GET"
+    ],
+    {
+     "GET": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/filesystem/search",
+    [
+     "GET"
+    ],
+    {
+     "GET": "ADMIN"
     }
    ],
    [
@@ -2111,6 +2880,36 @@
    ],
    [
     "APIRoute",
+    "/service-accounts",
+    [
+     "POST"
+    ],
+    {
+     "POST": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/service-accounts",
+    [
+     "GET"
+    ],
+    {
+     "GET": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/service-accounts/{service_account_id}",
+    [
+     "DELETE"
+    ],
+    {
+     "DELETE": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
     "/registry",
     [
      "GET"
@@ -2154,6 +2953,7 @@
    "CORSMiddleware",
    "ApiKeyAuthMiddleware",
    "TrailingSlashMiddleware",
+   "RunAuthorizationMiddleware",
    "MetricsMiddleware"
   ]
  }

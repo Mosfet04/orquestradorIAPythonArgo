@@ -16,8 +16,13 @@ sumir (o conversor do agno não mapeia ``RunError``). Aqui:
   (que pode carregar segredo de SDK) nunca vai ao cliente; este módulo loga só o tipo (o
   agno loga o texto do erro do run);
 - ``runId`` do cliente só vale em ``[A-Za-z0-9_-]{1,64}`` e se não for o de um run em
-  andamento (F1-10); senão, o servidor gera um UUID4 e devolve no ``RUN_STARTED``;
-- ``GET /status`` da interface do agno é mantido (``{"status": "available"}``).
+  andamento (F1-10) nem o de um run já gravado (F3-05: no agno 3.x a chave do run gravado é o
+  ``run_id``); senão, o servidor gera um UUID4 e devolve no ``RUN_STARTED``;
+- ``GET /status`` da interface do agno é mantido (``{"status": "available"}``);
+- ``threadId`` de uma sessão que já é de outro ``user_id`` é recusado com 404 antes do stream
+  (``assert_session_writable`` do agno 3.x, o mesmo do AG-UI e das rotas REST dele, F3-05): no
+  3.x os runs vão para ``agno_runs`` sem o predicado de dono do ``upsert_session`` e o turno de
+  quem pediu entraria no histórico do dono.
 
 Entrada e saída neutras à versão do agno (F3-04):
 
@@ -26,7 +31,7 @@ Entrada e saída neutras à versão do agno (F3-04):
   ``tools`` e ``context`` do cliente e mídia ficam de fora: o histórico vem da sessão
   (``threadId``), como no AG-UI do agno 3.x, e o cliente não injeta mensagem de assistente,
   estado de sessão, tool para o modelo chamar nem URL para o servidor baixar;
-- a saída usa o conversor de eventos do agno (``agno/os/interfaces/agui/utils.py`` no 2.5.8) e
+- a saída usa o conversor de eventos do agno (``agno/os/interfaces/agui/stream.py`` no 3.x) e
   passa por ``filter_agui_events``: só os tipos de ``EMITTED_EVENT_TYPES`` chegam ao cliente
   (``RAW``, ``CUSTOM``, estado e raciocínio do 3.x são descartados, com log ``debug`` só do tipo:
   nenhum ``CUSTOM`` é previsto hoje) e o terminal é decidido aqui (o ``RUN_ERROR`` do conversor
@@ -56,7 +61,10 @@ from ag_ui.core import (
     UserMessage,
 )
 from ag_ui.encoder import EventEncoder
-from agno.os.interfaces.agui.utils import async_stream_agno_response_as_agui_events
+from agno.db.base import AsyncBaseDb
+from agno.os.interfaces.agui.handlers import is_completion_event
+from agno.os.interfaces.agui.stream import async_stream_agno_response_as_agui_events
+from agno.os.middleware.user_scope import assert_session_writable
 from agno.run.agent import RunCancelledEvent as AgentRunCancelledEvent
 from agno.run.agent import RunErrorEvent as AgentRunErrorEvent
 from agno.run.agent import RunOutputEvent
@@ -116,7 +124,7 @@ def build_agui_router(served: ServedEntities, logger: ILogger) -> APIRouter:
     router = APIRouter(tags=["AGUI"])
     encoder = EventEncoder()
 
-    def stream(entity_id: str, entity: Entity, run_input: RunAgentInput) -> StreamingResponse:
+    async def stream(entity_id: str, entity: Entity, run_input: RunAgentInput) -> StreamingResponse:
         run_id = resolve_run_id(run_input.run_id)
         if run_id != run_input.run_id:
             logger.info(
@@ -135,9 +143,33 @@ def build_agui_router(served: ServedEntities, logger: ILogger) -> APIRouter:
                 entity_id=entity_id,
                 run_id=run_id,
             )
+        user_id = _forwarded_user_id(run_input, entity_id, run_id, logger)
+        try:
+            # Antes do stream, para a recusa ser um 404 de verdade. Sem bypass de admin: a chave da
+            # API não é uma identidade (F5). Falha ao ler sobe (500): sem conferir o dono, não roda.
+            db = entity.db
+            await assert_session_writable(db, run_input.thread_id, user_id or entity.user_id)
+            stored = isinstance(db, AsyncBaseDb) and await db.get_run(run_id, deserialize=False) is not None
+        except HTTPException:
+            raise
+        except Exception as exc:
+            # Nunca str(exc): o texto do driver pode trazer a URI do Mongo.
+            logger.error(
+                "Falha ao conferir a sessão e o runId do AG-UI",
+                entity_id=entity_id,
+                run_id=run_id,
+                error_type=type(exc).__name__,
+            )
+            raise
+        if stored:
+            # O run gravado não é regravado por um run novo: o de outro dono seria recusado na
+            # gravação (``SessionDb.upsert_run``) e este run ficaria fora do histórico; o do próprio
+            # dono seria trocado. Não vê o run só do campo legado ``runs`` da sessão (F3-06).
+            run_id = str(uuid.uuid4())
+            logger.info("runId do cliente já gravado; gerado pelo servidor", entity_id=entity_id, run_id=run_id)
 
         async def body() -> AsyncIterator[str]:
-            async for event in _run_events(entity_id, entity, run_input, run_id, logger):
+            async for event in _run_events(entity_id, entity, run_input, run_id, user_id, logger):
                 yield encoder.encode(event)
 
         return StreamingResponse(body(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
@@ -147,7 +179,7 @@ def build_agui_router(served: ServedEntities, logger: ILogger) -> APIRouter:
         entity = served.by_id.get(entity_id)
         if entity is None:
             raise HTTPException(status_code=404, detail=_ENTITY_NOT_FOUND)
-        return stream(entity_id, entity, run_input)
+        return await stream(entity_id, entity, run_input)
 
     @router.post(AGUI_PATH, name="agui_run_default", deprecated=True)
     async def run_default(run_input: RunAgentInput) -> StreamingResponse:
@@ -155,7 +187,7 @@ def build_agui_router(served: ServedEntities, logger: ILogger) -> APIRouter:
         if default is None:
             raise HTTPException(status_code=404, detail=_ENTITY_NOT_FOUND)
         default_id, entity = default
-        response = stream(default_id, entity, run_input)
+        response = await stream(default_id, entity, run_input)
         response.headers["Deprecation"] = "true"
         # Id vem da config (pode ter caractere fora de latin-1): no header vai como URI.
         response.headers["Link"] = f'<{AGUI_PATH}/{quote(default_id, safe="")}>; rel="successor-version"'
@@ -170,13 +202,12 @@ def build_agui_router(served: ServedEntities, logger: ILogger) -> APIRouter:
 
 
 async def _run_events(
-    entity_id: str, entity: Entity, run_input: RunAgentInput, run_id: str, logger: ILogger
+    entity_id: str, entity: Entity, run_input: RunAgentInput, run_id: str, user_id: str | None, logger: ILogger
 ) -> AsyncIterator[BaseEvent]:
     thread_id = run_input.thread_id
     yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=thread_id, run_id=run_id)
     failures: list[AgnoEvent] = []
     try:
-        user_id = _forwarded_user_id(run_input, entity_id, run_id, logger)
         stream = _start_run(entity, run_input, run_id, user_id)
         converted = async_stream_agno_response_as_agui_events(
             response_stream=_watch_failure(stream, run_id, failures), thread_id=thread_id, run_id=run_id
@@ -282,10 +313,17 @@ def _start_run(
 async def _watch_failure(
     stream: AsyncIterator[AgnoEvent], run_id: str, failures: list[AgnoEvent]
 ) -> AsyncIterator[AgnoEvent]:
-    """Repassa o stream e guarda a falha do próprio run (a de um membro tem outro run_id)."""
+    """Repassa o stream e guarda a falha do próprio run (a de um membro tem outro run_id).
+
+    O terminal de um membro (``RunCompleted``/``RunError``/``RunPaused`` com outro run_id) não passa:
+    o team do agno 3.x repassa os eventos do membro e o conversor tomaria o último terminal como o
+    do run (erro de um membro viraria ``RUN_ERROR`` do team que respondeu).
+    """
     async for chunk in stream:
-        if isinstance(chunk, _FAILURE_EVENTS) and chunk.run_id == run_id:
+        if chunk.run_id == run_id and isinstance(chunk, _FAILURE_EVENTS):
             failures.append(chunk)
+            continue
+        if chunk.run_id != run_id and is_completion_event(chunk):
             continue
         yield chunk
 

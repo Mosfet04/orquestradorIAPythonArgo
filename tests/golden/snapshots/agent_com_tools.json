@@ -31,7 +31,6 @@
         }
       ],
       "read_chat_history": false,
-      "reasoning": false,
       "search_knowledge": false,
       "store_events": true,
       "store_history_messages": true,

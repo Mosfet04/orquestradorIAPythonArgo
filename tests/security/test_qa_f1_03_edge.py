@@ -13,6 +13,7 @@ import socket
 import subprocess
 import sys
 import textwrap
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -140,6 +141,10 @@ def test_bloqueador_de_rede_enxerga_a_telemetria_ligada(monkeypatch: pytest.Monk
 
     loopback_client(app).post("/agents/agente-1/runs", data={"message": "oi", "stream": "false"})
 
+    # Agno 3.x manda a telemetria numa thread (fila): espera o envio em vez de olhar só na volta do run.
+    deadline = time.monotonic() + 5
+    while not network.mentions("os-api.agno.com") and time.monotonic() < deadline:
+        time.sleep(0.01)
     assert network.mentions("os-api.agno.com")
 
 

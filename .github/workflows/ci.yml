@@ -127,12 +127,11 @@ jobs:
       - name: bandit
         run: bandit -c pyproject.toml -r src
 
-      # Exceção única, até a F3: PYSEC-2026-2333 (agno) está no backend ClickHouse do
-      # agno, que este projeto não usa; sem versão corrigida. Qualquer outra vulnerabilidade
-      # falha o job. Remover o --ignore-vuln quando o agno for atualizado (F3).
+      # Sem exceção: qualquer vulnerabilidade conhecida falha o job (o PYSEC-2026-2333 do agno
+      # saiu com o agno 3.1.12, F3-05).
       - name: pip-audit
         if: ${{ !cancelled() }}
-        run: pip-audit -r requirements.lock --require-hashes --disable-pip --ignore-vuln PYSEC-2026-2333
+        run: pip-audit -r requirements.lock --require-hashes --disable-pip
 
   # Job isolado: o segredo nunca divide o runner com checkout, `pip install` ou
   # código do repositório. Só roda em push ou PR do próprio repositório (em PR de

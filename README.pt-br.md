@@ -5,13 +5,13 @@
 ![Python](https://img.shields.io/badge/python-v3.11+-blue.svg)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat&logo=FastAPI&labelColor=555&logoColor=white)
 ![MongoDB](https://img.shields.io/badge/-MongoDB-4DB33D?style=flat&logo=mongodb&logoColor=FFFFFF)
-![agno](https://img.shields.io/badge/agno_v2.5-AI_Framework-purple)
+![agno](https://img.shields.io/badge/agno_v3.1-AI_Framework-purple)
 ![Grafana](https://img.shields.io/badge/-Grafana-000?&logo=Grafana)
 [![Codacy Badge](https://app.codacy.com/project/badge/Grade/f3eb9c4f1d5e4960a5168e611dba7976)](https://app.codacy.com/gh/Mosfet04/orquestradorIAPythonArgo/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
 [![Codacy Badge](https://app.codacy.com/project/badge/Coverage/f3eb9c4f1d5e4960a5168e611dba7976)](https://app.codacy.com/gh/Mosfet04/orquestradorIAPythonArgo/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_coverage)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
-*Orquestrador de agentes de IA construído com arquitetura Onion (Clean Architecture), princípios SOLID e o framework **[agno v2.5](https://github.com/agno-agi/agno)***
+*Orquestrador de agentes de IA construído com arquitetura Onion (Clean Architecture), princípios SOLID e o framework **[agno v3.1](https://github.com/agno-agi/agno)***
 
 [🇺🇸 English](README.en.md) | [🚀 Início Rápido](#-início-rápido) | [📚 Arquitetura](#-arquitetura)
 
@@ -99,7 +99,7 @@ python app.py
 
 | Arquivo | Papel |
 |---|---|
-| `requirements.in` | Dependências diretas de runtime (`agno==2.5.8` exato) |
+| `requirements.in` | Dependências diretas de runtime (`agno==3.1.12` exato) |
 | `requirements.lock` | Gerado por `pip-compile --generate-hashes`; versões exatas + hashes |
 | `requirements-dev.in` / `requirements-dev.lock` | Testes e ferramentas de qualidade (pytest, pytest-randomly, pytest-xdist, ruff, mypy, import-linter, bandit, pip-audit, diff-cover, respx, pip-tools) |
 | `requirements.txt` | Só compatibilidade: `-r requirements.lock` |
@@ -666,7 +666,7 @@ Toda rota exige chave de API, exceto `GET /livez` e o preflight CORS (`OPTIONS` 
 - **Chaves**: `API_KEY_RUN` (uso dos agentes) e `API_KEY_ADMIN` (operação; vale também onde a run vale). As duas juntas, diferentes entre si, com ao menos 32 caracteres ASCII visíveis. Gere cada uma com `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
 - **Credencial**: `Authorization: Bearer <chave>` ou `X-API-Key: <chave>`. Com os dois headers vale o Bearer.
 - **Rotas admin** (só `API_KEY_ADMIN`): `/admin/*`, `/metrics` e `/metrics/*`, `/databases/*`, `/eval-runs*`, `/components*`, `/schedules*`, `/registry*`, `/approvals*`, `POST /optimize-memories` (reescreve memórias de qualquer `user_id` com o modelo que o request escolher); `/queue*`, `/service-accounts*`, `/filesystem*` e `/learnings*` (só existem no Agno 3.x: fila durável, contas de serviço, arquivos dos agentes e learnings de qualquer usuário); `DELETE` em `/sessions*` e `/memories*`; `POST|PUT|PATCH|DELETE` em `/knowledge*` (inclusive `POST /knowledge/search`, que devolve o texto dos chunks de toda a base e gera custo de embedding); `/docs`, `/redoc` e `/openapi.json` fora de `ENVIRONMENT=development`.
-- **`/schedules*`, `/approvals*` e `/components*`**: o AgentOS recebe o db de sessões (`db=`), então `/schedules*` e `/approvals*` são as rotas reais dele (não mais um stub genérico), todas só com a chave admin. Com MongoDB, o agno 2.5.8 não implementa agenda nem aprovações: elas respondem `503` (`... not supported by the configured database`); método ou caminho que a rota real não tem responde `405`/`404`. `/components*` continua `503`: o db é assíncrono e, por isso, o AgentOS não grava nem carrega do banco agente ou team que não esteja na configuração.
+- **`/schedules*`, `/approvals*` e `/components*`**: o AgentOS recebe o db de sessões (`db=`), então `/schedules*` e `/approvals*` são as rotas reais dele (não mais um stub genérico), todas só com a chave admin. Com MongoDB, o agno 3.1.12 implementa a agenda (`/schedules` responde `200`), mas não as aprovações: `/approvals*` responde `503` (`... not supported by the configured database`); método ou caminho que a rota real não tem responde `405`/`404`. `/components*` continua `503`: o db é assíncrono e, por isso, o AgentOS não grava nem carrega do banco agente ou team que não esteja na configuração.
 - **Rotas run**: todo o resto (runs de agente/team, `/agui` e `/agui/{id}`, `/agents`, `/teams`, `/sessions`, `/memories` exceto `DELETE`, `/config`, `/health`, WebSocket `/workflows/ws`...).
 - **Respostas**: `401 {"detail":"unauthorized"}` + `WWW-Authenticate: Bearer` sem credencial ou com chave inválida; `403 {"detail":"forbidden"}` com a chave run em rota admin. WebSocket sem chave válida é recusado no handshake (`websocket.close` 1008 antes do accept; o servidor responde 403). O WebSocket só autentica por header (`Authorization`/`X-API-Key`): navegador não manda header customizado no handshake, então com chaves configuradas o `/workflows/ws` só é usável por cliente não-navegador. O 401 de uma origem permitida leva os headers CORS.
 - **Fail-closed**: sem nenhuma chave o app só inicia com `APP_HOST` em loopback (`127.0.0.0/8`, `::1`, `localhost`) **e** `ENVIRONMENT` `development` ou `test`; nesse modo dev local não há chave (aviso no log), mas cada request só passa se o cliente, o endereço local do servidor e o header `Host` (`localhost`, `127.x`, `[::1]`, porta opcional) forem loopback (socket UNIX não é suportado nesse modo) e se não vier de outro site no navegador: `Origin` presente precisa estar em `CORS_ALLOWED_ORIGINS` (origem permitida passa mesmo `cross-site`, como os.agno.com → localhost) e, sem `Origin`, `Sec-Fetch-Site: cross-site` é recusado. O resto recebe 401 (WebSocket: 1008). `/livez` segue público. Em qualquer outro caso (ex.: `0.0.0.0`, ou `production` no loopback) o app recusa iniciar com erro claro. Só uma das chaves também é erro.
@@ -718,12 +718,12 @@ Detalhes do AG-UI (F1-08):
 
 - A resposta SSE não carrega header CORS próprio: vale o `CORS_ALLOWED_ORIGINS` do app (origem fora da lista não recebe `Access-Control-Allow-Origin`).
 - **Entrada (contrato novo, F3-04)**: o run recebe só o texto da última mensagem `user` de `messages` (partes `text` juntadas por quebra de linha; sem mensagem `user`, texto vazio) e `forwardedProps.user_id`. O histórico da conversa vem da sessão gravada no servidor para o `threadId` (entidade com histórico ligado, `add_history_to_context`), não das mensagens anteriores que o cliente manda: mensagens `assistant`, `system`, `tool` e `user` anteriores são ignoradas. `state`, `tools` (client tools), `context` e mídia (imagem, áudio, vídeo, documento) também são ignorados. Até o F3-04 o histórico enviado pelo cliente ia ao modelo e `state` virava `session_state`; o AG-UI do Agno 3.x segue a mesma regra do histórico.
-- **Saída**: só os tipos de evento `RUN_STARTED`, `RUN_FINISHED`, `RUN_ERROR`, `TEXT_MESSAGE_START`/`CONTENT`/`END`, `TOOL_CALL_START`/`ARGS`/`END`/`RESULT` e `STEP_STARTED`/`STEP_FINISHED` (raciocínio, sem conteúdo). `RAW`, `CUSTOM`, estado (`STATE_*`) e raciocínio com conteúdo (`REASONING_*`, do Agno 3.x) são descartados.
+- **Saída**: só os tipos de evento `RUN_STARTED`, `RUN_FINISHED`, `RUN_ERROR`, `TEXT_MESSAGE_START`/`CONTENT`/`END`, `TOOL_CALL_START`/`ARGS`/`END`/`RESULT` e `STEP_STARTED`/`STEP_FINISHED` (raciocínio, sem conteúdo). `RAW`, `CUSTOM`, estado (`STATE_*`) e raciocínio com conteúdo (`REASONING_*`, do Agno 3.x) são descartados. Com `reasoning: true`, o texto do raciocínio chega mesmo assim: as tools `think`/`analyze` saem como `TOOL_CALL_*` e o texto vai nos argumentos (`TOOL_CALL_ARGS`).
 - Falha do run (erro do modelo/SDK, run recusado por guardrail, ex.: falta de `user_id`, ou run cancelado) termina com o evento `RUN_ERROR` no lugar do `RUN_FINISHED`. `code`: `input_check_error`/`output_check_error` (a `message` é a do guardrail, até 300 caracteres), `run_cancelled` ou `run_error` (mensagem genérica; o texto da exceção só vai para o log, pelo tipo).
 - `runId` do cliente só é aceito com 1 a 64 caracteres em `[A-Za-z0-9_-]` (cabe um UUID). Vazio ou fora disso, o servidor gera um UUID4 e devolve no `RUN_STARTED`/`RUN_FINISHED`: use o `runId` dos eventos, não o enviado. `runId` ausente do corpo segue sendo 422 (o campo é obrigatório no protocolo).
 - `user_id` continua vindo de `forwardedProps.user_id` (ver [Memória Inteligente](#memória-inteligente)); valor que não seja string é descartado (o run segue sem `user_id`; entidade com memória de usuário o recusa).
 - `GET /config` não lista o AG-UI (a lista `interfaces` vem vazia): use `POST /agui/{id}` com os ids de `GET /agents` e `GET /teams`.
-- Cancelar um run AG-UI: `POST /agents/{id}/runs/{runId}/cancel` (ou `/teams/...`) enquanto ele está em andamento. Antes de começar ou depois de terminar, a resposta é 404 e o pedido não fica guardado: cancelar antes do início não pré-cancela um run futuro com aquele `runId`. Um `runId` que já é o de um run em andamento é trocado por um UUID do servidor (use o `runId` dos eventos); dois pedidos simultâneos com o mesmo `runId` ainda podem colidir. Ainda não há dono do run: qualquer chave run cancela um run em andamento cujo `runId` conheça (amarrar à credencial fica para a F5).
+- Cancelar um run AG-UI: `POST /agents/{id}/runs/{runId}/cancel` (ou `/teams/...`) enquanto ele está em andamento. Antes de começar ou depois de terminar, a resposta é 404 e o pedido não fica guardado: cancelar antes do início não pré-cancela um run futuro com aquele `runId`. Um `runId` que já é o de um run em andamento ou de um run já gravado (de qualquer sessão ou usuário; desde o Agno 3.x o `run_id` é a chave do run gravado) é trocado por um UUID do servidor (use o `runId` dos eventos); dois pedidos simultâneos com o mesmo `runId` ainda podem colidir. Ainda não há dono do run: qualquer chave run cancela um run em andamento cujo `runId` conheça (amarrar à credencial fica para a F5).
 - No navegador, os headers de resposta expostos pelo CORS são `Deprecation` e `Link` (aliases deprecated) e `ETag` e `Runtime-Revision` (escrita de config, lidos pelo playground).
 
 ### Rotas Administrativas (customizadas)
@@ -832,7 +832,7 @@ Esta é a collection que você gerencia. Cada documento define um agente:
 
 | Campo | Tipo | Obrigatório | Descrição |
 |---|---|---|---|
-| `id` | string | ✅ | Identificador único do agente |
+| `id` | string | ✅ | Identificador único do agente. Os ids reservados do agno 3.x (`os-manager-internal`, `platform-builder-internal`, `platform-manager-internal`, `company-manager-internal`, `product-manager-internal`) são recusados na validação (documento inválido) |
 | `nome` | string | ✅ | Nome de exibição |
 | `factoryIaModel` | string | ✅ | Provider do modelo: `ollama`, `openai`, `anthropic`, `gemini`, `groq`, `azure`, `openai_compatible` |
 | `model` | string | ✅ | ID do modelo (ex: `gpt-4`, `llama3.2:latest`, `gemini-3-flash-preview`) |
@@ -850,7 +850,7 @@ Esta é a collection que você gerencia. Cada documento define um agente:
 | `add_history_to_context` | bool | ❌ | Envia ao modelo as últimas execuções da sessão (default `true`) |
 | `num_history_runs` | int | ❌ | Quantas execuções anteriores entram no contexto: inteiro de 1 a 50 (default `5`); para não enviar histórico, use `add_history_to_context: false` |
 | `add_datetime_to_context` | bool | ❌ | Inclui a data e a hora atuais no contexto (default `true`) |
-| `reasoning` | bool | ❌ | Raciocínio passo a passo do agno antes de responder (default `false`). Faz mais chamadas ao modelo por resposta: no agno 2.5.8, até 10 passos (`reasoning_max_steps`, sem teto configurável), e as tools do agente podem ser chamadas nessa fase. Evite com tool não idempotente (POST/PUT/DELETE) |
+| `reasoning` | bool | ❌ | Raciocínio passo a passo (default `false`): o agente ganha as tools `think`/`analyze` do agno (`ReasoningTools`) e as usa no próprio run. Desde o agno 3.x não há fase separada de raciocínio nem teto de passos (o `reasoning_max_steps` saiu). Faz mais chamadas ao modelo por resposta. O texto do raciocínio é argumento dessas tools: no AG-UI chega ao cliente em `TOOL_CALL_ARGS` e, no run REST, nas tools do run |
 
 `model_params`, `base_url` e `api_key_ref` (também em `rag_config` e em `teams_config`, sempre em snake_case; a grafia camelCase `modelParams`/`baseUrl`/`apiKeyRef` é ignorada com um aviso no log que cita só o id e os nomes das chaves; na escrita por `/admin/config`, é recusada com 422) são opcionais: documento sem eles continua igual (chave `{PROVIDER}_API_KEY` do ambiente, `OLLAMA_BASE_URL` no Ollama). Valor fora do formato torna o documento inválido (ver [Documento inválido](#documento-inválido)) e a mensagem nunca traz o valor. Na criação do modelo (registry de providers, F2-02):
 
@@ -929,7 +929,7 @@ Cada documento define um team multi-agente:
 
 | Campo | Tipo | Obrigatório | Descrição |
 |---|---|---|---|
-| `id` | string | ✅ | Identificador único do team |
+| `id` | string | ✅ | Identificador único do team. Os ids reservados do agno 3.x (os mesmos do `id` do agente) são recusados na validação |
 | `nome` | string | ✅ | Nome de exibição |
 | `factoryIaModel` | string | ✅ | Provider do modelo líder: `ollama`, `openai`, `gemini`, etc. |
 | `model` | string | ✅ | ID do modelo líder (ex: `qwen3`, `gpt-4`) |

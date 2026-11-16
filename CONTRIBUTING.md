@@ -92,7 +92,7 @@ This project adheres to a code of conduct. By participating, you are expected to
 
 | File | Edited by | Role |
 |---|---|---|
-| `requirements.in` | hand | Direct runtime dependencies (`agno==2.5.8` exact, others with a minimum version) |
+| `requirements.in` | hand | Direct runtime dependencies (`agno==3.1.12` exact, others with a minimum version) |
 | `requirements.lock` | `pip-compile` | Every runtime package pinned with `==` and `--hash` |
 | `requirements-dev.in` | hand | Tests and tooling; constrained by `-c requirements.lock` |
 | `requirements-dev.lock` | `pip-compile` | Every dev package pinned with `==` and `--hash` |
@@ -116,24 +116,20 @@ Never edit a `.lock` file by hand. Use the `pip-tools` installed by the dev lock
 pip install --dry-run --require-hashes -r requirements.lock -r requirements-dev.lock
 ```
 
-#### Temporary venv to try agno 3.x (dual-run, F3)
+#### Temporary venv with the previous agno (dual-run, F3)
 
-To run the version-neutral tests against agno 3.x without touching `.venv` or the committed locks, resolve a throwaway lock in a temp directory (outside the repo) and install it in a separate venv. `requirements.in` pins `agno==2.5.8` exactly, so the temp copy swaps that line; the dev copy keeps `-c requirements.lock`, which then points at the temp runtime lock. Nothing here is committed.
+The committed locks pin agno 3.1.12 (F3-05). To run the version-neutral set (`tests/security/test_run_invariants_across_agno.py`, `tests/security/test_agno_telemetry.py`, `tests/security/test_qa_f1_03_edge.py`, `tests/security/test_qa_f2_08_session_isolation.py` and `tests/unit/test_api_key_auth.py`) against agno 2.5.8, install the locks of the last commit before the bump in a separate venv outside the repo, and run them against a tree of that commit (the code of the current branch imports the 3.x API). Nothing here is committed.
 
 ```bash
-T=$(mktemp -d); V=$(mktemp -d)   # locks (temporary) and venv (kept for the runs), both outside the repo
-sed 's/^agno==2.5.8/agno==3.1.12/' requirements.in > $T/requirements.in
-printf 'python-multipart\nsqlalchemy\n' >> $T/requirements.in   # agno 3.x needs them; F3-05 adds them to the real file
-cp requirements.lock requirements-dev.in requirements-dev.lock $T/
-.venv/bin/pip-compile --upgrade-package agno==3.1.12 --generate-hashes --allow-unsafe --strip-extras \
-    --output-file=$T/requirements.lock $T/requirements.in
-.venv/bin/pip-compile --upgrade-package agno==3.1.12 --generate-hashes --allow-unsafe --strip-extras \
-    --output-file=$T/requirements-dev.lock $T/requirements-dev.in
+B=774683f                        # last commit on agno 2.5.8
+T=$(mktemp -d); V=$(mktemp -d)   # old tree + locks, and the venv, both outside the repo
+git archive $B | tar -x -C $T
 .venv/bin/python -m venv $V
 $V/bin/pip install --require-hashes -r $T/requirements.lock -r $T/requirements-dev.lock
-rm -rf "$T"   # the temp locks are not needed after the install
-$V/bin/python -m pytest -m "not live" -n auto   # expected to fail until the F3-05 adaptation
-# when finished: rm -rf "$V"
+N="tests/security/test_run_invariants_across_agno.py tests/security/test_agno_telemetry.py tests/security/test_qa_f1_03_edge.py tests/security/test_qa_f2_08_session_isolation.py tests/unit/test_api_key_auth.py"
+for f in $N; do cp $f $T/$f; done
+(cd $T && $V/bin/python -m pytest -q $N)
+# when finished: rm -rf "$T" "$V"
 ```
 
 Without `--upgrade`/`--upgrade-package`, `pip-compile` keeps the current pins, so it never
@@ -146,7 +142,7 @@ Notes:
 - `uvloop` is declared with `sys_platform != "win32"`. Note: `app.py` still imports `uvloop` unconditionally, so it fails on native Windows until roadmap item F1-03.
 - Optional extras are **not installed by default** and stay out of the lock: `PyJWT` (AgentOS JWT auth), `mcp` (MCP tools), `anthropic`, `groq` (model providers). To adopt one, add it to `requirements.in` with a minimum version and regenerate.
 - A new dependency needs a justification in the PR (license, maintenance, discarded alternatives).
-- Upper bounds in `requirements.in` are deliberate and explained next to each one: `fastapi<0.137` (agno 2.5.8 breaks with the `_IncludedRouter` introduced in 0.137), major caps on SDKs consumed by agno (`openai<3`, `google-genai<2`, `ag-ui-protocol<0.2`, `openinference-instrumentation-agno<0.2`) until the agno migration (F3). Do not lift them in a routine `--upgrade`.
+- Upper bounds in `requirements.in` are deliberate and explained next to each one: `fastapi<0.137` (agno 2.5.8 breaks with the `_IncludedRouter` introduced in 0.137), major caps on SDKs consumed by agno (`openai<3`, `google-genai<2`, `ag-ui-protocol<0.2`, `openinference-instrumentation-agno<0.2`). The agno 3.1.12 bump (F3-05) kept them, so the lock only carries what agno changes; lifting one is its own item. Do not lift them in a routine `--upgrade`.
 
 ### Using Docker
 

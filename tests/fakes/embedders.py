@@ -46,16 +46,20 @@ class FakeOllamaClient:
     """``ollama.Client.embed`` com o tamanho nativo do modelo.
 
     ``error`` simula servidor fora do ar; ``hold`` (se definido) segura a resposta até ser liberado,
-    como um host que aceita a conexão e não responde.
+    como um host que aceita a conexão e não responde. ``down_after``: quantas chamadas respondem antes
+    de o servidor cair (ex.: 1 = a sonda passa e a indexação encontra o provider fora).
     """
 
     native_size: int = 768
     error: Exception | None = None
     hold: threading.Event | None = None
+    down_after: int | None = None
     calls: list[dict[str, Any]] = field(default_factory=list)
 
     def embed(self, model: str = "", input: str = "", **kwargs: Any) -> Mapping[str, Any]:  # pylint: disable=redefined-builtin
         """``input``: o nome do kwarg no SDK."""
+        if self.down_after is not None and len(self.calls) >= self.down_after and self.error is None:
+            self.error = ConnectionError("conexão recusada")
         self.calls.append({"model": model, "input": input, **kwargs})
         if self.hold is not None:
             self.hold.wait()

@@ -235,7 +235,8 @@ async def test_tool_http_via_agui_emite_tool_call_e_devolve_resultado_ao_modelo(
     results = [e for e in events if isinstance(e, ToolCallResultEvent)]
     assert [(s.tool_call_id, s.tool_call_name) for s in starts] == [("tc-1", "cep")]
     assert json.loads(args[0].delta) == {"cep": "01001000"}
-    assert "Praça da Sé" in results[0].content and results[0].tool_call_id == "tc-1"
+    # Agno 3.x: o conversor serializa o resultado em JSON (``to_json_str``, com escape ASCII).
+    assert json.loads(results[0].content) == {"logradouro": "Praça da Sé"} and results[0].tool_call_id == "tc-1"
     # TOOL_CALL_START tem como pai uma mensagem de texto emitida antes (START/END balanceados)
     parents = {e.message_id for e in events if isinstance(e, TextMessageStartEvent)}
     assert starts[0].parent_message_id in parents

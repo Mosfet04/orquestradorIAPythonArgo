@@ -208,10 +208,8 @@ def test_job_de_teste_roda_em_paralelo_com_xdist_do_dev_lock(ci):
     assert re.search(r"^execnet==\S+ \\\n\s+--hash=sha256:", dev_lock, re.MULTILINE)
 
 
-def test_pip_audit_ignora_so_a_vulnerabilidade_conhecida_do_agno(ci):
-    """Única exceção aceita até a F3: PYSEC-2026-2333 (agno, backend ClickHouse não usado)."""
+def test_pip_audit_sem_nenhuma_excecao(ci):
+    """F3-05: o PYSEC-2026-2333 saiu com o agno 3.1.12; qualquer vulnerabilidade conhecida falha o job."""
     security = " ".join(s.get("run", "") for s in ci["jobs"]["security"]["steps"])
-    assert re.findall(r"--ignore-vuln\s+(\S+)", security) == ["PYSEC-2026-2333"]
-    raw = CI_WORKFLOW.read_text(encoding="utf-8")
-    comment = raw[: raw.index("--ignore-vuln PYSEC-2026-2333")].rsplit("- name: bandit", 1)[-1]
-    assert "agno" in comment and "F3" in comment, "a exceção precisa de justificativa e prazo comentados"
+    assert "pip-audit -r requirements.lock --require-hashes --disable-pip" in security
+    assert "--ignore-vuln" not in CI_WORKFLOW.read_text(encoding="utf-8")

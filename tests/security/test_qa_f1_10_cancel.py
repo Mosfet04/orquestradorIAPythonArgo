@@ -333,8 +333,7 @@ async def test_cancel_do_run_do_team_com_membro_em_andamento_encerra_o_team_e_li
         await _wait_for(lambda: len(_tracked()) == 2, "run do team e do membro registrados")
         cancel = await client.post("/teams/tm/runs/run-team/cancel")
         response = await asyncio.wait_for(run, timeout=20)
-        # o membro tem outro run_id e segue até o fim (comportamento do agno, ver xfail abaixo);
-        # ao terminar, não pode sobrar nada
+        # agno 3.x cancela também o membro (cascata); ao terminar, não pode sobrar nada
         await _wait_for(lambda: _tracked() == {}, "cleanup do team e do membro", limit=15)
 
     assert cancel.status_code == 200
@@ -342,11 +341,6 @@ async def test_cancel_do_run_do_team_com_membro_em_andamento_encerra_o_team_e_li
     assert isinstance(last, RunErrorEvent) and last.code == "run_cancelled"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="BUG-F110-TEAM-CANCEL-MEMBER: cancelar o run do team não cancela o run do membro (comportamento "
-    "do agno 2.5.8, idêntico com o gerenciador stock); o membro segue consumindo o modelo até o fim",
-)
 async def test_cancel_do_run_do_team_cancela_tambem_o_run_do_membro(monkeypatch: pytest.MonkeyPatch):
     member, team = _team_with_member(_TickingModel())  # 10 s se ninguém o cancelar
     app = _mount(monkeypatch, [member], [team])
@@ -359,7 +353,9 @@ async def test_cancel_do_run_do_team_cancela_tambem_o_run_do_membro(monkeypatch:
         await _wait_for(lambda: _tracked() == {}, "cleanup do membro", limit=2)
 
 
-async def test_cancel_do_run_do_membro_nao_encerra_o_team(monkeypatch: pytest.MonkeyPatch):
+async def test_cancel_do_run_do_membro_encerra_o_team_como_cancelado(monkeypatch: pytest.MonkeyPatch):
+    """Agno 3.x: o membro cancelado no meio do stream cancela o run do team (``team/_default_tools.py``,
+    ``draining_after_cancel`` levanta ``RunCancelledException``); no 2.5.8 o team seguia e concluía."""
     member, team = _team_with_member(_ShortTickingModel())
     app = _mount(monkeypatch, [member], [team])
 
@@ -371,15 +367,10 @@ async def test_cancel_do_run_do_membro_nao_encerra_o_team(monkeypatch: pytest.Mo
         response = await asyncio.wait_for(run, timeout=20)
 
     assert cancel.status_code == 200
-    events = parse_agui_sse(response.text)
-    assert isinstance(events[-1], RunFinishedEvent)
+    last = parse_agui_sse(response.text)[-1]
+    assert isinstance(last, RunErrorEvent) and last.code == "run_cancelled"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="BUG-F110-MEMBER-CANCEL-LEAK: o run de membro cancelado fica no gerenciador para sempre "
-    "(o agno não faz cleanup no caminho de delegação; idêntico com o gerenciador stock)",
-)
 async def test_cancel_do_run_do_membro_nao_deixa_resto_no_gerenciador(monkeypatch: pytest.MonkeyPatch):
     member, team = _team_with_member(_ShortTickingModel())
     app = _mount(monkeypatch, [member], [team])

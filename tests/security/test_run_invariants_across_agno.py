@@ -153,9 +153,13 @@ async def test_sessao_de_outro_user_id_nunca_e_lida_nem_sobrescrita(
                 assert QUESTION in intruder.json()["content"], intruder.text
         else:
             intruder = await _agui_run(client, QUESTION, "bruno", "s-ana")
-            assert intruder.status_code == 200, intruder.text
-            seen_by_bruno = _agui_text(intruder)
-            assert QUESTION in seen_by_bruno, intruder.text
+            # 2.5.8: conversa à parte (200, SSE); 3.x: o router AG-UI recusa a sessão de outro dono
+            # antes do stream (404), como o user_scope das rotas REST.
+            assert intruder.status_code in (200, 404), intruder.text
+            seen_by_bruno = intruder.text
+            if intruder.status_code == 200:
+                seen_by_bruno = _agui_text(intruder)
+                assert QUESTION in seen_by_bruno, intruder.text
         after = await _ana_state(session_db)
         # Controle positivo: o histórico está ligado e a Ana segue vendo o dela, sem o turno do Bruno.
         again = await _rest_run(client, "e o código?", "ana", "s-ana")

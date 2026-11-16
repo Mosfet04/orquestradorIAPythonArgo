@@ -118,9 +118,16 @@ def test_cobertura_so_mede_src(pyproject):
 
 
 def test_agno_fixado_na_versao_validada():
-    assert "agno==2.5.8" in _requirement_lines(ROOT / "requirements.in")
+    assert "agno==3.1.12" in _requirement_lines(ROOT / "requirements.in")
     lock = (ROOT / "requirements.lock").read_text(encoding="utf-8")
-    assert re.search(r"^agno==2\.5\.8 \\\n\s+--hash=sha256:[0-9a-f]{64}", lock, re.MULTILINE)
+    assert re.search(r"^agno==3\.1\.12 \\\n\s+--hash=sha256:[0-9a-f]{64}", lock, re.MULTILINE)
+
+
+def test_dependencias_que_o_agentos_3_usa_sem_declarar_estao_no_lock():
+    """F3-05: python-multipart (form das rotas) e sqlalchemy com greenlet (Team importa agno.db.postgres)."""
+    lock = (ROOT / "requirements.lock").read_text(encoding="utf-8")
+    for package in ("python-multipart", "sqlalchemy", "greenlet"):
+        assert re.search(rf"^{package}==\S+ \\$", lock, re.MULTILINE), package
 
 
 def test_uvloop_so_fora_do_windows():

@@ -7,7 +7,13 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 
 from src.domain.entities.model_config import ModelConfig, ParamValue
-from src.domain.entities.validation import InvalidField, require_bool, require_optional_text, require_text
+from src.domain.entities.validation import (
+    InvalidField,
+    require_bool,
+    require_entity_id,
+    require_optional_text,
+    require_text,
+)
 
 TEAM_MODES = ("route", "coordinate", "broadcast", "tasks")
 """Modos de team aceitos em ``mode`` (validação e ``/admin/schema``)."""
@@ -37,7 +43,7 @@ class TeamConfig:
     add_history_to_context: bool = True
 
     def __post_init__(self) -> None:
-        require_text(self.id, "id", "ID do team")
+        require_entity_id(self.id, "ID do team")
         require_text(self.nome, "nome", "Nome do team")
         require_text(self.model, "model", "Modelo do team")
         require_text(self.factory_ia_model, "factory_ia_model", "Factory do modelo do team")

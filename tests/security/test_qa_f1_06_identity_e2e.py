@@ -361,7 +361,7 @@ async def test_user_id_invisivel_e_recusado(
 async def test_dois_user_ids_com_o_mesmo_session_id_nao_vazam_historico(
     memory_db: SessionDb, client_for: Callable[..., TestClient]
 ) -> None:
-    brain = FakeChatModel(responses=["resposta-para-ana", "resposta-para-bruno", "resposta-2-ana"])
+    brain = FakeChatModel(responses=["resposta-para-ana", "resposta-2-ana"])
     agent = await _agent("com-memoria", memory=True, model=brain, db=memory_db)
     client = client_for([agent])
 
@@ -370,16 +370,18 @@ async def test_dois_user_ids_com_o_mesmo_session_id_nao_vazam_historico(
 
     ana = post("ana", "SEGREDO-DA-ANA-4711")
     assert ana["status"] == "COMPLETED", ana
-    bruno = post("bruno", "mensagem do bruno")
-    assert bruno["status"] == "COMPLETED", bruno
-
-    bruno_prompt = "\n".join(c for _, c in brain.calls[1].messages)
-    assert "SEGREDO-DA-ANA-4711" not in bruno_prompt
-    assert "resposta-para-ana" not in bruno_prompt
+    # Agno 3.x (decisão do dono, F3): a sessão de outro usuário é recusada com 404 antes do run.
+    bruno = client.post(
+        "/agents/com-memoria/runs",
+        data={"message": "mensagem do bruno", "stream": "false", "user_id": "bruno", "session_id": "sessao-comum"},
+        headers=RUN,
+    )
+    assert (bruno.status_code, bruno.json()) == (404, {"detail": "Session not found"})
+    assert "SEGREDO-DA-ANA-4711" not in bruno.text and len(brain.calls) == 1  # o modelo nem foi chamado
 
     # e a sessão da Ana não foi sobrescrita nem contaminada pelo Bruno
     post("ana", "de novo")
-    ana_prompt = "\n".join(c for _, c in brain.calls[2].messages)
+    ana_prompt = "\n".join(c for _, c in brain.calls[1].messages)
     assert "SEGREDO-DA-ANA-4711" in ana_prompt
     assert "mensagem do bruno" not in ana_prompt and "resposta-para-bruno" not in ana_prompt
 

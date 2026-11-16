@@ -3,7 +3,8 @@
 import pytest
 
 from src.domain.entities.agent_config import AgentConfig
-from src.domain.entities.validation import InvalidField
+from src.domain.entities.team_config import TeamConfig
+from src.domain.entities.validation import RESERVED_ENTITY_IDS, InvalidField
 
 
 class TestAgentConfig:
@@ -132,3 +133,20 @@ def test_num_history_runs_fora_da_faixa_ou_nao_inteiro_e_recusado(value):
         AgentConfig(**_AGENT_KWARGS, num_history_runs=value)
     assert raised.value.field == "num_history_runs"
     assert "valor-recebido-x" not in str(raised.value)
+
+
+@pytest.mark.parametrize("reserved", sorted(RESERVED_ENTITY_IDS))
+def test_id_reservado_pelo_runtime_e_recusado_em_agente_e_team(reserved):
+    """F3-05: com um id reservado o AgentOS 3.x recusa a montagem inteira; aqui é recusa clara do campo."""
+    agent = {"nome": "A", "factory_ia_model": "ollama", "model": "m", "descricao": None, "prompt": "p"}
+    team = {"nome": "T", "factory_ia_model": "ollama", "model": "m", "member_ids": ["a"]}
+
+    for build, fields in ((AgentConfig, agent), (TeamConfig, team)):
+        with pytest.raises(InvalidField) as exc:
+            build(id=reserved, **fields)
+        assert exc.value.field == "id" and "reservado" in str(exc.value)
+
+
+def test_id_parecido_com_o_reservado_e_aceito():
+    config = AgentConfig(id="os-manager", nome="A", factory_ia_model="ollama", model="m", descricao=None, prompt="p")
+    assert config.id == "os-manager"

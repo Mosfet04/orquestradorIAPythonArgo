@@ -170,6 +170,34 @@ async def test_embedding_vazio_nunca_e_gravado_e_o_agente_sobe_sem_rag(fake_vect
     _no_document_text(logger)
 
 
+async def test_provider_fora_na_indexacao_nao_grava_chunk_e_o_proximo_startup_indexa(
+    fake_vector_mongo: FakeVectorServer,
+) -> None:
+    """F3-05 (agno 3.x): a sonda passa e o provider cai na indexação. O ``OllamaEmbedder`` levanta
+    ``EmbeddingError`` (não devolve ``[]``) e o ``Knowledge.insert`` o trata (conteúdo ``FAILED``): nenhum
+    chunk gravado, o agente sobe com o RAG vazio e o próximo startup indexa o documento."""
+    client = FakeOllamaClient(native_size=768, down_after=1)
+    embedders = DimensionResolvingEmbedderFactory(
+        _Factory(lambda config: OllamaEmbedder(id=config.model_id, ollama_client=client)),  # type: ignore[arg-type]
+        logger=RecordingLogger(),
+    )
+    logger = RecordingLogger()
+
+    agent = await _service(logger, embedders).create_agent(_config())
+
+    assert len(client.calls) > 1  # a indexação chegou ao provider (e falhou)
+    assert agent.knowledge is not None
+    assert _collection(fake_vector_mongo).docs == {}
+    assert _index_dimensions(_collection(fake_vector_mongo)) == [768]
+    assert "conexão recusada" not in repr(logger.records)
+    _no_document_text(logger)
+
+    again = await _service(RecordingLogger(), _ollama()).create_agent(_config())
+
+    assert again.knowledge is not None
+    assert _sizes(_collection(fake_vector_mongo)) == [768, 768]
+
+
 async def test_embedding_de_tamanho_diferente_do_indice_nunca_e_gravado(fake_vector_mongo: FakeVectorServer) -> None:
     logger = RecordingLogger()
 

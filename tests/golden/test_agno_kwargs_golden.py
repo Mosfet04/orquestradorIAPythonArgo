@@ -389,7 +389,15 @@ async def test_campos_de_execucao_do_documento_chegam_aos_kwargs(agno_calls: Agn
 
     [agent_kwargs] = agno_calls.of("Agent")
     [team_kwargs] = agno_calls.of("Team")
-    assert {key: agent_kwargs[key] for key in options} == options  # type: ignore[index]
+    plain = {key: value for key, value in options.items() if key != "reasoning"}
+    assert {key: agent_kwargs[key] for key in plain} == plain  # type: ignore[index]
+    # F3-05 (decisão do dono): no agno 3.x não há ``reasoning=``; vira a toolkit de raciocínio.
+    assert "reasoning" not in agent_kwargs  # type: ignore[operator]
+    [reasoning_tools] = [
+        tool for tool in agent_kwargs["tools"] if tool["__type__"] == "agno.tools.reasoning.ReasoningTools"  # type: ignore[index,union-attr,call-overload]
+    ]
+    assert reasoning_tools["add_instructions"] is True  # type: ignore[index,call-overload]
+    assert sorted(fn["name"] for fn in reasoning_tools["functions"]) == ["analyze", "think"]  # type: ignore[index,union-attr,call-overload]
     assert (team_kwargs["markdown"], team_kwargs["add_history_to_context"]) == (False, False)  # type: ignore[index]
 
 

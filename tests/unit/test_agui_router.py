@@ -52,6 +52,8 @@ from src.infrastructure.runtime.agno.agui_router import (
 )
 from src.infrastructure.runtime.agno.served_entities import ServedEntities
 from tests.fakes import FakeChatModel, RecordingLogger
+from tests.fakes.mongo import FailingMongoCollection
+from tests.fakes.session_db import collection, fake_session_db
 
 SENSITIVE_TEXT = "sk-" + "x" * 20  # valor de teste: simula texto sensível numa exceção
 
@@ -509,3 +511,20 @@ def test_id_repetido_entre_dois_agentes_fica_com_o_primeiro():
     assert [r.message for r in logger.records if r.level == "warning"] == [
         "Id de entidade repetido; AG-UI expõe só a primeira"
     ]
+
+
+def test_falha_do_mongo_ao_conferir_o_dono_sobe_com_log_so_do_tipo():
+    """Sem conferir o dono da sessão o run não roda; o log é nosso e não leva o texto do driver."""
+    logger = RecordingLogger()
+    agent = ScriptedAgent("a1", script=[RunContentEvent(content="oi")])
+    agent.db = fake_session_db()
+    sessions = collection(agent.db, agent.db.session_table_name)
+    sessions.find_one = FailingMongoCollection(ConnectionError(f"sem rota: {SENSITIVE_TEXT}")).find_one  # type: ignore[method-assign]
+
+    with pytest.raises(ConnectionError):
+        _client([agent], logger=logger).post("/agui/a1", json=_body("r-ok"))
+
+    [record] = [r for r in logger.records if r.level == "error"]
+    assert record.message == "Falha ao conferir a sessão e o runId do AG-UI"
+    assert record.context == {"entity_id": "a1", "run_id": "r-ok", "error_type": "ConnectionError"}
+    assert agent.received == {}  # o run não começou

@@ -176,3 +176,12 @@ async def test_start_e_close_sem_mount_nao_fazem_nada(runtime: AgnoRuntime, monk
     await runtime.close()
 
     assert events == []
+
+
+def test_ids_reservados_na_validacao_sao_os_que_o_agno_reserva():
+    """F3-05: a lista do domínio acompanha a do agno (``agno/registry/_reserved.py``); no upgrade, falha alto."""
+    from agno.registry._reserved import RESERVED_MANAGER_IDS
+
+    from src.domain.entities.validation import RESERVED_ENTITY_IDS
+
+    assert RESERVED_ENTITY_IDS == RESERVED_MANAGER_IDS

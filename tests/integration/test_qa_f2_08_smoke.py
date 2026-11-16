@@ -162,9 +162,10 @@ def _assert_history_per_user(world: _World, responses: dict[str, Response]) -> N
     texts = ["\n".join(content for _, content in call) for call in prompts]
     assert texts[0].count(FIRST) == 1  # o primeiro run só tem a própria mensagem
     assert texts[1].count(FIRST) == 1 and "r1" in texts[1]  # o segundo run viu o histórico (pergunta e resposta)
-    # Bruno usou o mesmo session_id e não viu o histórico da Ana (a sessão dela segue dela).
-    assert responses["other_user"].status_code == 200
-    assert FIRST not in texts[2] and "r1" not in texts[2]
+    # Bruno usou o mesmo session_id: agno 3.x recusa antes do run (404) e a sessão dela segue dela.
+    other = responses["other_user"]
+    assert (other.status_code, other.json()) == (404, {"detail": "Session not found"})
+    assert len(texts) == 2
 
 
 def _assert_sessions_and_memories_per_user(responses: dict[str, Response], db: SessionDb) -> None:

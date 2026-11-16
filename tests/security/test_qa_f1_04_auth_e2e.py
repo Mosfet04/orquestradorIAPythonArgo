@@ -316,14 +316,16 @@ def test_varredura_toda_rota_real_respeita_a_classe(sweep_apps: dict[str, FastAP
         ("POST", "/databases/all/migrate", {207}),
         ("GET", "/registry", {200}),
         ("GET", "/components", {503}),  # db assíncrono: /components segue stub 503 (e não 401/403)
-        # Rotas reais desde o F2-08; o Mongo do agno 2.5.8 não implementa agenda nem aprovações (503).
-        ("GET", "/schedules", {503}),
+        # Rotas reais desde o F2-08. Agno 3.x: o Mongo implementa a agenda (200, lista vazia); aprovações
+        # seguem sem implementação (503).
+        ("GET", "/schedules", {200}),
         ("GET", "/approvals", {503}),  # F2-05: decisão sobre run de outro usuário é do operador
         ("POST", "/approvals/qualquer/resolve", {422}),  # rota real: o corpo é obrigatório
         ("POST", "/optimize-memories", {422}),
         ("POST", "/knowledge/search", {422}),
-        ("POST", "/knowledge/content", {400, 422}),
-        ("DELETE", "/knowledge/content", {400, 422}),
+        # Agno 3.x: sem knowledge registrada no AgentOS, 503 antes de validar o corpo.
+        ("POST", "/knowledge/content", {503}),
+        ("DELETE", "/knowledge/content", {503}),
         ("DELETE", "/sessions", {400, 404, 422, 500}),
         ("DELETE", "/memories", {400, 404, 422, 500}),
     ],

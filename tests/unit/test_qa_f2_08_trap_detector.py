@@ -78,7 +78,7 @@ class _BlockingSessionDb(SessionDb):
     """Regressão plantada: lê a sessão com o pymongo síncrono direto na corrotina (no event loop)."""
 
     async def get_session(self, session_id: str, session_type: SessionType, user_id: str | None = None,
-                          deserialize: bool | None = True) -> Any:
+                          deserialize: bool | None = True, runs_limit: int | None = None) -> Any:
         _blocking_find_sync()
         return None
 

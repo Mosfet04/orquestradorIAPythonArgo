@@ -47,7 +47,6 @@
       "num_history_runs": 5,
       "pre_hooks": null,
       "read_chat_history": true,
-      "reasoning": false,
       "search_knowledge": true,
       "store_events": true,
       "store_history_messages": true,

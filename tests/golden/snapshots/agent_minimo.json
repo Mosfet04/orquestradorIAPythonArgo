@@ -26,7 +26,6 @@
       "num_history_runs": 5,
       "pre_hooks": null,
       "read_chat_history": false,
-      "reasoning": false,
       "search_knowledge": false,
       "store_events": true,
       "store_history_messages": true,

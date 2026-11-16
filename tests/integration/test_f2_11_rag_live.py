@@ -1,7 +1,7 @@
 """F2-11, ``live``: o RAG semântico contra um Mongo com Atlas Vector Search de verdade (Atlas Local, F2-10).
 
 Só rodam com ``MONGO_LIVE_URL`` (marker ``live``; nunca na CI padrão); sem ela são pulados. Banco efêmero
-por teste (``tests/fakes/live_mongo.py``). O embedder é o ``OllamaEmbedder`` real do agno 2.5.8 com o
+por teste (``tests/fakes/live_mongo.py``). O embedder é o ``OllamaEmbedder`` real do agno 3.1.12 com o
 cliente do SDK falso (``FakeOllamaClient``, 768 posições como o ``nomic-embed-text``): nenhum Ollama nem
 modelo. Cobrem o que o servidor em memória não prova: o índice ``vectorSearch`` com o ``numDimensions``
 certo, a remoção assíncrona do índice antigo no Atlas e a consulta ``$vectorSearch`` depois da correção.
@@ -136,13 +136,33 @@ async def test_live_colecao_nova_nasce_com_indice_da_dimensao_real_e_busca(live_
 
 
 async def test_live_embedding_vazio_nunca_e_gravado(live_mongo: LiveMongo) -> None:
+    """Agno 3.1.12: a sonda passa e o provider cai na indexação. O ``OllamaEmbedder`` levanta
+    ``EmbeddingError`` (no 2.5.8 devolvia ``[]``) e o ``Knowledge.insert`` o trata (conteúdo ``FAILED``,
+    ``agno/knowledge/knowledge.py``): nenhum chunk gravado, nem com embedding vazio; o agente sobe com o
+    RAG vazio e o próximo startup, com o provider no ar, indexa e busca. Mesma lógica, sem Atlas, em
+    ``test_provider_fora_na_indexacao_nao_grava_chunk_e_o_proximo_startup_indexa``.
+    """
+    down = _Ollama()
+    down.client.down_after = 1  # só a sonda responde
     logger = RecordingLogger()
 
-    agent = await _service(live_mongo, logger, _Ollama()).create_agent(_config())  # sem a sonda: O2
+    agent = await _service(live_mongo, logger, DimensionResolvingEmbedderFactory(down, logger=logger)).create_agent(
+        _config()
+    )
 
-    assert agent.knowledge is None
+    assert len(down.client.calls) > 1  # a indexação chegou ao provider (e falhou)
+    assert agent.knowledge is not None
     assert live_mongo.collection(COLLECTION).count_documents({}) == 0
-    assert [r.context["error_type"] for r in logger.records if r.level == "error"] == ["EmbeddingDimensionError"]
+    assert live_mongo.collection(COLLECTION).count_documents({"embedding": {"$size": 0}}) == 0
+    assert _num_dimensions(_index(live_mongo)) == 768
+    assert "conexão recusada" not in repr(logger.records)
+
+    up = DimensionResolvingEmbedderFactory(_Ollama(), logger=RecordingLogger())
+    again = await _service(live_mongo, RecordingLogger(), up).create_agent(_config())
+
+    assert again.knowledge is not None
+    assert _sizes(live_mongo) and set(_sizes(live_mongo)) == {768}
+    assert any("segunda via" in c for c in _search_until_found(again.knowledge, "fatura"))  # type: ignore[arg-type]
 
 
 async def test_live_colecao_legada_e_corrigida_no_startup_e_a_correcao_e_idempotente(live_mongo: LiveMongo) -> None:

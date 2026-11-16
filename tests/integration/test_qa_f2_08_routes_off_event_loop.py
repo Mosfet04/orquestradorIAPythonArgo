@@ -3,8 +3,9 @@ AG-UI, team, cancelamento) com o ``SessionDb`` de produção (motor real, sem se
 
 Complementa ``test_session_io_off_event_loop.py`` (que chama ``Agent.arun``/``Team.arun`` direto): aqui a
 entrada é HTTP, pelo AgentOS montado como no lifespan do app. O detector (``trap_sync_pymongo``) falha
-cada operação como um Mongo fora do ar, sem abrir socket; o run segue (o agno loga a falha de sessão).
-O que se confere é onde o I/O de sessão rodou (nunca na thread do loop) e que ele aconteceu.
+cada operação como um Mongo fora do ar, sem abrir socket. No agno 3.x a leitura da sessão não engole o
+erro: o run falha (REST e AG-UI respondem 500 sem o texto do erro). O que se confere é onde o
+I/O de sessão rodou (nunca na thread do loop) e que ele aconteceu.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from agno.models.response import ModelResponse
 from agno.run.cancel import get_cancellation_manager
 from agno.team import Team
 from fastapi import FastAPI
+from motor.motor_asyncio import AsyncIOMotorClient
 
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.team_config import TeamConfig
@@ -112,7 +114,22 @@ def _app(monkeypatch: pytest.MonkeyPatch, db: SessionDb, agents: list[Agent], te
 
 
 def _client(app: FastAPI) -> httpx.AsyncClient:
-    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", headers=RUN)
+    # Sem re-levantar no teste a exceção do app: o que se confere é a resposta (500) que o cliente recebe.
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    return httpx.AsyncClient(transport=transport, base_url="http://test", headers=RUN)
+
+
+class _NewSessionDb(SessionDb):
+    """Sessão sempre nova, sem ir ao banco: o run chega ao modelo (as gravações seguem pelo motor)."""
+
+    async def get_session(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+
+def _assert_failed_without_leak(response: httpx.Response) -> None:
+    """Agno 3.x: falha na leitura da sessão falha o run; o texto do erro do driver não chega ao cliente."""
+    assert response.status_code == 500
+    assert "trap_sync_pymongo" not in response.text
 
 
 @pytest.fixture
@@ -136,7 +153,7 @@ async def test_run_rest_de_agente_nao_chama_o_pymongo_sincrono_no_event_loop(
             "/agents/ag/runs", data={"message": "oi", "stream": stream, "user_id": "ana", "session_id": "s1"}
         )
 
-    assert response.status_code == 200
+    _assert_failed_without_leak(response)
     assert calls.operations, "o run não foi ao banco de sessões"
     assert calls.on_event_loop() == []
 
@@ -152,7 +169,7 @@ async def test_run_de_team_nao_chama_o_pymongo_sincrono_no_event_loop(
             "/teams/time/runs", data={"message": "oi", "stream": "false", "user_id": "ana", "session_id": "s1"}
         )
 
-    assert response.status_code == 200
+    _assert_failed_without_leak(response)
     assert calls.operations, "o run do team não foi ao banco de sessões"
     assert calls.on_event_loop() == []
 
@@ -166,15 +183,17 @@ async def test_run_agui_nao_chama_o_pymongo_sincrono_no_event_loop(
     async with _client(app) as client:
         response = await client.post("/agui/ag", json=AGUI_BODY)
 
-    assert response.status_code == 200 and "RUN_FINISHED" in response.text
+    # F3-05: a checagem de dono da sessão lê o Mongo antes do stream; sem conferir o dono, não roda.
+    _assert_failed_without_leak(response)
     assert calls.operations, "o run AG-UI não foi ao banco de sessões"
     assert calls.on_event_loop() == []
 
 
 @pytest.mark.parametrize("stream", ["false", "true"])
 async def test_cancelamento_de_run_nao_chama_o_pymongo_sincrono_no_event_loop(
-    monkeypatch: pytest.MonkeyPatch, calls: SyncPymongoCalls, db: SessionDb, stream: str
+    monkeypatch: pytest.MonkeyPatch, calls: SyncPymongoCalls, stream: str
 ) -> None:
+    db = _NewSessionDb(AsyncIOMotorClient(DB_URL), db_url=DB_URL, db_name="agno")
     agent = Agent(id="tic", name="tic", model=TickingModel(), db=db, telemetry=False)
     app = _app(monkeypatch, db, [agent], [])
 
@@ -189,6 +208,7 @@ async def test_cancelamento_de_run_nao_chama_o_pymongo_sincrono_no_event_loop(
         run_id = next(iter(get_cancellation_manager().get_active_runs()))
         cancel = await client.post(f"/agents/tic/runs/{run_id}/cancel")
         response = await asyncio.wait_for(run, timeout=15)
+    await db.close()
 
     assert cancel.status_code == 200 and response.status_code == 200
     assert get_cancellation_manager().get_active_runs() == {}

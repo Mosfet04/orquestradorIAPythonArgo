@@ -12,6 +12,7 @@ from typing import Any, cast
 from agno.agent import Agent
 from agno.db.base import AsyncBaseDb
 from agno.knowledge import Knowledge
+from agno.tools.reasoning import ReasoningTools
 
 from src.application.services.document_indexing_service import DocumentIndexingService
 from src.application.services.document_path import (
@@ -410,8 +411,10 @@ class AgentFactoryService:
         """Indexa o documento na coleção do agente (já confinado a ``docs/``).
 
         ``skip_if_exists`` é checado na coleção do próprio agente (``content_hash_exists``
-        do vector db, agno 2.5.8): coleção nova (inclusive a migração da ``rag``
-        compartilhada) reindexa o documento no primeiro startup.
+        do vector db): coleção nova (inclusive a migração da ``rag``
+        compartilhada) reindexa o documento no primeiro startup. Provider fora na indexação
+        (agno 3.x): o ``Knowledge.insert`` trata o ``EmbeddingError`` (conteúdo ``FAILED``, log do
+        agno) sem gravar chunk nem levantar; o agente sobe com o RAG vazio e o próximo startup indexa.
         """
         if resolved_path is None:
             self._logger.info("Nenhum documento especificado para RAG")
@@ -439,6 +442,10 @@ class AgentFactoryService:
         knowledge: Knowledge | None,
     ) -> Agent:
         user_memories = agentic_memory = config.user_memory_active
+        if config.reasoning:
+            # Agno 3.x: sem ``reasoning=`` (nem fase separada ou ``reasoning_max_steps``); o modelo
+            # raciocina com as tools ``think``/``analyze`` no próprio run (decisão do dono, F3-05).
+            tools = [*tools, ReasoningTools(add_instructions=True)]
         return Agent(
             id=config.id,
             name=config.nome,
@@ -453,7 +460,6 @@ class AgentFactoryService:
                 )
                 else None
             ),
-            reasoning=config.reasoning,
             markdown=config.markdown,
             description=config.descricao,
             instructions=config.prompt,

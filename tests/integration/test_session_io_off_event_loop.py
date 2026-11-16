@@ -15,6 +15,7 @@ import pytest
 from agno.agent import Agent
 from agno.run import RunStatus
 from agno.team import Team
+from pymongo.errors import ServerSelectionTimeoutError
 
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.team_config import TeamConfig
@@ -75,11 +76,14 @@ async def test_run_de_agente_e_de_team_nao_chama_o_pymongo_sincrono_no_event_loo
 
     agent_run = await agent.arun("oi", user_id="ana", session_id="s-agente")
     after_agent = len(pymongo_calls.operations)
-    await team.arun("oi", user_id="ana", session_id="s-team")
+    # Agno 3.x: a leitura da sessão do team não engole o erro (``team/_storage.py``,
+    # ``_aread_session``): com o Mongo fora o run do team falha em vez de seguir com sessão nova.
+    with pytest.raises(ServerSelectionTimeoutError):
+        await team.arun("oi", user_id="ana", session_id="s-team")
 
-    # O run do agente termina mesmo com o Mongo fora (o agno loga a falha de sessão e segue), e o
-    # I/O de sessão aconteceu: índices e leitura/gravação, do agente e do team, tudo fora do loop.
-    assert (agent_run.status, agent_run.content) == (RunStatus.completed, "resposta")
+    # Agno 3.x: com o Mongo fora o run do agente também falha (antes seguia sem sessão). O que importa
+    # aqui é que o I/O de sessão aconteceu (índices e leitura, do agente e do team) e fora do loop.
+    assert agent_run.status == RunStatus.error
     assert {"createIndexes", "find"} <= {operation for operation, _ in pymongo_calls.operations[:after_agent]}
     assert len(pymongo_calls.operations) > after_agent >= 2  # o team também foi ao banco
     assert pymongo_calls.on_event_loop() == []
@@ -108,7 +112,8 @@ async def test_fechar_o_db_de_sessoes_fecha_um_cliente_fora_do_event_loop(pymong
     team = _team(db, agent)
     await agent.arun("oi", user_id="ana", session_id="s1")
     await other.arun("oi", user_id="ana", session_id="s2")
-    await team.arun("oi", user_id="ana", session_id="s3")
+    with pytest.raises(ServerSelectionTimeoutError):  # agno 3.x: leitura de sessão do team não engole o erro
+        await team.arun("oi", user_id="ana", session_id="s3")
 
     await db.close()
     await db.close()
