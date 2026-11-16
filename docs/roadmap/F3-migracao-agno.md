@@ -6,6 +6,7 @@ Estratégia: preparar no 2.5.8 tudo que dá para deixar neutro à versão (F3-02
 
 Decisões do dono (2026-11-15):
 - `reasoning`: no 3.x, `AgentConfig.reasoning=true` vira `ReasoningTools(add_instructions=True)`; documentar que não há mais fase separada nem `reasoning_max_steps` (F3-05).
+- Raciocínio no AG-UI (2026-11-16): se o texto do raciocínio (`think`/`analyze` em `TOOL_CALL_ARGS`) chega ao cliente é parâmetro da configuração do agente no Mongo; por default chega, e dá para desligar por agente (F3-10).
 - Telemetria dos evals: router próprio responde 404 em `/eval-runs*` até a F8 (F3-08).
 - Contratos que mudam no 3.x (histórico do AG-UI vindo da sessão, `background=true` sem `stream=false` vira SSE, sessão de outro usuário ⇒ 404, `GET /models` some, chave `memory` de `GET /agents/{id}`): aceitar e documentar no runbook (F3-07).
 
@@ -127,3 +128,12 @@ Fora de escopo: remover a dependência `motor` antes de zerar o uso.
 Critérios de aceite: `trap_sync_pymongo` não vê I/O síncrono no loop; sessão e memória idênticas; `live` com Atlas Local verde.
 Testes exigidos: unit, integração e `live`.
 Riscos e dependências: só o `live` prova `aggregate`/`to_list` no driver nativo.
+
+## F3-10 — Raciocínio no AG-UI configurável por agente
+Modelo: opus
+Objetivo: o dono do agente decide se o texto do raciocínio do modelo chega ao cliente AG-UI (decisão do dono, 2026-11-16).
+Escopo: campo booleano opcional no `AgentConfig` (nome sugerido: `expose_reasoning`, default `true`; documento Mongo existente continua válido), também no YAML e no `/admin/schema`. Com `false`, o filtro de saída do AG-UI descarta os `TOOL_CALL_*` das tools de raciocínio (`think`/`analyze`) daquele agente; o raciocínio segue funcionando no run e gravado na sessão. Com `true` (default), o comportamento é o do F3-05. READMEs e runbook atualizados.
+Fora de escopo: liberar `REASONING_*`/`STATE_*` na allowlist; filtrar o raciocínio nas rotas REST do AgentOS e na leitura da sessão (`GET /sessions/{id}/runs`), que ficam para a F5.
+Critérios de aceite: agente com `reasoning=true` e o campo desligado não emite nenhum evento AG-UI com o texto do raciocínio, e a resposta final chega igual; com o default, os `TOOL_CALL_*` de `think`/`analyze` chegam; as demais tools não são afetadas; em Team, vale a configuração de cada membro; documento sem o campo se comporta como `true`.
+Testes exigidos: unit do filtro e da entidade; segurança pelo AG-UI com modelo scriptado (agente e team).
+Riscos e dependências: depende do F3-05; tool do usuário com o nome `think`/`analyze` não pode ser confundida com a de raciocínio.
