@@ -3,14 +3,16 @@ e para o db de sessões do agno (``SessionDb``, F2-08).
 
 Só o que os repositórios e o ``AsyncMongoDb`` do agno 2.5.8 usam em sessões e memória:
 ``find``/``find_one`` com filtro de igualdade em campos de topo (ex.: ``{"active": True}``), ``$in``,
-``$nin``, ``$ne``, ``$exists`` e ``$or``, projeção de inclusão, ``sort`` por um campo ou por uma lista de campos (no
+``$nin``, ``$ne``, ``$exists``, ``$gt``, ``$size``, ``$not`` e ``$or``,
+projeção de inclusão, ``sort`` por um campo ou por uma lista de campos (no
 cursor ou no kwarg ``sort=``), ``skip``/``limit``/``to_list``, iteração com ``async for``,
 ``insert_one``/``insert_many`` (com ``_id`` gerado), ``replace_one``/``find_one_and_replace`` (com ``upsert``),
-``find_one_and_update`` só com ``$inc`` (com ``upsert``),
+``find_one_and_update`` só com ``$inc`` (com ``upsert``), ``update_one`` só com ``$set`` (com ``upsert``),
+``index_information``, ``drop``,
 ``delete_one``/``delete_many``, ``distinct``, ``count_documents`` e o ``aggregate`` mínimo das
 estatísticas de memória (``$match``, ``$group`` com ``$sum: 1``/``$max``, ``$sort``, ``$skip``,
-``$limit``, ``$count``) e dos runs da sessão do agno 3.x (``$addFields`` só com
-``{"$ifNull": ["$campo", default]}``). O índice único de
+``$limit``, ``$count``), dos runs da sessão do agno 3.x (``$addFields`` só com
+``{"$ifNull": ["$campo", default]}``) e da volta da migração v3.0.0 (``$group`` com ``$push``). O índice único de
 ``create_index(..., unique=True)`` é emulado: repetido vira ``BulkWriteError`` código 11000 no
 ``insert_many`` e ``DuplicateKeyError`` nas demais escritas, como no pymongo. Cada leitura devolve
 uma cópia do documento, como um documento novo vindo do banco. Igualdade como no BSON: booleano só
@@ -65,6 +67,10 @@ class FakeAsyncCursor:
         self.sorts.extend(keys)
         self._items = _sorted(self._items, keys)
         self._docs = iter(self._items)
+        return self
+
+    def batch_size(self, size: int) -> FakeAsyncCursor:
+        """Só o encadeamento do motor: em memória não há lote."""
         return self
 
     def skip(self, count: int) -> FakeAsyncCursor:
@@ -124,34 +130,66 @@ def _matches(doc: dict[str, Any], query: dict[str, Any]) -> bool:
 
 
 def _operator_matches(doc: dict[str, Any], key: str, expected: dict[str, Any]) -> bool:
-    """Condição de operador num campo: ``$in``, ``$nin``, ``$exists`` ou ``$ne``; outro falha alto.
+    """Condição de operador num campo: ``$in``, ``$nin``, ``$exists``, ``$ne``, ``$gt``, ``$size`` e
+    ``$not`` (de outra condição de operador); vários operadores no mesmo campo valem juntos (E), como
+    no Mongo. Outro operador falha alto.
 
     ``$nin`` é a negação do ``$in``: campo nulo ou ausente passa, salvo se ``None`` estiver na lista.
+    ``$size`` só casa com lista do tamanho dado; ``$gt`` só compara valores do mesmo tipo numérico.
     """
+    return all(_single_operator_matches(doc, key, operator, operand) for operator, operand in expected.items())
+
+
+def _single_operator_matches(doc: dict[str, Any], key: str, operator: str, operand: Any) -> bool:
     actual = doc.get(key)
-    if set(expected) == {"$in"}:
-        return any(_field_equal(actual, option) for option in expected["$in"])
-    if set(expected) == {"$nin"}:
-        return not any(_field_equal(actual, option) for option in expected["$nin"])
-    if set(expected) == {"$exists"}:
-        return (key in doc) is bool(expected["$exists"])
-    if set(expected) == {"$ne"}:
-        return not _field_equal(actual, expected["$ne"])
-    raise NotImplementedError(f"FakeMongoCollection: operador não suportado em {key!r}")
+    if operator == "$in":
+        return any(_field_equal(actual, option) for option in operand)
+    if operator == "$nin":
+        return not any(_field_equal(actual, option) for option in operand)
+    if operator == "$exists":
+        return (key in doc) is bool(operand)
+    if operator == "$ne":
+        return not _field_equal(actual, operand)
+    if operator == "$gt":
+        numbers = (int, float)
+        return isinstance(actual, numbers) and not isinstance(actual, bool) and actual > operand
+    if operator == "$size":
+        return isinstance(actual, list) and len(actual) == operand
+    if operator == "$not" and isinstance(operand, dict) and all(k.startswith("$") for k in operand):
+        return not _operator_matches(doc, key, operand)
+    raise NotImplementedError(f"FakeMongoCollection: operador não suportado em {key!r}: {operator}")
 
 
 def _projected(doc: dict[str, Any], projection: dict[str, Any] | None) -> dict[str, Any]:
-    """Cópia do documento; com projeção de inclusão (``{"campo": 1}``), só esses campos e o ``_id``."""
+    """Cópia do documento; com projeção de inclusão (``{"campo": 1}``), só esses campos e o ``_id``.
+
+    Caminho com um ponto (``{"runs.run_id": 1}``) projeta o subcampo do subdocumento ou de cada
+    subdocumento do array, como o Mongo (item que não é documento sai; documento sem o subcampo vira ``{}``).
+    """
     if not projection:
         return copy.deepcopy(doc)
     if not all(projection.values()):
         raise NotImplementedError("FakeMongoCollection: só projeção de inclusão")
-    return {k: copy.deepcopy(v) for k, v in doc.items() if k == "_id" or k in projection}
+    projected = {k: copy.deepcopy(v) for k, v in doc.items() if k == "_id" or k in projection}
+    dotted = [path.split(".") for path in projection if "." in path]
+    if len({parts[0] for parts in dotted}) != len(dotted) or any(len(parts) != 2 for parts in dotted):
+        raise NotImplementedError(f"FakeMongoCollection: projeção pontilhada não suportada: {projection}")
+    for head, subfield in dotted:
+        value = doc.get(head)
+        if isinstance(value, dict):
+            projected[head] = _pick(value, subfield)
+        elif isinstance(value, list):
+            projected[head] = [_pick(item, subfield) for item in value if isinstance(item, dict)]
+    return projected
+
+
+def _pick(subdoc: dict[str, Any], field: str) -> dict[str, Any]:
+    return {field: copy.deepcopy(subdoc[field])} if field in subdoc else {}
 
 
 def _aggregate(docs: list[dict[str, Any]], pipeline: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Pipeline mínimo: ``$match``, ``$addFields`` (só ``$ifNull``), ``$group`` (``_id: "$campo"``,
-    ``$sum: 1``, ``$max: "$campo"``), ``$sort``, ``$skip``, ``$limit`` e ``$count``. Estágio,
+    ``$sum: 1``, ``$max: "$campo"``, ``$push: "$campo"``), ``$sort``, ``$skip``, ``$limit`` e ``$count``. Estágio,
     expressão ou acumulador fora disso falha alto."""
     rows = [copy.deepcopy(doc) for doc in docs]
     for stage in pipeline:
@@ -224,9 +262,12 @@ def _group(rows: list[dict[str, Any]], spec: dict[str, Any]) -> list[dict[str, A
 
 
 def _accumulate(group: dict[str, Any], field_name: str, accumulator: dict[str, Any], row: dict[str, Any]) -> None:
-    """Aplica ``$sum: 1`` ou ``$max: "$campo"`` de uma linha ao grupo; outro acumulador falha alto."""
+    """Aplica ``$sum: 1``, ``$max: "$campo"`` ou ``$push: "$campo"`` de uma linha ao grupo; outro
+    acumulador falha alto."""
     ((operator, operand),) = accumulator.items()
-    if operator == "$sum" and operand == 1:
+    if operator == "$push" and isinstance(operand, str) and operand.startswith("$"):
+        group.setdefault(field_name, []).append(row.get(operand.removeprefix("$")))
+    elif operator == "$sum" and operand == 1:
         group[field_name] = group.get(field_name, 0) + 1
     elif operator == "$max" and isinstance(operand, str):
         value = row.get(operand.removeprefix("$"))
@@ -324,6 +365,26 @@ class FakeMongoCollection:
         self.docs.append(inserted)
         return FakeWriteResult(upserted_id=inserted["_id"])
 
+    async def update_one(
+        self, filter: dict[str, Any], update: dict[str, Any], upsert: bool = False  # pylint: disable=redefined-builtin
+    ) -> FakeWriteResult:
+        """Só ``$set`` (carimbo de versão do esquema, volta da migração); sem casar e com ``upsert``,
+        cria pelos campos de igualdade do filtro."""
+        if set(update) != {"$set"}:
+            raise NotImplementedError(f"update não suportado pelo fake: {sorted(update)}")
+        self._use(filter)
+        found = next((d for d in self.docs if _matches(d, filter)), None)
+        if found is None and not upsert:
+            return FakeWriteResult()
+        changed = {**(found or {k: v for k, v in filter.items() if not isinstance(v, dict)}), **update["$set"]}
+        self._refuse_duplicate(changed, replacing=found)
+        if found is None:
+            inserted = {"_id": ObjectId(), **copy.deepcopy(changed)}
+            self.docs.append(inserted)
+            return FakeWriteResult(upserted_id=inserted["_id"])
+        found.update(copy.deepcopy(update["$set"]))
+        return FakeWriteResult(matched=1)
+
     async def find_one_and_replace(
         self,
         filter: dict[str, Any],  # pylint: disable=redefined-builtin  # nome do parâmetro no pymongo (o agno passa por nome)
@@ -384,6 +445,25 @@ class FakeMongoCollection:
         if unique and len(fields) == 1:
             self.unique_keys.add(fields[0][0])
         return name or "_".join(f"{k}_{d}" for k, d in fields)
+
+    async def index_information(self) -> dict[str, dict[str, Any]]:
+        """Como no pymongo: nome → ``{"key": [(campo, direção)], "unique": ...}``; coleção que não existe
+        no servidor (sem documento nem índice) não tem índice, nem o ``_id_``."""
+        self._use()
+        if not (self.docs or self.indexes):
+            return {}
+        info: dict[str, dict[str, Any]] = {"_id_": {"key": [("_id", 1)]}}
+        for index in self.indexes:
+            name = index["name"] or "_".join(f"{k}_{d}" for k, d in index["keys"])
+            info[name] = {"key": list(index["keys"]), **({"unique": True} if index["unique"] else {})}
+        return info
+
+    async def drop(self) -> None:
+        """Apaga documentos e índices: a coleção deixa de existir no servidor."""
+        self._use()
+        self.docs.clear()
+        self.indexes.clear()
+        self.unique_keys.clear()
 
     async def insert_one(self, doc: dict[str, Any]) -> None:
         """Como o pymongo: ``_id`` gerado no documento passado; repetido no índice único = ``DuplicateKeyError``."""

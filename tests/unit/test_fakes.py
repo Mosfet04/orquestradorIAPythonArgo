@@ -23,6 +23,7 @@ from tests.fakes import (
     RecordingLogger,
     ScriptExhaustedError,
 )
+from tests.fakes.mongo import FakeMongoCollection
 from tests.fakes.telemetry import RecordingTelemetryMetrics
 
 # ── FakeChatModel ───────────────────────────────────────────────────
@@ -217,3 +218,16 @@ def test_recording_telemetry_metrics_tem_a_assinatura_da_fachada_real():
     assert len(names) == 6
     for name in names:
         assert _public_params(getattr(fake, name)) == _public_params(getattr(TelemetryMetrics, name)), name
+
+
+async def test_fake_mongo_projecao_pontilhada_como_o_mongo() -> None:
+    """``{"a.b": 1}``: subcampo do subdocumento ou de cada subdocumento do array (F3-06, achado N1)."""
+    coll = FakeMongoCollection(
+        [{"_id": 1, "k": "x", "meta": {"b": 1, "c": 2}, "runs": [{"b": "r1", "c": "big"}, {"c": "sem b"}, "solto"]}]
+    )
+
+    (doc,) = [d async for d in coll.find({}, {"meta.b": 1, "runs.b": 1})]
+
+    assert doc == {"_id": 1, "meta": {"b": 1}, "runs": [{"b": "r1"}, {}]}
+    with pytest.raises(NotImplementedError):
+        coll.find({}, {"runs.b": 1, "runs.c": 1})

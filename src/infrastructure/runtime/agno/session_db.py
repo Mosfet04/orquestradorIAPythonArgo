@@ -76,8 +76,9 @@ class SessionDb(AsyncMongoDb):
         ``upsert_session``); essa leitura é só do ``user_id`` da sessão e não é atômica com a
         gravação (a sessão nova disputada por dois usuários ao mesmo tempo).
 
-        Não vê o run que só existe no campo legado ``runs`` da sessão (gravado pelo 2.5.8): o
-        primeiro a gravar esse ``run_id`` em ``agno_runs`` fica com ele (pendência do F3-06).
+        Não vê o run que só existe no campo legado ``runs`` da sessão (gravado pelo 2.5.8): até a
+        migração (``session_migration``, F3-06) copiá-lo para ``agno_runs`` com o dono da sessão, o
+        primeiro a gravar esse ``run_id`` em ``agno_runs`` fica com ele.
         """
         sessions = await self._get_collection(table_type="sessions")
         session = await sessions.find_one({"session_id": session_id}, {"user_id": 1}) if sessions is not None else None
@@ -97,6 +98,19 @@ class SessionDb(AsyncMongoDb):
         except DuplicateKeyError as exc:
             raise RunOwnershipError("run_id já gravado em outra sessão ou de outro usuário; run não gravado") from exc
 
+    def _invalidate_table_cache(self, table_name: str) -> None:
+        """Depois de uma migração (``MigrationManager``), a próxima gravação recria os índices de ``agno_runs``.
+
+        O ``down`` da v3.0.0 apaga ``agno_runs``, e o ``AsyncMongoDb`` só cria os índices da coleção
+        na primeira vez que a usa (guarda a coleção em ``runs_collection`` e marca
+        ``_<coleção>_initialized``): sem isto, o processo que fez o ``down`` (ex.: a rota
+        ``/databases/{id}/migrate``) voltaria a gravar runs sem o índice único de ``run_id`` de que a
+        recusa do ``upsert_run`` depende.
+        """
+        super()._invalidate_table_cache(table_name)
+        vars(self).pop("runs_collection", None)
+        vars(self).pop(f"_{self.runs_table_name}_initialized", None)
+
     async def close(self) -> None:
         """Fecha o cliente uma vez e fora do event loop; chamadas seguintes não fazem nada.
 
@@ -108,6 +122,13 @@ class SessionDb(AsyncMongoDb):
             return
         self._closed = True
         await asyncio.to_thread(self._owned_client.close)
+
+
+# As migrações do agno 3.1.12 escolhem o backend pelo nome da classe (``type(db).__name__ ==
+# "AsyncMongoDb"`` em ``agno/db/migrations/versions/v3_0_0.py``, no ``async_up`` e no ``async_down``):
+# com o nome ``SessionDb`` a v3.0.0 não copiava nenhum run e o ``MigrationManager`` carimbava a versão
+# 3.0.0 mesmo assim (passo sem efeito também avança o carimbo), e a migração nunca mais rodava.
+SessionDb.__name__ = AsyncMongoDb.__name__
 
 
 def create_session_db(db_url: str, db_name: str) -> SessionDb:

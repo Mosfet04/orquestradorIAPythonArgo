@@ -311,9 +311,8 @@ def test_varredura_toda_rota_real_respeita_a_classe(sweep_apps: dict[str, FastAP
         # FA-04: alias do /admin/config/reload; sem o caso de uso no app.state (sem lifespan), 503 próprio.
         ("POST", "/admin/refresh-cache", {503}),
         ("GET", "/metrics/cache", {200}),
-        # F2-08: o AgentOS tem o db de sessões (db=). O migrate do agno 2.5.8 não funciona com Mongo
-        # (get_latest_schema_version sem table_name, no MongoDb síncrono também): 207 com a falha.
-        ("POST", "/databases/all/migrate", {207}),
+        # F2-08: o AgentOS tem o db de sessões (db=). F3-06: o agno 3.x migra o Mongo (fim do 207 do 2.5.8).
+        ("POST", "/databases/all/migrate", {200}),
         ("GET", "/registry", {200}),
         ("GET", "/components", {503}),  # db assíncrono: /components segue stub 503 (e não 401/403)
         # Rotas reais desde o F2-08. Agno 3.x: o Mongo implementa a agenda (200, lista vazia); aprovações
