@@ -23,6 +23,7 @@ from src.domain.ports import AgentHandle, AgentRuntime, TeamHandle
 from src.infrastructure.logging.logger_adapter import StructlogLoggerAdapter
 from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService
 from src.infrastructure.runtime.agno.agui_router import build_agui_router
+from src.infrastructure.runtime.agno.eval_runs_router import build_eval_runs_disabled_router
 from src.infrastructure.runtime.agno.run_cancellation import (
     build_run_cancel_router,
     install_run_cancellation_manager,
@@ -114,7 +115,7 @@ class AgnoRuntime(AgentRuntime):
 
         O preparo (db padrão, ``initialize_agent``/``initialize_team``, ``store_events``, ids repetidos) é o
         do construtor do AgentOS, a API pública que o faz: um AgentOS sem app, descartado. As listas são as
-        mesmas, com conteúdo novo: as rotas que as guardaram na montagem (``/eval-runs``) e o ``/registry``
+        mesmas, com conteúdo novo: as rotas que as guardaram na montagem (``/schedules``) e o ``/registry``
         veem as entidades novas.
         """
         served_agents, served_teams = agent_os.agents, agent_os.teams
@@ -136,7 +137,10 @@ class AgnoRuntime(AgentRuntime):
         *,
         cors_allowed_origins: Sequence[str],
     ) -> None:
-        """Monta no ``app`` o AgentOS, as rotas de cancel (F1-10) e, depois dele, o AG-UI por entidade.
+        """Monta no ``app`` o AgentOS, as rotas de cancel e de ``/eval-runs*`` e, depois dele, o AG-UI.
+
+        As de cancel (F1-10) e o 404 de ``/eval-runs*`` (F3-08) entram antes do ``get_app()``, que pula
+        as do agno (``preserve_base_app``).
 
         Sem a interface ``AGUI`` do agno: ela só expõe uma entidade em ``/agui`` e fixa
         ``Access-Control-Allow-Origin: *`` (ver ``agui_router``). O router entra depois do
@@ -167,6 +171,8 @@ class AgnoRuntime(AgentRuntime):
         app.router.lifespan_context = _no_lifespan
         try:
             app.include_router(build_run_cancel_router(self._served, StructlogLoggerAdapter("run_cancel")))
+            # /eval-runs* = 404 até a F8 (F3-08): os evals do agno ignoram AGNO_TELEMETRY.
+            app.include_router(build_eval_runs_disabled_router())
             agent_os.get_app()
             app.include_router(build_agui_router(self._served, StructlogLoggerAdapter("agui")))
             agent_os_lifespan = app.router.lifespan_context

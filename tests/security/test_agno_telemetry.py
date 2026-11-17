@@ -9,9 +9,11 @@ de ponta a ponta (lifespan, run REST de agente e de team, AG-UI) e depois um Age
 controle com telemetria ligada: quando o controle chega ao gravador, o que o app mandou antes também
 chegou (``tests/fakes/agno_telemetry.py``).
 
-Resíduo conhecido (Agno 2.5.8, revisão na F3): evals criados pela rota ``/eval-runs`` do
-AgentOS (``agno/os/routers/evals/utils.py``) usam ``telemetry=True`` e ignoram
-``AGNO_TELEMETRY``.
+F3-08: os evals do AgentOS (``agno/os/routers/evals/utils.py``, agno 3.1.12) usam ``telemetry=True`` e
+ignoram ``AGNO_TELEMETRY`` (``agno/eval/utils.py``, ``log_eval_telemetry``). Até a F8 as rotas
+``/eval-runs*`` respondem 404 (``eval_runs_router``): nenhum eval roda e nada sai. O teste bloqueia a
+rede (socket) e grava a telemetria do agno no ``httpx``; a drenagem é um evento de eval de controle pela
+mesma função do agno.
 """
 
 from __future__ import annotations
@@ -23,16 +25,21 @@ import agno.api.os as agno_api_os
 import httpx
 import pytest
 from agno.agent import Agent
+from agno.db.schemas.evals import EvalType
+from agno.eval.utils import log_eval_telemetry
 from agno.os import AgentOS
 
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.team_config import TeamConfig
 from src.infrastructure.runtime.agno.agent_factory_service import AgentFactoryService
+from src.infrastructure.runtime.agno.eval_runs_router import EVAL_RUNS_ROUTES
 from src.infrastructure.runtime.agno.http_tool_factory import HttpToolFactory
 from src.infrastructure.runtime.agno.team_factory_service import TeamFactoryService
 from src.infrastructure.web.app_factory import AppFactory
 from tests.fakes import FakeChatModel, FakeEmbedderFactory, FakeModelFactory, InMemoryToolRepository, RecordingLogger
 from tests.fakes.agno_telemetry import AgnoTelemetryRecorder
+from tests.fakes.network import block_network
+from tests.fakes.session_db import fake_session_db
 from tests.fakes.web import LOOPBACK_BASE_URL, LOOPBACK_CLIENT, mount_agent_os
 
 
@@ -135,8 +142,13 @@ async def test_controle_positivo_drena_o_envio_e_o_app_nao_manda_telemetria(monk
     agent, team = await _production_entities()
     runtime = mount_agent_os(factory, app, [agent], [team])
     agui_body = {
-        "threadId": "t1", "runId": "r1", "state": {}, "messages": [{"id": "m1", "role": "user", "content": "oi"}],
-        "tools": [], "context": [], "forwardedProps": {"user_id": "ana"},
+        "threadId": "t1",
+        "runId": "r1",
+        "state": {},
+        "messages": [{"id": "m1", "role": "user", "content": "oi"}],
+        "tools": [],
+        "context": [],
+        "forwardedProps": {"user_id": "ana"},
     }
 
     await runtime.start()  # no 3.x, o launch do AgentOS sai num lifespan
@@ -162,3 +174,44 @@ async def test_controle_positivo_drena_o_envio_e_o_app_nao_manda_telemetria(monk
     await _barrier(recorder, control_agent)
 
     assert recorder.events() == [("/telemetry/os", "os-controle"), ("/telemetry/runs", "controle")]
+
+
+async def _eval_barrier(recorder: AgnoTelemetryRecorder, run_id: str) -> None:
+    """Evento de eval de controle pela função que os evals do agno usam (ignora ``AGNO_TELEMETRY``)."""
+    log_eval_telemetry(run_id=run_id, eval_type=EvalType.PERFORMANCE)
+    await recorder.wait_for(("/telemetry/evals", run_id))
+
+
+EVAL_RUNS_REQUESTS = [(method, path.replace("{eval_run_id}", "qualquer")) for method, path in EVAL_RUNS_ROUTES]
+
+
+async def test_eval_runs_responde_404_sem_egress_para_a_telemetria(monkeypatch: pytest.MonkeyPatch):
+    network = block_network(monkeypatch)
+    recorder = AgnoTelemetryRecorder().install(monkeypatch)
+    await _eval_barrier(recorder, "controle-eval-inicial")  # evento atrasado de outro teste do worker
+    recorder.requests.clear()
+    monkeypatch.setenv("AGNO_TELEMETRY", "false")
+    factory = AppFactory()
+    app = factory.create_app()
+    model = FakeChatModel(responses=["ok"] * 5)
+    agent = Agent(id="ag", name="ag", model=model, telemetry=False, db=fake_session_db())
+    runtime = mount_agent_os(factory, app, [agent], [])
+    # Corpo válido para o agno: sem o 404, roda um eval de performance de verdade (1 run, sem warm-up).
+    eval_body = {"agent_id": "ag", "eval_type": "performance", "input": "oi", "num_iterations": 1}
+
+    await runtime.start()
+    try:
+        transport = httpx.ASGITransport(app=app, client=LOOPBACK_CLIENT)
+        async with httpx.AsyncClient(transport=transport, base_url=LOOPBACK_BASE_URL) as client:
+            responses = [
+                await client.request(method, path, json=eval_body if method in ("POST", "PATCH") else None)
+                for method, path in EVAL_RUNS_REQUESTS
+            ]
+    finally:
+        await runtime.close()
+    await _eval_barrier(recorder, "controle-eval")
+
+    assert recorder.events() == [("/telemetry/evals", "controle-eval")]
+    assert network.attempts == [], f"tentativas de rede: {network.attempts}"
+    assert model.calls == [], "o eval rodou o agente"
+    assert [r.status_code for r in responses] == [404] * len(EVAL_RUNS_REQUESTS), [r.text[:200] for r in responses]

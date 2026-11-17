@@ -157,6 +157,56 @@
    ],
    [
     "APIRoute",
+    "/eval-runs",
+    [
+     "GET"
+    ],
+    {
+     "GET": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/eval-runs/{eval_run_id}",
+    [
+     "GET"
+    ],
+    {
+     "GET": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/eval-runs",
+    [
+     "DELETE"
+    ],
+    {
+     "DELETE": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/eval-runs/{eval_run_id}",
+    [
+     "PATCH"
+    ],
+    {
+     "PATCH": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/eval-runs",
+    [
+     "POST"
+    ],
+    {
+     "POST": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
     "/",
     [
      "GET"
@@ -851,56 +901,6 @@
     ],
     {
      "DELETE": "ADMIN"
-    }
-   ],
-   [
-    "APIRoute",
-    "/eval-runs",
-    [
-     "GET"
-    ],
-    {
-     "GET": "ADMIN"
-    }
-   ],
-   [
-    "APIRoute",
-    "/eval-runs/{eval_run_id}",
-    [
-     "GET"
-    ],
-    {
-     "GET": "ADMIN"
-    }
-   ],
-   [
-    "APIRoute",
-    "/eval-runs",
-    [
-     "DELETE"
-    ],
-    {
-     "DELETE": "ADMIN"
-    }
-   ],
-   [
-    "APIRoute",
-    "/eval-runs/{eval_run_id}",
-    [
-     "PATCH"
-    ],
-    {
-     "PATCH": "ADMIN"
-    }
-   ],
-   [
-    "APIRoute",
-    "/eval-runs",
-    [
-     "POST"
-    ],
-    {
-     "POST": "ADMIN"
     }
    ],
    [
@@ -1634,6 +1634,56 @@
    ],
    [
     "APIRoute",
+    "/eval-runs",
+    [
+     "GET"
+    ],
+    {
+     "GET": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/eval-runs/{eval_run_id}",
+    [
+     "GET"
+    ],
+    {
+     "GET": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/eval-runs",
+    [
+     "DELETE"
+    ],
+    {
+     "DELETE": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/eval-runs/{eval_run_id}",
+    [
+     "PATCH"
+    ],
+    {
+     "PATCH": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
+    "/eval-runs",
+    [
+     "POST"
+    ],
+    {
+     "POST": "ADMIN"
+    }
+   ],
+   [
+    "APIRoute",
     "/",
     [
      "GET"
@@ -2328,56 +2378,6 @@
     ],
     {
      "DELETE": "ADMIN"
-    }
-   ],
-   [
-    "APIRoute",
-    "/eval-runs",
-    [
-     "GET"
-    ],
-    {
-     "GET": "ADMIN"
-    }
-   ],
-   [
-    "APIRoute",
-    "/eval-runs/{eval_run_id}",
-    [
-     "GET"
-    ],
-    {
-     "GET": "ADMIN"
-    }
-   ],
-   [
-    "APIRoute",
-    "/eval-runs",
-    [
-     "DELETE"
-    ],
-    {
-     "DELETE": "ADMIN"
-    }
-   ],
-   [
-    "APIRoute",
-    "/eval-runs/{eval_run_id}",
-    [
-     "PATCH"
-    ],
-    {
-     "PATCH": "ADMIN"
-    }
-   ],
-   [
-    "APIRoute",
-    "/eval-runs",
-    [
-     "POST"
-    ],
-    {
-     "POST": "ADMIN"
     }
    ],
    [

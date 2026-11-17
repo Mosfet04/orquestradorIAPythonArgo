@@ -23,7 +23,8 @@ import pytest
 from agno.api.settings import agno_api_settings
 
 TelemetryEvent = tuple[str, str | None]
-"""``(path, id)``: ``("/telemetry/os", os_id)`` ou ``("/telemetry/runs", agent_id ou team_id)``."""
+"""``(path, id)``: ``("/telemetry/os", os_id)``, ``("/telemetry/runs", agent_id ou team_id)`` ou
+``("/telemetry/evals", run_id)``."""
 
 
 class AgnoTelemetryRecorder:
@@ -56,12 +57,12 @@ class AgnoTelemetryRecorder:
         return httpx.Response(200, json={}, request=request)
 
     def events(self) -> list[TelemetryEvent]:
-        """Os requests gravados como ``(path, id da entidade ou do AgentOS)``."""
+        """Os requests gravados como ``(path, id da entidade, do AgentOS ou do run de eval)``."""
         events: list[TelemetryEvent] = []
         for request in list(self.requests):
             body = json.loads(request.content or b"{}")
             data = body.get("data") or {}
-            entity_id = body.get("os_id") or data.get("agent_id") or data.get("team_id")
+            entity_id = body.get("os_id") or data.get("agent_id") or data.get("team_id") or body.get("run_id")
             events.append((request.url.path, entity_id))
         return events
 

@@ -194,5 +194,5 @@ O que muda para clientes e integradores entre o 2.5.8 e o 3.1.12 (decisões do d
 **Outros**
 
 - Os runs ficam em `agno_runs` (um documento por run, chave `run_id`); o `get_session` junta os da coleção com os do campo legado.
-- Telemetria (só com `AGNO_TELEMETRY=true`) sai numa thread em fila, não no fim do run. O app assume `AGNO_TELEMETRY=false`. Resíduo conhecido: `/eval-runs` ignora a variável (tratado no F3-08).
+- Telemetria (só com `AGNO_TELEMETRY=true`) sai numa thread em fila, não no fim do run. O app assume `AGNO_TELEMETRY=false`. `/eval-runs*` responde 404 até a F8 (F3-08): os evals do agno ignorariam a variável.
 - RAG: provider de embedding fora na indexação vira `EmbeddingError` tratado pelo agno (conteúdo `FAILED`): nenhum chunk gravado, o agente sobe com o RAG vazio e o próximo startup indexa. O log do agno leva o texto do erro do provider.

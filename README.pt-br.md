@@ -657,7 +657,7 @@ OTEL_SERVICE_NAME=orquestrador-ia
 
 > **CORS**: métodos `GET, POST, PUT, PATCH, DELETE, OPTIONS` e headers `Authorization, Content-Type, X-API-Key` (mais os CORS-safelisted); headers de resposta expostos: `Deprecation`, `Link`, `ETag` e `Runtime-Revision`. O AgentOS recebe a mesma lista de origens; o CORS do app é reaplicado depois da montagem (inclusive se ela falhar) e é sempre o middleware mais externo, então as origens padrão do Agno não entram.
 
-> **Telemetria do Agno**: `AGNO_TELEMETRY=true` explícito religa a telemetria de Agent/Team (o Agno 3.1.12 deixa a variável sobrepor o `telemetry=False`); o AgentOS continua desligado. Resíduo conhecido: os evals criados pela rota `/eval-runs` do AgentOS (`agno/os/routers/evals/utils.py`) usam o default `telemetry=True` do Agno e ignoram `AGNO_TELEMETRY`; revisão prevista no F3-08.
+> **Telemetria do Agno**: `AGNO_TELEMETRY=true` explícito religa a telemetria de Agent/Team (o Agno 3.1.12 deixa a variável sobrepor o `telemetry=False`); o AgentOS continua desligado. As rotas `/eval-runs*` do AgentOS respondem 404 até a F8 (F3-08): os evals do Agno 3.1.12 (`agno/os/routers/evals/utils.py`) usam o default `telemetry=True` e ignorariam `AGNO_TELEMETRY`.
 
 > **Convenção de API Keys**: o orquestrador busca automaticamente `{PROVIDER}_API_KEY` no ambiente. Exemplo: para `factoryIaModel: "gemini"`, busca `GEMINI_API_KEY`.
 

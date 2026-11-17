@@ -18,6 +18,9 @@ F3-05 (agno 3.1.12): snapshot regravado e revisto rota a rota. Sai ``GET /models
 ``continue`` de agente, team e workflow, ``/info`` e ``/sessions`` (``search``, ``filter-schema``,
 ``run-previews``, ``media``). Na pilha entra ``RunAuthorizationMiddleware`` do agno, dentro da auth
 (não reescreve o path: só abre o contexto de autorização do run).
+
+F3-08: as cinco rotas ``/eval-runs*`` passam a ser as do 404 (``eval_runs_router``), incluídas logo
+depois das de cancel e antes do ``get_app()``; só mudam de posição no snapshot (mesmos métodos e classe).
 """
 
 from __future__ import annotations
