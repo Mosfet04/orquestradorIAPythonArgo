@@ -116,6 +116,8 @@ Never edit a `.lock` file by hand. Use the `pip-tools` installed by the dev lock
 pip install --dry-run --require-hashes -r requirements.lock -r requirements-dev.lock
 ```
 
+The 2.5.8 to 3.1.12 upgrade of a deployed database (backup, session migration, rollback, contract changes) is in [docs/runbooks/f3-agno-3.md](docs/runbooks/f3-agno-3.md); it is in Portuguese.
+
 #### Temporary venv with the previous agno (dual-run, F3)
 
 The committed locks pin agno 3.1.12 (F3-05). To run the version-neutral set (`tests/security/test_run_invariants_across_agno.py`, `tests/security/test_agno_telemetry.py`, `tests/security/test_qa_f1_03_edge.py`, `tests/security/test_qa_f2_08_session_isolation.py` and `tests/unit/test_api_key_auth.py`) against agno 2.5.8, install the locks of the last commit before the bump in a separate venv outside the repo, and run them against a tree of that commit (the code of the current branch imports the 3.x API). Nothing here is committed.
@@ -392,6 +394,8 @@ pytest -m "not live" -n auto
 # Live tests against a disposable MongoDB (skipped without MONGO_LIVE_URL; never in CI), e.g. the
 # MongoDB Atlas Local of docker-compose.dev.yml (README, "Run locally"; it also has vector search):
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d mongodb
+# If mongod/mongot fail on the open-files limit (seen in the F3-06 live runs), start the
+# Atlas Local container with `--ulimit nofile=64000:64000`.
 read -rs MONGO_PW   # MONGO_ROOT_PASSWORD, read without echo (never on the command line)
 MONGO_LIVE_URL="mongodb://<user>:${MONGO_PW}@localhost:27017/?directConnection=true" pytest -m live -rs
 

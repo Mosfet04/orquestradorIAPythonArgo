@@ -114,6 +114,8 @@ Critérios de aceite: comandos conferidos contra o F3-06; links válidos; docs c
 Testes exigidos: testes de docs existentes (ex.: `tests/unit/test_env_files.py`).
 Riscos e dependências: depende do F3-06.
 
+Resultado (decisão registrada): `docs/runbooks/f3-agno-3.md` (pré-checagens, `mongodump` por arquivo de config, backup → deploy sem tráfego → `--check` → migrate → verificar → liberar, rollback por restore ou `--down`, cleanup só num release posterior, mudanças de contrato). Comandos conferidos contra `session_migration.py` (flags `--check`/`--down` exclusivas, saída 0/1/2, config por `AppConfig.load()`) e contra a rota do agno 3.1.12 (`agno/os/routers/database.py:59-71,149`). README pt-br/en ganham a seção "Atualizar do agno 2.5.8 para o 3.1.12" com o link do runbook e as coleções `agno_runs`/`agno_schema_versions`; a nota de telemetria cita o 3.1.12 (a variável ainda sobrepõe o `telemetry=False`, `agno/agent/_init.py:64`); CONTRIBUTING com a observação do `--ulimit nofile=64000:64000` do Atlas Local (visto no live do F3-06) e o link do runbook; CLAUDE.md já estava sem ignore. Conflito de `run_id` no `--check`: antes do `up` o `up` troca o run alheio pelo do dono (decidir à mão antes se ele deve ser mantido); depois do `up` é `run_id` repetido em duas sessões legadas, só à mão. Pendência para o dono: os comentários do `requirements.in` ainda dizem que os tetos de major foram validados no 2.5.8 (o F3-05 os manteve; subir um é item próprio).
+
 ## F3-08 — Telemetria dos evals (`/eval-runs`)
 Modelo: opus
 Objetivo: fechar o resíduo do F1-03 conforme a decisão do dono.
