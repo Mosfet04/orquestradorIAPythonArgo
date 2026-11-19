@@ -1,17 +1,19 @@
 """Db único de sessões e memória das entidades e do AgentOS (F2-08).
 
 Um ``AsyncMongoDb`` do agno para todos os agentes e teams, no lugar de um ``MongoDb``
-síncrono por entidade: o I/O de sessão e memória sai do event loop e há um cliente só para
-fechar. Mesmas coleções (``agno_sessions``, ``agno_memories``...), mesmos documentos e mesmos
+síncrono por entidade: o I/O de sessão e memória não bloqueia o event loop e há um cliente só
+para fechar. Mesmas coleções (``agno_sessions``, ``agno_memories``...), mesmos documentos e mesmos
 índices do ``MongoDb`` síncrono (``agno/db/mongo/schemas.py`` vale para os dois).
 
-Conferido no agno 3.1.12 com pymongo 4.18 e motor 3.7 (``agno/db/mongo/async_mongo.py``):
+Conferido no agno 3.1.12 com pymongo 4.20 (``agno/db/mongo/async_mongo.py``,
+``pymongo/asynchronous/mongo_client.py``):
 
-- o cliente é o **motor** (o agno detecta o tipo pelo módulo do cliente). O motor roda cada
-  chamada do pymongo numa thread do executor;
-- o ``close`` do agno chama ``client.close()`` no event loop, e o do motor é o do pymongo
-  síncrono (manda ``endSessions`` pela rede; com o Mongo fora espera a seleção de servidor). Por
-  isso o cliente é criado aqui e fechado aqui, numa thread;
+- o cliente é o ``AsyncMongoClient`` nativo do pymongo (F3-09; até lá, o motor, em fim de vida). O
+  agno o reconhece por ``isinstance`` (``_detect_client_type``) e o I/O é async de verdade, no
+  event loop, sem thread do executor. O cliente não conecta no construtor (só na primeira
+  operação) e fica preso ao event loop dessa operação (``_get_topology``): é o loop do app;
+- o ``close`` do cliente é corrotina (``endSessions`` async) e é aguardado aqui. O cliente é
+  criado aqui e fechado aqui, uma vez;
 - o ``get_session`` do agno 3.x lê por ``session_id`` (e ``user_id``) sem filtrar por
   ``session_type`` (o tipo só escolhe a classe devolvida) e junta os runs da coleção
   ``agno_runs`` aos do campo legado ``runs``: a conversa continua quando um team recebe o
@@ -25,7 +27,6 @@ Conferido no agno 3.1.12 com pymongo 4.18 e motor 3.7 (``agno/db/mongo/async_mon
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 from agno.db.mongo import AsyncMongoDb
@@ -33,7 +34,7 @@ from agno.db.utils import build_single_run_row
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
 from agno.run.workflow import WorkflowRunOutput
-from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo import AsyncMongoClient
 from pymongo.errors import DuplicateKeyError
 
 
@@ -42,13 +43,13 @@ class RunOwnershipError(ValueError):
 
 
 class SessionDb(AsyncMongoDb):
-    """``AsyncMongoDb`` do agno sobre um cliente motor que é dele: ``close`` fecha esse cliente.
+    """``AsyncMongoDb`` do agno sobre um ``AsyncMongoClient`` que é dele: ``close`` fecha esse cliente.
 
     ``db_url`` só entra na semente do ``id`` do db (o mesmo que o ``MongoDb`` síncrono derivava de
     URL e banco: o ``db_id`` das rotas do AgentOS não muda); quem conecta é o ``client``.
     """
 
-    def __init__(self, client: AsyncIOMotorClient[dict[str, Any]], *, db_url: str, db_name: str) -> None:
+    def __init__(self, client: AsyncMongoClient[dict[str, Any]], *, db_url: str, db_name: str) -> None:
         super().__init__(db_client=client, db_url=db_url, db_name=db_name)
         self._owned_client = client
         self._closed = False
@@ -112,7 +113,7 @@ class SessionDb(AsyncMongoDb):
         vars(self).pop(f"_{self.runs_table_name}_initialized", None)
 
     async def close(self) -> None:
-        """Fecha o cliente uma vez e fora do event loop; chamadas seguintes não fazem nada.
+        """Fecha o cliente uma vez (``close`` aguardado); chamadas seguintes não fazem nada.
 
         Quem chama: o lifespan de db do AgentOS (``_close_databases``) e o ``cleanup`` do
         container (que vale também quando o AgentOS não chegou a subir). Depois disso o cliente
@@ -121,7 +122,7 @@ class SessionDb(AsyncMongoDb):
         if self._closed:
             return
         self._closed = True
-        await asyncio.to_thread(self._owned_client.close)
+        await self._owned_client.close()
 
 
 # As migrações do agno 3.1.12 escolhem o backend pelo nome da classe (``type(db).__name__ ==
@@ -132,9 +133,9 @@ SessionDb.__name__ = AsyncMongoDb.__name__
 
 
 def create_session_db(db_url: str, db_name: str) -> SessionDb:
-    """Db de sessões do app, com um cliente motor novo (só conecta na primeira operação).
+    """Db de sessões do app, com um ``AsyncMongoClient`` novo (só conecta na primeira operação).
 
     Opções do cliente (timeouts, pool) são as do driver e as da própria URI, como no ``MongoDb``
     síncrono que este db substitui.
     """
-    return SessionDb(AsyncIOMotorClient(db_url), db_url=db_url, db_name=db_name)
+    return SessionDb(AsyncMongoClient(db_url), db_url=db_url, db_name=db_name)

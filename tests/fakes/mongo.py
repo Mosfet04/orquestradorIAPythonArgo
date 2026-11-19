@@ -1,5 +1,6 @@
-"""Coleção e cliente Mongo (motor) em memória para os repositórios de ``src/infrastructure/repositories``
-e para o db de sessões do agno (``SessionDb``, F2-08).
+"""Coleção e clientes Mongo em memória: o do motor (``FakeMotorClient``) para os repositórios de
+``src/infrastructure/repositories`` e o do pymongo nativo (``FakeAsyncMongoClient``, F3-09) para o db de
+sessões do agno (``SessionDb``, F2-08).
 
 Só o que os repositórios e o ``AsyncMongoDb`` do agno 2.5.8 usam em sessões e memória:
 ``find``/``find_one`` com filtro de igualdade em campos de topo (ex.: ``{"active": True}``), ``$in``,
@@ -31,7 +32,7 @@ from typing import Any
 
 import pytest
 from bson import ObjectId
-from pymongo import ReturnDocument
+from pymongo import AsyncMongoClient, ReturnDocument
 from pymongo.errors import BulkWriteError, DuplicateKeyError, InvalidOperation, ServerSelectionTimeoutError
 from pymongo.synchronous.mongo_client import MongoClient as SyncMongoClient
 
@@ -294,8 +295,8 @@ class FakeMongoCollection:
         self.queries: list[dict[str, Any]] = []
         self.unique_keys: set[str] = set()
         self.indexes: list[dict[str, Any]] = []
-        self.client: FakeMotorClient | None = None
-        """Cliente dono da coleção (``FakeMotorClient``): depois do ``close`` dele, toda operação falha."""
+        self.client: _FakeClient | None = None
+        """Cliente dono da coleção: depois do ``close`` dele, toda operação falha."""
 
     def _use(self, query: dict[str, Any] | None = None) -> None:
         if self.client is not None:
@@ -501,16 +502,24 @@ class FakeMongoClient:
         return self.collections
 
 
+class FakeAsyncMongoCollection(FakeMongoCollection):
+    """Coleção do ``AsyncMongoClient`` do pymongo: ``aggregate`` é corrotina e o cursor sai do ``await``
+    (``await (await collection.aggregate(p)).to_list(...)``); o resto da API é a mesma do motor."""
+
+    async def aggregate(self, pipeline: list[dict[str, Any]]) -> FakeAsyncCursor:  # type: ignore[override]
+        return super().aggregate(pipeline)
+
+
 class FakeMotorDatabase:
     """``database[collection]``: a coleção nasce no primeiro acesso, como no Mongo."""
 
-    def __init__(self, client: FakeMotorClient) -> None:
+    def __init__(self, client: _FakeClient) -> None:
         self._client = client
         self.collections: dict[str, FakeMongoCollection] = {}
 
     def __getitem__(self, collection_name: str) -> FakeMongoCollection:
         if collection_name not in self.collections:
-            collection = FakeMongoCollection()
+            collection = self._client.collection_type()
             collection.client = self._client
             self.collections[collection_name] = collection
         return self.collections[collection_name]
@@ -521,19 +530,16 @@ class FakeMotorDatabase:
         return [name for name, collection in self.collections.items() if collection.docs or collection.indexes]
 
 
-class FakeMotorClient:
-    """Cliente motor em memória com um database por nome (``client[db][collection]``).
+class _FakeClient:
+    """Um database por nome (``client[db][collection]``); depois do ``close`` toda operação levanta
+    ``InvalidOperation``, como o pymongo."""
 
-    O nome da classe tem ``Motor`` de propósito: o ``AsyncMongoDb`` do agno 2.5.8 reconhece o tipo
-    do cliente injetado pelo nome da classe (``_detect_client_type``). ``close`` é síncrono, como
-    no motor, e registra em ``closes`` se rodou na thread do event loop; depois dele toda operação
-    levanta ``InvalidOperation``, como o pymongo.
-    """
+    collection_type: type[FakeMongoCollection] = FakeMongoCollection
 
     def __init__(self) -> None:
         self.databases: dict[str, FakeMotorDatabase] = {}
         self.closes: list[bool] = []
-        """Por ``close``: ``True`` se rodou na thread do event loop (I/O síncrono no loop)."""
+        """Por ``close``: ``True`` se rodou na thread do event loop."""
 
     def __getitem__(self, database_name: str) -> FakeMotorDatabase:
         if database_name not in self.databases:
@@ -544,7 +550,31 @@ class FakeMotorClient:
         if self.closes:
             raise InvalidOperation("Cannot use MongoClient after close")
 
+
+class FakeMotorClient(_FakeClient):
+    """Cliente motor em memória.
+
+    O nome da classe tem ``Motor`` de propósito: o ``AsyncMongoDb`` do agno reconhece o tipo do
+    cliente injetado pelo nome da classe (``_detect_client_type``). ``close`` é síncrono, como no
+    motor, e registra em ``closes`` se rodou na thread do event loop (I/O síncrono no loop).
+    """
+
     def close(self) -> None:
+        self.closes.append(running_on_event_loop())
+
+
+class FakeAsyncMongoClient(_FakeClient):
+    """Cliente ``AsyncMongoClient`` (pymongo nativo) em memória (F3-09).
+
+    O nome da classe tem ``AsyncMongo`` de propósito: é por ele que o ``_detect_client_type`` do agno
+    3.1.12 o reconhece como o cliente nativo. ``aggregate`` é corrotina, como no driver. ``close`` é
+    corrotina: só registra quando aguardado (um ``close()`` sem ``await``, ou chamado numa thread, não
+    fecha nada, como no driver).
+    """
+
+    collection_type = FakeAsyncMongoCollection
+
+    async def close(self) -> None:
         self.closes.append(running_on_event_loop())
 
 
@@ -595,6 +625,10 @@ class SyncPymongoCalls:
     """``(operação, no event loop)`` de cada operação do pymongo síncrono (``find``, ``createIndexes``...)."""
     closes: list[bool] = field(default_factory=list)
     """Um item por ``MongoClient.close``."""
+    async_operations: list[str] = field(default_factory=list)
+    """Operações do ``AsyncMongoClient`` nativo (I/O async no loop, sem bloqueio), na ordem (F3-09)."""
+    async_closes: int = 0
+    """``AsyncMongoClient.close`` aguardados."""
 
     def on_event_loop(self) -> list[str]:
         """Operações que rodaram na thread do event loop (I/O síncrono no caminho async)."""
@@ -609,9 +643,13 @@ def trap_sync_pymongo(monkeypatch: pytest.MonkeyPatch) -> SyncPymongoCalls:
     essa escolha registra a operação e a thread e falha na hora com ``ServerSelectionTimeoutError``
     (o erro de um Mongo fora do ar): nenhum socket é aberto. ``MongoClient.close`` também é
     registrado. Vale para clientes reais (``MongoClient``, ``AsyncIOMotorClient``) criados no teste.
+
+    O ``AsyncMongoClient`` nativo (F3-09) não passa pelo pymongo síncrono: a escolha de servidor dele
+    vai para ``async_operations`` e falha do mesmo jeito; o ``close`` aguardado conta em ``async_closes``.
     """
     calls = SyncPymongoCalls()
     original_close = SyncMongoClient.close
+    original_async_close = AsyncMongoClient.close
 
     def select_server(self: Any, server_selector: Any, session: Any, operation: Any, *_: Any, **__: Any) -> Any:
         calls.operations.append((str(getattr(operation, "value", operation)), running_on_event_loop()))
@@ -621,6 +659,16 @@ def trap_sync_pymongo(monkeypatch: pytest.MonkeyPatch) -> SyncPymongoCalls:
         calls.closes.append(running_on_event_loop())
         original_close(self)
 
+    async def async_select_server(self: Any, selector: Any, session: Any, operation: Any, *_: Any, **__: Any) -> Any:
+        calls.async_operations.append(str(getattr(operation, "value", operation)))
+        raise ServerSelectionTimeoutError("trap_sync_pymongo: sem servidor (detector)")
+
+    async def async_close(self: Any) -> None:
+        calls.async_closes += 1
+        await original_async_close(self)
+
     monkeypatch.setattr(SyncMongoClient, "_select_server", select_server)
     monkeypatch.setattr(SyncMongoClient, "close", close)
+    monkeypatch.setattr(AsyncMongoClient, "_select_server", async_select_server)
+    monkeypatch.setattr(AsyncMongoClient, "close", async_close)
     return calls

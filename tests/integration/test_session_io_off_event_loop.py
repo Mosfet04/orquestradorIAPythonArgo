@@ -1,12 +1,14 @@
-"""F2-08: nenhuma chamada do pymongo síncrono no event loop durante um run nem no shutdown.
+"""F2-08/F3-09: nenhuma chamada do pymongo síncrono no event loop durante um run nem no shutdown.
 
 Pilha de produção: fábricas reais, ``Agent``/``Team`` do agno e o db de sessões como o composition
-root o cria (``create_session_db``: ``SessionDb`` com um ``AsyncIOMotorClient`` real). O detector
-(``trap_sync_pymongo``) intercepta a escolha de servidor do pymongo síncrono, por onde toda operação
-passa, registra a thread e falha como um Mongo fora do ar, sem abrir socket.
+root o cria (``create_session_db``: ``SessionDb`` com um ``AsyncMongoClient`` real, F3-09). O detector
+(``trap_sync_pymongo``) intercepta a escolha de servidor do pymongo síncrono e a do cliente nativo, por
+onde toda operação passa, registra e falha como um Mongo fora do ar, sem abrir socket.
 
 Vermelho antes do F2-08: com um ``MongoDb`` síncrono por entidade, o mesmo run fazia
-``createIndexes`` e ``find`` na thread do event loop, e o ``close`` de cada cliente também.
+``createIndexes`` e ``find`` na thread do event loop, e o ``close`` de cada cliente também. Até o
+F3-09 o cliente era o motor (pymongo síncrono numa thread do executor); agora nenhuma operação passa
+pelo pymongo síncrono.
 """
 
 from __future__ import annotations
@@ -75,7 +77,7 @@ async def test_run_de_agente_e_de_team_nao_chama_o_pymongo_sincrono_no_event_loo
     team = _team(db, agent)
 
     agent_run = await agent.arun("oi", user_id="ana", session_id="s-agente")
-    after_agent = len(pymongo_calls.operations)
+    after_agent = len(pymongo_calls.async_operations)
     # Agno 3.x: a leitura da sessão do team não engole o erro (``team/_storage.py``,
     # ``_aread_session``): com o Mongo fora o run do team falha em vez de seguir com sessão nova.
     with pytest.raises(ServerSelectionTimeoutError):
@@ -84,9 +86,9 @@ async def test_run_de_agente_e_de_team_nao_chama_o_pymongo_sincrono_no_event_loo
     # Agno 3.x: com o Mongo fora o run do agente também falha (antes seguia sem sessão). O que importa
     # aqui é que o I/O de sessão aconteceu (índices e leitura, do agente e do team) e fora do loop.
     assert agent_run.status == RunStatus.error
-    assert {"createIndexes", "find"} <= {operation for operation, _ in pymongo_calls.operations[:after_agent]}
-    assert len(pymongo_calls.operations) > after_agent >= 2  # o team também foi ao banco
-    assert pymongo_calls.on_event_loop() == []
+    assert {"createIndexes", "find"} <= set(pymongo_calls.async_operations[:after_agent])
+    assert len(pymongo_calls.async_operations) > after_agent >= 2  # o team também foi ao banco
+    assert pymongo_calls.operations == [] and pymongo_calls.on_event_loop() == []
     await db.close()
 
 
@@ -101,11 +103,12 @@ async def test_leitura_de_memoria_do_usuario_nao_chama_o_pymongo_sincrono_no_eve
     # Com o Mongo fora, ler a memória do usuário falha o run (como já era); o que importa aqui é
     # onde a leitura rodou.
     assert run.status == RunStatus.error
-    assert pymongo_calls.operations and pymongo_calls.on_event_loop() == []
+    assert "find" in pymongo_calls.async_operations
+    assert pymongo_calls.operations == [] and pymongo_calls.on_event_loop() == []
     await db.close()
 
 
-async def test_fechar_o_db_de_sessoes_fecha_um_cliente_fora_do_event_loop(pymongo_calls: SyncPymongoCalls) -> None:
+async def test_fechar_o_db_de_sessoes_aguarda_o_close_de_um_cliente_nativo(pymongo_calls: SyncPymongoCalls) -> None:
     db = create_session_db(DB_URL, "agno")
     agent = await _agent(db, "a1", memory=False)
     other = await _agent(db, "a2", memory=False)
@@ -118,6 +121,6 @@ async def test_fechar_o_db_de_sessoes_fecha_um_cliente_fora_do_event_loop(pymong
     await db.close()
     await db.close()
 
-    # Três entidades, um cliente; um close só, numa thread (antes: um MongoClient.close por
-    # entidade, no event loop, cada um podendo esperar a seleção de servidor com o Mongo fora).
-    assert pymongo_calls.closes == [False]
+    # Três entidades, um cliente; um close só, aguardado (antes do F2-08: um MongoClient.close por
+    # entidade, no event loop; até o F3-09: o close síncrono do motor numa thread).
+    assert (pymongo_calls.async_closes, pymongo_calls.closes) == (1, [])

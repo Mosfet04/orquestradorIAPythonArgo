@@ -181,7 +181,7 @@ def test_agentes_teams_e_agentos_dividem_um_db_de_sessoes(spy: Spy, app: FastAPI
     assert listed == {"agent": ["s-agente"], "team": ["s-team"]}
 
 
-def test_shutdown_fecha_o_cliente_do_db_de_sessoes_uma_vez_fora_do_event_loop_e_o_startup_nao_provisiona(
+def test_shutdown_fecha_o_cliente_do_db_de_sessoes_uma_vez_e_o_startup_nao_provisiona(
     spy: Spy, app: FastAPI
 ) -> None:
     with TestClient(app, **LOCAL) as http:  # type: ignore[arg-type]
@@ -191,9 +191,9 @@ def test_shutdown_fecha_o_cliente_do_db_de_sessoes_uma_vez_fora_do_event_loop_e_
         # Sem provisionamento: o startup não tocou em nenhuma coleção do db de sessões.
         assert session_db_client(spy.dbs[0]).databases == {}
 
-    # Um cliente (não um por entidade), fechado uma vez e numa thread: o AgentOS e o container
-    # pedem o close, e só o primeiro fecha. O cliente do container também fecha fora do loop.
-    assert spy.session_client_closes() == [[False]]
+    # Um cliente (não um por entidade), fechado uma vez (close do cliente nativo aguardado, F3-09): o AgentOS e
+    # o container pedem o close, e só o primeiro fecha. O cliente do container (motor) fecha fora do loop.
+    assert spy.session_client_closes() == [[True]]
     assert [(m.closes, m.closes_on_event_loop) for m in _Motor.instances] == [(1, 0)]
 
 
@@ -211,7 +211,7 @@ def test_falha_ao_carregar_entidades_fecha_o_cliente_mongo_uma_vez(
 
     assert spy.events == []  # nada montado, nada a fechar no runtime
     assert [(m.closes, m.closes_on_event_loop) for m in _Motor.instances] == [(1, 0)]
-    assert spy.session_client_closes() == [[False]]  # o container fecha o db que criou
+    assert spy.session_client_closes() == [[True]]  # o container fecha o db que criou (close aguardado)
 
 
 def test_falha_num_lifespan_do_agentos_recusa_o_startup_e_fecha_o_cliente_mongo_uma_vez(
@@ -238,7 +238,7 @@ def test_falha_num_lifespan_do_agentos_recusa_o_startup_e_fecha_o_cliente_mongo_
 
     # O startup falha como no AgentOS; o db_lifespan do agno 2.5.8 não tem try/finally e não chega
     # a fechar o db, mas o container fecha o db de sessões que criou (F2-08) e o cliente Mongo dele,
-    # uma vez cada e fora do event loop.
+    # uma vez cada (o do motor fora do event loop; o do cliente nativo, aguardado).
     assert spy.events == ["db:start", "http:start"]
     assert [(m.closes, m.closes_on_event_loop) for m in _Motor.instances] == [(1, 0)]
-    assert spy.session_client_closes() == [[False]]
+    assert spy.session_client_closes() == [[True]]

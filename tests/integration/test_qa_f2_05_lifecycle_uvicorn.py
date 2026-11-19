@@ -177,7 +177,8 @@ def test_startup_real_run_rest_e_agui_com_chave_e_sigterm_gracioso(spawn: Callab
     assert events[:3] == ["db:created", "db:start", "http:start"]
     # Shutdown em ordem: flush da telemetria (antes do fechamento que pode demorar), runtime (lifespans
     # do agno: http, db de sessões), cliente Mongo; cada um uma vez. O db de sessões tem um cliente só
-    # (antes, um por entidade) e nenhum close roda no event loop (seria "db:close:on-loop").
+    # (antes, um por entidade) e nenhum close bloqueia o event loop: o do motor roda numa thread (no loop
+    # seria "motor:close:on-loop") e o do cliente nativo do db de sessões é aguardado (F3-09).
     assert events[events.index("telemetry:shutdown"):] == [
         "telemetry:shutdown", "runtime:close", "http:stop", "db:close", "db:stop", "motor:close",
     ]
@@ -238,7 +239,8 @@ def test_sigterm_com_timeout_gracioso_menor_que_o_run_responde_500_ao_run_cortad
     """SIGTERM com um run de 8 s em andamento e ``timeout_graceful_shutdown`` de 1 s.
 
     O uvicorn cancela a task do request e segue para o shutdown. Desde o F2-08 os ``close`` (db de
-    sessões e cliente Mongo) rodam fora do event loop, então o shutdown cede o loop e a task
+    sessões e cliente Mongo) não bloqueiam o event loop (o do motor numa thread; o do cliente nativo do db
+    de sessões é corrotina aguardada, F3-09), então o shutdown cede o loop e a task
     cancelada termina antes da saída: o cliente recebe **HTTP 500** e o uvicorn loga a exceção ASGI
     do cancelamento. Antes (closes síncronos no loop) o processo saía sem rodar a task: a conexão
     caía sem resposta e nada era logado. Decisão do usuário no F2-08: aceitar o 500 (uma resposta

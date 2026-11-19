@@ -29,7 +29,7 @@ from tests.fakes.legacy_sessions import legacy_sessions, seed_legacy_sessions
 from tests.fakes.live_mongo import LIVE_URL_ENV, LiveMongo
 from tests.fakes.session_db import stored_runs
 
-pytestmark = pytest.mark.live
+pytestmark = [pytest.mark.live, pytest.mark.usefixtures("live_native_closed")]
 
 # Só a semente do id do db (o cliente vem pronto): nunca a URL real.
 PLACEHOLDER_URL = "mongodb://mongo.live.invalid:27017"
@@ -51,8 +51,8 @@ def _no_agno_telemetry(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 async def _seeded_db(live: LiveMongo, docs: list[dict[str, Any]] | None = None) -> SessionDb:
-    """``SessionDb`` novo (cliente motor novo) sobre o banco com as sessões gravadas pelo 2.5.8."""
-    db = SessionDb(live.motor(), db_url=PLACEHOLDER_URL, db_name=live.database)
+    """``SessionDb`` novo (``AsyncMongoClient`` novo) sobre o banco com as sessões gravadas pelo 2.5.8."""
+    db = SessionDb(live.native(), db_url=PLACEHOLDER_URL, db_name=live.database)
     await seed_legacy_sessions(db.database[db.session_table_name], docs)
     return db
 

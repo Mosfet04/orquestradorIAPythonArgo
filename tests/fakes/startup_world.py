@@ -2,12 +2,13 @@
 
 Usado pelos testes de ciclo de vida com uvicorn real (F2-05): no mesmo processo (thread) e num
 subprocesso (SIGTERM de verdade). Só o Mongo (cliente motor do container, coleções de config e o
-cliente motor do db de sessões) e o modelo são falsos; o resto da pilha é o de produção, inclusive o
+cliente nativo do db de sessões) e o modelo são falsos; o resto da pilha é o de produção, inclusive o
 ``SessionDb`` (F2-08). Cada ponto de fechamento e de abertura registra um evento (``Events``):
 ``motor:close`` (cliente do container), ``db:created`` e ``db:close`` (db de sessões e o cliente
-dele), ``db:start``, ``http:start``/``http:stop``/``db:stop`` (lifespans do agno 2.5.8),
-``runtime:close``, ``telemetry:shutdown`` e ``model:start`` (run em andamento). Um ``close`` que
-rode na thread do event loop vira ``motor:close:on-loop``/``db:close:on-loop``.
+dele; o ``close`` do cliente nativo é corrotina e só registra quando aguardado, F3-09), ``db:start``,
+``http:start``/``http:stop``/``db:stop`` (lifespans do agno), ``runtime:close``,
+``telemetry:shutdown`` e ``model:start`` (run em andamento). O ``close`` síncrono do motor que rode
+na thread do event loop vira ``motor:close:on-loop``.
 
 Como programa (``python -m tests.fakes.startup_world``): sobe o uvicorn num socket herdado
 (``--fd``) e imprime cada evento como ``EVT <nome>`` no stdout.
@@ -39,7 +40,7 @@ from src.infrastructure.runtime.agno.session_db import SessionDb
 from src.infrastructure.web import app_factory
 from tests.fakes.dns import public_dns
 from tests.fakes.models import FakeChatModel, running_on_event_loop
-from tests.fakes.mongo import FakeMongoClient, FakeMongoCollection, FakeMotorClient
+from tests.fakes.mongo import FakeAsyncMongoClient, FakeMongoClient, FakeMongoCollection
 
 FAIL_STEPS = ("container", "entities", "mount", "start")
 CLEAN_ENV = (
@@ -121,8 +122,9 @@ class _Motor:
         self._events.add("motor:close:on-loop" if running_on_event_loop() else "motor:close")
 
 
-class _SessionMotorClient(FakeMotorClient):
-    """Cliente motor do db de sessões: registra o ``close`` e o uso depois dele."""
+class _SessionAsyncMongoClient(FakeAsyncMongoClient):
+    """Cliente nativo do db de sessões (``AsyncMongo`` no nome: o agno reconhece o tipo por ele): registra
+    o ``close`` aguardado e o uso depois dele."""
 
     def __init__(self, events: Events) -> None:
         super().__init__()
@@ -133,16 +135,16 @@ class _SessionMotorClient(FakeMotorClient):
             self._events.add("db:use-after-close")
         super().refuse_if_closed()
 
-    def close(self) -> None:
-        super().close()
-        self._events.add("db:close:on-loop" if self.closes[-1] else "db:close")
+    async def close(self) -> None:
+        await super().close()
+        self._events.add("db:close")
 
 
 class _WorldSessionDb(SessionDb):
     """O ``SessionDb`` de produção sobre o cliente falso; registra se o agno provisionar coleções."""
 
     def __init__(self, events: Events, db_url: str, db_name: str) -> None:
-        super().__init__(_SessionMotorClient(events), db_url=db_url, db_name=db_name)  # type: ignore[arg-type]
+        super().__init__(_SessionAsyncMongoClient(events), db_url=db_url, db_name=db_name)  # type: ignore[arg-type]
         self._events = events
 
     async def _create_all_tables(self) -> None:

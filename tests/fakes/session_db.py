@@ -1,7 +1,7 @@
-"""Db de sessões de produção (``SessionDb``, F2-08) sobre o cliente motor em memória.
+"""Db de sessões de produção (``SessionDb``, F2-08) sobre o cliente nativo (``AsyncMongoClient``) em memória.
 
-O que roda é o ``AsyncMongoDb`` do agno 2.5.8 de verdade (consultas, documentos, índices); só o
-cliente é o ``FakeMotorClient``. Um db para todas as entidades do teste e para o AgentOS, como em
+O que roda é o ``AsyncMongoDb`` do agno de verdade (consultas, documentos, índices); só o
+cliente é o ``FakeAsyncMongoClient``. Um db para todas as entidades do teste e para o AgentOS, como em
 produção: passe o mesmo objeto às fábricas (``session_db=``) e ao ``mount_agent_os``.
 """
 
@@ -15,15 +15,15 @@ from agno.db.schemas import UserMemory
 
 from src.infrastructure import dependency_injection as di
 from src.infrastructure.runtime.agno.session_db import SessionDb
-from tests.fakes.mongo import FakeMongoCollection, FakeMotorClient
+from tests.fakes.mongo import FakeAsyncMongoClient, FakeMongoCollection
 
 SESSION_DB_URL = "mongodb://mongo.test.invalid:27017"
 SESSION_DB_NAME = "agno"
 
 
-def fake_session_db(client: FakeMotorClient | None = None, *, db_name: str = SESSION_DB_NAME) -> SessionDb:
+def fake_session_db(client: FakeAsyncMongoClient | None = None, *, db_name: str = SESSION_DB_NAME) -> SessionDb:
     """``SessionDb`` com o cliente dado (ou um novo, vazio)."""
-    return SessionDb(client or FakeMotorClient(), db_url=SESSION_DB_URL, db_name=db_name)  # type: ignore[arg-type]
+    return SessionDb(client or FakeAsyncMongoClient(), db_url=SESSION_DB_URL, db_name=db_name)  # type: ignore[arg-type]
 
 
 def use_fake_session_db(monkeypatch: pytest.MonkeyPatch) -> list[SessionDb]:
@@ -39,9 +39,9 @@ def use_fake_session_db(monkeypatch: pytest.MonkeyPatch) -> list[SessionDb]:
     return created
 
 
-def session_db_client(db: SessionDb) -> FakeMotorClient:
+def session_db_client(db: SessionDb) -> FakeAsyncMongoClient:
     client: Any = db.db_client
-    assert isinstance(client, FakeMotorClient), "fake_session_db: o cliente do db não é o FakeMotorClient"
+    assert isinstance(client, FakeAsyncMongoClient), "fake_session_db: o cliente do db não é o FakeAsyncMongoClient"
     return client
 
 

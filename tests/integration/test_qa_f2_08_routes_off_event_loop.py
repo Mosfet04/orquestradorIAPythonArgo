@@ -1,5 +1,5 @@
 """QA do F2-08: nenhuma chamada do pymongo síncrono no event loop pelas rotas do app (REST, stream,
-AG-UI, team, cancelamento) com o ``SessionDb`` de produção (motor real, sem servidor).
+AG-UI, team, cancelamento) com o ``SessionDb`` de produção (``AsyncMongoClient`` real desde o F3-09, sem servidor).
 
 Complementa ``test_session_io_off_event_loop.py`` (que chama ``Agent.arun``/``Team.arun`` direto): aqui a
 entrada é HTTP, pelo AgentOS montado como no lifespan do app. O detector (``trap_sync_pymongo``) falha
@@ -21,7 +21,7 @@ from agno.models.response import ModelResponse
 from agno.run.cancel import get_cancellation_manager
 from agno.team import Team
 from fastapi import FastAPI
-from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo import AsyncMongoClient
 
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.team_config import TeamConfig
@@ -120,7 +120,7 @@ def _client(app: FastAPI) -> httpx.AsyncClient:
 
 
 class _NewSessionDb(SessionDb):
-    """Sessão sempre nova, sem ir ao banco: o run chega ao modelo (as gravações seguem pelo motor)."""
+    """Sessão sempre nova, sem ir ao banco: o run chega ao modelo (as gravações seguem pelo cliente nativo)."""
 
     async def get_session(self, *args: Any, **kwargs: Any) -> None:
         return None
@@ -154,8 +154,8 @@ async def test_run_rest_de_agente_nao_chama_o_pymongo_sincrono_no_event_loop(
         )
 
     _assert_failed_without_leak(response)
-    assert calls.operations, "o run não foi ao banco de sessões"
-    assert calls.on_event_loop() == []
+    assert calls.async_operations, "o run não foi ao banco de sessões"
+    assert calls.operations == [] and calls.on_event_loop() == []
 
 
 async def test_run_de_team_nao_chama_o_pymongo_sincrono_no_event_loop(
@@ -170,8 +170,8 @@ async def test_run_de_team_nao_chama_o_pymongo_sincrono_no_event_loop(
         )
 
     _assert_failed_without_leak(response)
-    assert calls.operations, "o run do team não foi ao banco de sessões"
-    assert calls.on_event_loop() == []
+    assert calls.async_operations, "o run do team não foi ao banco de sessões"
+    assert calls.operations == [] and calls.on_event_loop() == []
 
 
 async def test_run_agui_nao_chama_o_pymongo_sincrono_no_event_loop(
@@ -185,15 +185,15 @@ async def test_run_agui_nao_chama_o_pymongo_sincrono_no_event_loop(
 
     # F3-05: a checagem de dono da sessão lê o Mongo antes do stream; sem conferir o dono, não roda.
     _assert_failed_without_leak(response)
-    assert calls.operations, "o run AG-UI não foi ao banco de sessões"
-    assert calls.on_event_loop() == []
+    assert calls.async_operations, "o run AG-UI não foi ao banco de sessões"
+    assert calls.operations == [] and calls.on_event_loop() == []
 
 
 @pytest.mark.parametrize("stream", ["false", "true"])
 async def test_cancelamento_de_run_nao_chama_o_pymongo_sincrono_no_event_loop(
     monkeypatch: pytest.MonkeyPatch, calls: SyncPymongoCalls, stream: str
 ) -> None:
-    db = _NewSessionDb(AsyncIOMotorClient(DB_URL), db_url=DB_URL, db_name="agno")
+    db = _NewSessionDb(AsyncMongoClient(DB_URL), db_url=DB_URL, db_name="agno")
     agent = Agent(id="tic", name="tic", model=TickingModel(), db=db, telemetry=False)
     app = _app(monkeypatch, db, [agent], [])
 
@@ -212,8 +212,8 @@ async def test_cancelamento_de_run_nao_chama_o_pymongo_sincrono_no_event_loop(
 
     assert cancel.status_code == 200 and response.status_code == 200
     assert get_cancellation_manager().get_active_runs() == {}
-    assert calls.operations
-    assert calls.on_event_loop() == []
+    assert calls.async_operations
+    assert calls.operations == [] and calls.on_event_loop() == []
 
 
 @pytest.fixture(autouse=True)

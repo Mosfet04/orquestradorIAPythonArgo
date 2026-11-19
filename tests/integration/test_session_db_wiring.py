@@ -54,7 +54,7 @@ async def test_agentes_e_teams_do_container_usam_o_mesmo_db_de_sessoes() -> None
     assert events.count("db:created") == 1
 
 
-async def test_cleanup_fecha_o_db_de_sessoes_e_o_cliente_do_container_uma_vez_e_fora_do_event_loop() -> None:
+async def test_cleanup_fecha_o_db_de_sessoes_e_o_cliente_do_container_uma_vez_sem_bloquear_o_event_loop() -> None:
     events = Events()
     with startup_world(events) as motors:
         container = await di.DependencyContainer.create_async(AppConfig.load())
@@ -64,7 +64,8 @@ async def test_cleanup_fecha_o_db_de_sessoes_e_o_cliente_do_container_uma_vez_e_
         first_cleanup = list(events.names)
         await container.cleanup()
 
-    # "db:close"/"motor:close" e não "...:on-loop": nenhum close rodou na thread do event loop.
+    # "motor:close" e não "motor:close:on-loop": o close síncrono do motor rodou numa thread; "db:close": o do
+    # cliente nativo do db de sessões foi aguardado (F3-09).
     assert [n for n in first_cleanup if n.startswith(("db:close", "motor:close"))] == ["db:close", "motor:close"]
     assert events.count("db:close") == 1  # o segundo cleanup não fecha o db de novo
     assert [m.closes for m in motors] == [2]  # o cliente do container segue como antes (close idempotente)

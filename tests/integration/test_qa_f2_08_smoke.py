@@ -123,9 +123,9 @@ def test_startup_run_com_user_e_sessao_historico_no_segundo_run_sessions_memorie
     _assert_history_per_user(world, responses)
     _assert_sessions_and_memories_per_user(responses, db)
 
-    # Um db de sessões para o app inteiro; fechado no shutdown, uma vez e numa thread.
+    # Um db de sessões para o app inteiro; fechado no shutdown, uma vez (close do cliente nativo aguardado, F3-09).
     assert len(world.session_dbs) == 1 and during_closes == []
-    assert session_db_client(db).closes == [False]
+    assert session_db_client(db).closes == [True]
     assert world.events.count("db:created") == 1 and world.events.count("db:close") == 1
     assert not [e for e in world.events.names if e.endswith(":on-loop") or e == "db:use-after-close"]
 

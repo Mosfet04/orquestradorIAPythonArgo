@@ -8,21 +8,21 @@ from agno.db.base import SessionType
 from agno.session import AgentSession, WorkflowSession
 
 from src.infrastructure.runtime.agno.session_db import SessionDb
-from tests.fakes.mongo import FakeMotorClient
+from tests.fakes.mongo import FakeAsyncMongoClient
 
 DB_URL = "mongodb://mongo.test.invalid:27017"
 
 
-class _FailingMotorClient(FakeMotorClient):
-    """O nome tem "Motor": o AsyncMongoDb do agno reconhece o tipo do cliente pelo nome da classe."""
+class _FailingAsyncMongoClient(FakeAsyncMongoClient):
+    """O nome tem "AsyncMongo": o AsyncMongoDb do agno reconhece o tipo do cliente pelo nome da classe."""
 
-    def close(self) -> None:
-        super().close()
+    async def close(self) -> None:
+        await super().close()
         raise OSError("falha ao fechar")
 
 
 async def test_sessao_de_workflow_e_lida_com_a_classe_do_tipo_pedido() -> None:
-    db = SessionDb(FakeMotorClient(), db_url=DB_URL, db_name="banco")
+    db = SessionDb(FakeAsyncMongoClient(), db_url=DB_URL, db_name="banco")
     await db.upsert_session(WorkflowSession(session_id="w1", workflow_id="wf", user_id="ana", session_data={"k": 1}))
 
     found = await db.get_session(session_id="w1", session_type=SessionType.WORKFLOW, user_id="ana")
@@ -33,7 +33,7 @@ async def test_sessao_de_workflow_e_lida_com_a_classe_do_tipo_pedido() -> None:
 
 
 async def test_get_session_de_sessao_inexistente_e_none_com_e_sem_deserializar() -> None:
-    db = SessionDb(FakeMotorClient(), db_url=DB_URL, db_name="banco")
+    db = SessionDb(FakeAsyncMongoClient(), db_url=DB_URL, db_name="banco")
 
     assert await db.get_session(session_id="nada", session_type=SessionType.AGENT, user_id="ana") is None
     assert await db.get_session(
@@ -43,7 +43,7 @@ async def test_get_session_de_sessao_inexistente_e_none_com_e_sem_deserializar()
 
 async def test_get_session_nao_altera_o_documento_gravado() -> None:
     """Ler como outro tipo devolve a classe pedida, mas não regrava o ``session_type`` do documento."""
-    client = FakeMotorClient()
+    client = FakeAsyncMongoClient()
     db = SessionDb(client, db_url=DB_URL, db_name="banco")
     await db.upsert_session(AgentSession(session_id="s1", agent_id="a1", user_id="ana"))
     before = [dict(doc) for doc in client["banco"]["agno_sessions"].docs]
@@ -55,11 +55,11 @@ async def test_get_session_nao_altera_o_documento_gravado() -> None:
 
 
 async def test_falha_no_close_do_cliente_sobe_uma_vez_e_o_db_nao_tenta_de_novo() -> None:
-    client = _FailingMotorClient()
+    client = _FailingAsyncMongoClient()
     db = SessionDb(client, db_url=DB_URL, db_name="banco")
 
     with pytest.raises(OSError, match="falha ao fechar"):
         await db.close()
     await db.close()  # idempotente mesmo depois da falha: quem chama (cleanup) já logou o tipo
 
-    assert client.closes == [False]
+    assert client.closes == [True]  # aguardado uma vez só

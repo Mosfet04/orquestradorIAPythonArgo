@@ -1,6 +1,6 @@
 """F3-06: migração das sessões do 2.5.8 (``runs`` inline) para ``agno_runs`` e a conferência dela.
 
-Roda o ``MigrationManager`` do agno 3.1.12 de verdade sobre o ``SessionDb`` com o cliente motor em
+Roda o ``MigrationManager`` do agno 3.1.12 de verdade sobre o ``SessionDb`` com o cliente nativo em
 memória (``tests/fakes/mongo.py``), com os documentos gravados pelo 2.5.8 (``tests/fakes/legacy_sessions.py``).
 """
 
@@ -18,7 +18,7 @@ from src.infrastructure.runtime.agno import session_migration
 from src.infrastructure.runtime.agno.session_db import RunOwnershipError, SessionDb
 from src.infrastructure.runtime.agno.session_migration import SessionsReport, check, migrate, rollback
 from tests.fakes.legacy_sessions import LEGACY_RUNS, legacy_sessions, seed_legacy_sessions
-from tests.fakes.mongo import FakeMotorClient
+from tests.fakes.mongo import FakeAsyncMongoClient
 from tests.fakes.session_db import collection, fake_session_db, session_db_client, session_docs, stored_runs
 
 # Texto de teste no formato de um erro de driver com URI (montado em partes: não é credencial).
@@ -210,7 +210,7 @@ def _open_with(monkeypatch: pytest.MonkeyPatch, db: SessionDb) -> None:
     monkeypatch.setattr(session_migration, "create_session_db", lambda db_url, db_name: db)
 
 
-async def _seeded_db(client: FakeMotorClient | None = None) -> SessionDb:
+async def _seeded_db(client: FakeAsyncMongoClient | None = None) -> SessionDb:
     db = fake_session_db(client)
     await seed_legacy_sessions(collection(db, db.session_table_name))
     return db
@@ -219,7 +219,7 @@ async def _seeded_db(client: FakeMotorClient | None = None) -> SessionDb:
 async def test_python_m_migra_imprime_a_conferencia_e_fecha_o_db(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    client = FakeMotorClient()
+    client = FakeAsyncMongoClient()
     db = await _seeded_db(client)
     _open_with(monkeypatch, db)
 
@@ -269,11 +269,11 @@ async def test_python_m_down_volta_o_esquema_e_sai_com_0(
 async def test_python_m_com_mongo_fora_sai_com_2_sem_o_texto_do_driver(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    class DownMotorClient(FakeMotorClient):
+    class DownAsyncMongoClient(FakeAsyncMongoClient):
         def refuse_if_closed(self) -> None:
             raise ServerSelectionTimeoutError(DRIVER_TEXT)
 
-    client = DownMotorClient()
+    client = DownAsyncMongoClient()
     _open_with(monkeypatch, fake_session_db(client))
 
     code = await session_migration.run([])
@@ -290,7 +290,7 @@ async def test_python_m_com_falha_fora_do_mongo_sai_com_2_e_so_o_tipo_do_erro(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], where: str
 ) -> None:
     """Falha que não é do Mongo também sai com 2 (1 é pendência), sem traceback nem o texto do erro."""
-    client = FakeMotorClient()
+    client = FakeAsyncMongoClient()
     db = await _seeded_db(client)
     _open_with(monkeypatch, db)
 

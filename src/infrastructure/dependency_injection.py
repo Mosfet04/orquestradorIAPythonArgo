@@ -496,8 +496,9 @@ class DependencyContainer:
     async def cleanup(self) -> None:
         """Fecha o db de sessões e o cliente Mongo do container, cada um mesmo se o outro falhar.
 
-        Nenhum ``close`` roda no event loop: o do motor é o do pymongo síncrono (manda
-        ``endSessions`` pela rede e, com o Mongo fora, espera a seleção de servidor).
+        Nenhum ``close`` bloqueia o event loop: o do db de sessões é o do ``AsyncMongoClient`` (corrotina,
+        F3-09); o do cliente motor do container é o do pymongo síncrono (manda ``endSessions`` pela rede e,
+        com o Mongo fora, espera a seleção de servidor), por isso numa thread.
         """
         if self._session_db is not None:
             try:

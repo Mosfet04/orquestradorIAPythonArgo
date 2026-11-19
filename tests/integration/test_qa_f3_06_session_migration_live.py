@@ -15,7 +15,7 @@ from src.infrastructure.runtime.agno.session_db import SessionDb
 from src.infrastructure.runtime.agno.session_migration import check, migrate
 from tests.fakes.live_mongo import LIVE_URL_ENV, LiveMongo
 
-pytestmark = pytest.mark.live
+pytestmark = [pytest.mark.live, pytest.mark.usefixtures("live_native_closed")]
 
 PLACEHOLDER_URL = "mongodb://mongo.live.invalid:27017"
 
@@ -27,7 +27,7 @@ def _no_agno_telemetry(monkeypatch: pytest.MonkeyPatch) -> None:
 
 async def test_live_banco_novo_sem_sessoes_migra_e_a_conferencia_fica_ok(live_mongo: LiveMongo) -> None:
     """Deploy em ambiente sem sessões legadas: o índice único de ``run_id`` existe depois do ``up``."""
-    db = SessionDb(live_mongo.motor(), db_url=PLACEHOLDER_URL, db_name=live_mongo.database)
+    db = SessionDb(live_mongo.native(), db_url=PLACEHOLDER_URL, db_name=live_mongo.database)
 
     report = await migrate(db)
 
@@ -37,7 +37,7 @@ async def test_live_banco_novo_sem_sessoes_migra_e_a_conferencia_fica_ok(live_mo
 
 
 async def test_live_conferir_banco_vazio_nao_cria_colecao_nem_levanta(live_mongo: LiveMongo) -> None:
-    db = SessionDb(live_mongo.motor(), db_url=PLACEHOLDER_URL, db_name=live_mongo.database)
+    db = SessionDb(live_mongo.native(), db_url=PLACEHOLDER_URL, db_name=live_mongo.database)
 
     report = await check(db)
 

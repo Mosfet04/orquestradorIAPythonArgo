@@ -1,7 +1,7 @@
-"""F2-08: ``SessionDb``, o db único de sessões e memória (``AsyncMongoDb`` do agno 2.5.8 sobre um
-cliente motor só).
+"""F2-08: ``SessionDb``, o db único de sessões e memória (``AsyncMongoDb`` do agno sobre um cliente
+só; desde o F3-09, o ``AsyncMongoClient`` nativo do pymongo).
 
-O cliente aqui é o ``FakeMotorClient`` (sem Mongo); o que roda é o ``AsyncMongoDb`` real do agno,
+O cliente aqui é o ``FakeAsyncMongoClient`` (sem Mongo); o que roda é o ``AsyncMongoDb`` real do agno,
 com as consultas e os documentos que ele monta. Contra Mongo de verdade: ``tests/integration/
 test_session_db_live.py`` (marker ``live``).
 """
@@ -12,21 +12,22 @@ import asyncio
 
 import pytest
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
+from agno.db.mongo import AsyncMongoDb
 from agno.db.schemas import UserMemory
 from agno.session import AgentSession, TeamSession
 from agno.utils.string import generate_id
-from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo import AsyncMongoClient
 from pymongo.errors import InvalidOperation
 
 from src.infrastructure.runtime.agno.session_db import SessionDb, create_session_db
-from tests.fakes.mongo import FakeMotorClient
+from tests.fakes.mongo import FakeAsyncMongoClient
 
 DB_URL = "mongodb://mongo.test.invalid:27017"
 DB_NAME = "banco_de_teste"
 
 
-def _db(client: FakeMotorClient | None = None) -> SessionDb:
-    return SessionDb(client or FakeMotorClient(), db_url=DB_URL, db_name=DB_NAME)
+def _db(client: FakeAsyncMongoClient | None = None) -> SessionDb:
+    return SessionDb(client or FakeAsyncMongoClient(), db_url=DB_URL, db_name=DB_NAME)
 
 
 def test_e_um_db_assincrono_do_agno_com_as_colecoes_e_o_id_do_mongodb_sincrono() -> None:
@@ -40,20 +41,22 @@ def test_e_um_db_assincrono_do_agno_com_as_colecoes_e_o_id_do_mongodb_sincrono()
     assert db.id == generate_id(f"{DB_URL}#{DB_NAME}")
 
 
-async def test_create_session_db_usa_um_cliente_motor_que_so_conecta_no_primeiro_uso() -> None:
+async def test_create_session_db_usa_o_cliente_nativo_do_pymongo_que_so_conecta_no_primeiro_uso() -> None:
     db = create_session_db(DB_URL, DB_NAME)
 
     assert isinstance(db, SessionDb)
-    assert isinstance(db.db_client, AsyncIOMotorClient)
+    # F3-09: o AsyncMongoClient nativo, e o agno o reconhece como tal (não como motor).
+    assert isinstance(db.db_client, AsyncMongoClient)
+    assert db._client_type == AsyncMongoDb.CLIENT_TYPE_PYMONGO_ASYNC
     assert db.db_client is db.db_client  # um cliente só, o mesmo a cada acesso
     assert (db.db_name, db.id) == (DB_NAME, generate_id(f"{DB_URL}#{DB_NAME}"))
-    # connect=False do motor: nenhuma thread de monitor nem socket até a primeira operação.
-    assert db.db_client.delegate._opened is False
+    # O AsyncMongoClient não conecta no construtor: nenhuma task de monitor nem socket até a primeira operação.
+    assert db.db_client._opened is False
     await db.close()
 
 
 async def test_sessao_e_gravada_e_lida_por_user_id() -> None:
-    client = FakeMotorClient()
+    client = FakeAsyncMongoClient()
     db = _db(client)
 
     await db.upsert_session(AgentSession(session_id="s1", agent_id="a1", user_id="ana", session_data={"k": "v"}))
@@ -68,7 +71,7 @@ async def test_sessao_e_gravada_e_lida_por_user_id() -> None:
 
 
 async def test_sessao_de_um_usuario_nao_e_sobrescrita_por_outro() -> None:
-    client = FakeMotorClient()
+    client = FakeAsyncMongoClient()
     db = _db(client)
     await db.upsert_session(AgentSession(session_id="s1", agent_id="a1", user_id="ana", session_data={"de": "ana"}))
 
@@ -87,7 +90,7 @@ async def test_sessao_de_um_usuario_nao_e_sobrescrita_por_outro() -> None:
 
 async def test_get_session_consulta_por_session_id_e_usuario_sem_filtrar_por_tipo() -> None:
     """O ``AsyncMongoDb`` do agno 2.5.8 poria ``session_type`` na consulta; o ``MongoDb`` síncrono não."""
-    client = FakeMotorClient()
+    client = FakeAsyncMongoClient()
     db = _db(client)
     await db.upsert_session(AgentSession(session_id="s1", agent_id="a1", user_id="ana"))
     sessions = client[DB_NAME]["agno_sessions"]
@@ -112,7 +115,7 @@ async def test_get_session_consulta_por_session_id_e_usuario_sem_filtrar_por_tip
 async def test_outro_tipo_de_entidade_que_reusa_o_session_id_mantem_o_historico_como_no_mongodb_sincrono(
     first: AgentSession | TeamSession, then_type: SessionType, then_class: type
 ) -> None:
-    client = FakeMotorClient()
+    client = FakeAsyncMongoClient()
     db = _db(client)
     await db.upsert_session(first)
 
@@ -161,7 +164,7 @@ async def test_get_session_com_tipo_desconhecido_levanta_como_no_mongodb_sincron
 
 
 async def test_memoria_e_gravada_e_lida_por_user_id() -> None:
-    client = FakeMotorClient()
+    client = FakeAsyncMongoClient()
     db = _db(client)
 
     await db.upsert_user_memory(UserMemory(memory="Ana prefere espanhol", user_id="ana", topics=["idioma"]))
@@ -172,8 +175,8 @@ async def test_memoria_e_gravada_e_lida_por_user_id() -> None:
     assert sorted(d["user_id"] for d in client[DB_NAME]["agno_memories"].docs) == ["ana", "bruno"]
 
 
-async def test_close_fecha_o_cliente_uma_vez_e_fora_do_event_loop() -> None:
-    client = FakeMotorClient()
+async def test_close_aguarda_o_close_do_cliente_nativo_uma_vez() -> None:
+    client = FakeAsyncMongoClient()
     db = _db(client)
     await db.upsert_user_memory(UserMemory(memory="m", user_id="ana"))
 
@@ -181,9 +184,9 @@ async def test_close_fecha_o_cliente_uma_vez_e_fora_do_event_loop() -> None:
     await db.close()
     await asyncio.gather(db.close(), db.close())
 
-    # Uma chamada só, numa thread sem event loop: o close do motor é o do pymongo síncrono
-    # (endSessions pela rede) e, no loop, travaria o shutdown com o Mongo fora do ar.
-    assert client.closes == [False]
+    # Uma chamada só, aguardada no event loop: o close do AsyncMongoClient é corrotina (endSessions
+    # async), não bloqueia o loop. Numa thread (como no motor) a corrotina nem rodaria.
+    assert client.closes == [True]
 
 
 async def test_uso_depois_do_close_falha_alto() -> None:
