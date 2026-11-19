@@ -174,7 +174,7 @@ async def test_controller_loga_so_o_tipo_quando_a_carga_de_teams_falha() -> None
 
 @pytest.fixture
 def mongo_down(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Todo repositório Mongo recebe um cliente cujo servidor recusa a conexão."""
+    """O cliente Mongo do app (container, repositórios e diário) é de um servidor que recusa a conexão."""
     client = FailingMongoClient(_driver_error())
     monkeypatch.setattr(mongo_base.MongoClientFactory, "get_client", classmethod(lambda cls, _conn: client))
 
@@ -396,15 +396,9 @@ def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OTEL_ENABLED", "false")
 
 
-class _DownMotor(FailingMongoClient):
-    def __init__(self, *_: object, **__: object) -> None:
-        super().__init__(_driver_error())
-
-
 @pytest.mark.usefixtures("clean_env", "mongo_down")
 async def test_container_loga_so_o_tipo_quando_o_mongo_esta_fora_no_startup(monkeypatch: pytest.MonkeyPatch) -> None:
     logger = RecordingLogger()
-    monkeypatch.setattr(di, "AsyncIOMotorClient", _DownMotor)
     monkeypatch.setattr(di, "StructlogLoggerAdapter", lambda _name: logger)
 
     container = await di.DependencyContainer.create_async(AppConfig.load())  # sobe sem Mongo

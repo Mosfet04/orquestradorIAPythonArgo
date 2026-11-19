@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+from pymongo import AsyncMongoClient
+from pymongo.errors import ConnectionFailure
 
 from src.domain.entities.model_config import ModelConfig
 from src.domain.ports import InvalidModelConfigError
 from src.infrastructure.dependency_injection import DependencyContainer, HealthService
 from src.infrastructure.repositories import mongo_base
 from src.infrastructure.telemetry import metrics as metrics_module
-from tests.fakes import RecordingLogger
+from tests.fakes import FailingMongoClient, RecordingLogger
+from tests.fakes.mongo import FakeAsyncMongoClient
 
 # ── HealthService ───────────────────────────────────────────────────
 
@@ -111,52 +115,53 @@ class TestHealthService:
 
 class TestDependencyContainer:
     @pytest.fixture(autouse=True)
-    def repo_collection(self, monkeypatch):
-        """Os repositórios Mongo usam o cliente compartilhado de ``mongo_base`` (cache global por URL).
+    def app_clients(self, monkeypatch) -> list[FakeAsyncMongoClient]:
+        """Clientes que a ``MongoClientFactory`` criou (cache zerado), nativos em memória (F3-09b).
 
         Sem isto o primeiro teste tentava conectar de verdade (30 s de serverSelectionTimeout em
         ``ensure_indexes``) e os seguintes herdavam um cliente preso a outro event loop.
         """
-        collection = MagicMock()
-        collection.create_index = AsyncMock(side_effect=lambda keys, **kw: kw["name"])
-        client = MagicMock()
-        client.__getitem__.return_value.__getitem__.return_value = collection
+        created: list[FakeAsyncMongoClient] = []
+
+        def new_client(*_: object, **__: object) -> FakeAsyncMongoClient:
+            created.append(FakeAsyncMongoClient())
+            return created[-1]
+
         monkeypatch.setattr(mongo_base.MongoClientFactory, "_instances", {})
-        monkeypatch.setattr(mongo_base, "AsyncIOMotorClient", MagicMock(return_value=client))
-        return collection
-
-    @patch("src.infrastructure.dependency_injection.AsyncIOMotorClient")
-    async def test_create_async(self, mock_motor_cls, repo_collection):
-        mock_client = MagicMock()
-        mock_client.admin.command = AsyncMock(return_value={"ok": 1})
-        mock_client.close = MagicMock(return_value=None)
-        mock_motor_cls.return_value = mock_client
-
-        from src.infrastructure.config.app_config import AppConfig
-        with patch.dict("os.environ", {
-            "MONGO_CONNECTION_STRING": "mongodb://localhost:27017",
-            "MONGO_DATABASE_NAME": "testdb",
-        }, clear=True):
-            config = AppConfig.load()
-
-        container = await DependencyContainer.create_async(config)
-        assert container is not None
-        assert container.health_service is not None
-        controller = container.get_orquestrador_controller()
-        assert controller is not None
-        mock_client.admin.command.assert_awaited_once_with("ping")
-        created = {c.kwargs["name"] for c in repo_collection.create_index.await_args_list}
-        assert created == {"idx_doc_level", "idx_parent", "idx_node_id"}
+        monkeypatch.setattr(mongo_base, "AsyncMongoClient", new_client)
+        return created
 
     @staticmethod
-    async def _registry_for(monkeypatch, mock_motor_cls, env: dict[str, str]):
+    def _config(**extra: str):
+        from src.infrastructure.config.app_config import AppConfig
+
+        env = {"MONGO_CONNECTION_STRING": "mongodb://localhost:27017", "MONGO_DATABASE_NAME": "testdb", **extra}
+        with patch.dict("os.environ", env, clear=True):
+            return AppConfig.load()
+
+    async def test_create_async(self, app_clients):
+        container = await DependencyContainer.create_async(self._config())
+        assert container.health_service is not None
+        assert container.get_orquestrador_controller() is not None
+        [client] = app_clients
+        tree = await client["testdb"]["document_tree"].index_information()
+        assert {"idx_doc_level", "idx_parent", "idx_node_id"} <= set(tree)
+        assert (await container.health_service.check_async())["checks"]["mongodb"] == {"status": "healthy"}
+
+    async def test_um_cliente_do_app_para_container_repositorios_diario_e_health(self, app_clients):
+        """F3-09b: o ping, os repositórios de config, a árvore do RAG e o diário usam o mesmo cliente."""
+        container = await DependencyContainer.create_async(self._config())
+        [client] = app_clients
+        assert container._mongo_client is client
+        assert mongo_base.MongoClientFactory.get_client("mongodb://localhost:27017") is client
+        assert len(app_clients) == 1
+
+    @staticmethod
+    async def _registry_for(monkeypatch, env: dict[str, str]):
         """Sobe o container com ``env`` e devolve o ``ProviderRegistry`` montado pelo composition root."""
         from src.infrastructure import dependency_injection as di
         from src.infrastructure.config.app_config import AppConfig
 
-        mock_client = MagicMock()
-        mock_client.admin.command = AsyncMock(return_value={"ok": 1})
-        mock_motor_cls.return_value = mock_client
         built: list[object] = []
         real_registry = di.ProviderRegistry
 
@@ -176,30 +181,26 @@ class TestDependencyContainer:
         ("env", "expected_host"),
         [({"OLLAMA_BASE_URL": "http://ollama:11434"}, "http://ollama:11434"), ({}, None)],
     )
-    @patch("src.infrastructure.dependency_injection.AsyncIOMotorClient")
-    async def test_ollama_base_url_chega_ao_registry(self, mock_motor_cls, monkeypatch, env, expected_host):
+    async def test_ollama_base_url_chega_ao_registry(self, monkeypatch, env, expected_host):
         """OLLAMA_BASE_URL do AppConfig chega ao Ollama de chat e embedder; sem ele, vale o default do agno."""
-        registry = await self._registry_for(monkeypatch, mock_motor_cls, env)
+        registry = await self._registry_for(monkeypatch, env)
 
         model = registry.create_model(ModelConfig("ollama", "llama3.2:latest"))
         embedder = registry.create_embedder(ModelConfig("ollama", "nomic-embed-text"))
         assert model.host == expected_host
         assert embedder.host == expected_host
 
-    @patch("src.infrastructure.dependency_injection.AsyncIOMotorClient")
-    async def test_ollama_base_url_nao_vaza_para_outro_provider(self, mock_motor_cls, monkeypatch):
-        registry = await self._registry_for(monkeypatch, mock_motor_cls, {"OLLAMA_BASE_URL": "http://ollama:11434"})
+    async def test_ollama_base_url_nao_vaza_para_outro_provider(self, monkeypatch):
+        registry = await self._registry_for(monkeypatch, {"OLLAMA_BASE_URL": "http://ollama:11434"})
         monkeypatch.setenv("OPENAI_API_KEY", "sk-teste")
 
         model = registry.create_model(ModelConfig("openai", "gpt-4o-mini"))
         assert model.base_url is None
 
-    @patch("src.infrastructure.dependency_injection.AsyncIOMotorClient")
-    async def test_secrets_dir_e_allowlist_do_app_config_chegam_ao_registry(self, mock_motor_cls, monkeypatch, tmp_path):
+    async def test_secrets_dir_e_allowlist_do_app_config_chegam_ao_registry(self, monkeypatch, tmp_path):
         (tmp_path / "gw").write_text("chave-do-arquivo", encoding="utf-8")
         registry = await self._registry_for(
             monkeypatch,
-            mock_motor_cls,
             {"SECRETS_DIR": str(tmp_path), "MODEL_BASE_URL_ALLOWLIST": "10.0.0.5", "ENVIRONMENT": "production",
              "API_KEY_RUN": "r" * 32, "API_KEY_ADMIN": "a" * 32},
         )
@@ -218,9 +219,8 @@ class TestDependencyContainer:
             ({"API_KEY_RUN": "r" * 32, "API_KEY_ADMIN": "a" * 32}, False),
         ],
     )
-    @patch("src.infrastructure.dependency_injection.AsyncIOMotorClient")
-    async def test_loopback_em_base_url_so_no_modo_dev_local(self, mock_motor_cls, monkeypatch, env, loopback_allowed):
-        registry = await self._registry_for(monkeypatch, mock_motor_cls, env)
+    async def test_loopback_em_base_url_so_no_modo_dev_local(self, monkeypatch, env, loopback_allowed):
+        registry = await self._registry_for(monkeypatch, env)
         config = ModelConfig("openai_compatible", "m", base_url="http://127.0.0.1:8000/v1")
 
         if loopback_allowed:
@@ -229,72 +229,50 @@ class TestDependencyContainer:
             with pytest.raises(InvalidModelConfigError):
                 registry.create_model(config)
 
-    @patch("src.infrastructure.dependency_injection.AsyncIOMotorClient")
-    async def test_create_async_mongo_unavailable(self, mock_motor_cls):
-        mock_client = MagicMock()
-        mock_client.admin.command = AsyncMock(side_effect=Exception("connection refused"))
-        mock_client.close = MagicMock(return_value=None)
-        mock_motor_cls.return_value = mock_client
-
-        from src.infrastructure.config.app_config import AppConfig
-        with patch.dict("os.environ", {
-            "MONGO_CONNECTION_STRING": "mongodb://localhost:27017",
-            "MONGO_DATABASE_NAME": "testdb",
-        }, clear=True):
-            config = AppConfig.load()
+    async def test_create_async_mongo_unavailable(self, monkeypatch):
+        down = FailingMongoClient(ConnectionFailure("connection refused"))
+        monkeypatch.setattr(mongo_base, "AsyncMongoClient", lambda *_, **__: down)
 
         # Deve continuar mesmo com mongo indisponível
-        container = await DependencyContainer.create_async(config)
-        assert container is not None
+        container = await DependencyContainer.create_async(self._config())
+        assert (await container.health_service.check_async())["checks"]["mongodb"] == {"status": "unhealthy"}
 
-    @patch("src.infrastructure.dependency_injection.AsyncIOMotorClient")
-    async def test_cleanup(self, mock_motor_cls):
-        mock_client = MagicMock()
-        mock_client.admin.command = AsyncMock(return_value={"ok": 1})
-        mock_client.close = MagicMock(return_value=None)
-        mock_motor_cls.return_value = mock_client
-
-        from src.infrastructure.config.app_config import AppConfig
-        with patch.dict("os.environ", {
-            "MONGO_CONNECTION_STRING": "mongodb://localhost:27017",
-            "MONGO_DATABASE_NAME": "testdb",
-        }, clear=True):
-            config = AppConfig.load()
-
-        container = await DependencyContainer.create_async(config)
+    async def test_cleanup_fecha_o_cliente_do_app_uma_vez_com_close_aguardado(self, app_clients):
+        container = await DependencyContainer.create_async(self._config())
         await container.cleanup()
-        mock_client.close.assert_called_once()
-
-    @patch("src.infrastructure.dependency_injection.AsyncIOMotorClient")
-    async def test_cleanup_with_coroutine_close(self, mock_motor_cls):
-        mock_client = MagicMock()
-        mock_client.admin.command = AsyncMock(return_value={"ok": 1})
-
-        # close() retorna uma coroutine
-        async def _async_close():
-            return None
-
-        mock_client.close = MagicMock(return_value=_async_close())
-        mock_motor_cls.return_value = mock_client
-
-        from src.infrastructure.config.app_config import AppConfig
-        with patch.dict("os.environ", {
-            "MONGO_CONNECTION_STRING": "mongodb://localhost:27017",
-            "MONGO_DATABASE_NAME": "testdb",
-        }, clear=True):
-            config = AppConfig.load()
-
-        container = await DependencyContainer.create_async(config)
         await container.cleanup()
 
-    @patch("src.infrastructure.dependency_injection.AsyncIOMotorClient")
-    async def test_controller_do_container_registra_hit_e_miss_do_cache_nas_metricas(
-        self, mock_motor_cls, monkeypatch, tmp_path
-    ):
+        [client] = app_clients
+        assert client.closes == [True]
+        # Fora do cache: um container novo (outro loop) ganha outro cliente, não o fechado.
+        assert mongo_base.MongoClientFactory.get_client("mongodb://localhost:27017") is not client
+
+    async def test_ping_do_startup_e_do_health_tem_prazo_curto(self, monkeypatch):
+        """O cliente do app espera 30 s pela seleção de servidor; o ping (startup e health) desiste antes."""
+        from src.infrastructure import dependency_injection as di
+
+        monkeypatch.setattr(mongo_base, "AsyncMongoClient", AsyncMongoClient)  # cliente real, sem servidor
+        monkeypatch.setattr(di, "MONGO_PING_TIMEOUT_S", 0.2)
+        logger = RecordingLogger()
+        monkeypatch.setattr(di, "StructlogLoggerAdapter", lambda _name: logger)
+        container = di.DependencyContainer(self._config(MONGO_CONNECTION_STRING="mongodb://127.0.0.1:9"))
+        try:
+            started = time.monotonic()
+            await container._connect_mongo()
+            assert container.health_service is not None
+            health = await container.health_service.check_async()
+            elapsed = time.monotonic() - started
+        finally:
+            await container.cleanup()
+
+        assert health["checks"]["mongodb"] == {"status": "unhealthy"}
+        assert elapsed < 5
+        assert [r.message for r in logger.records if r.level == "warning"] == [
+            "MongoDB não disponível na inicialização", "Health check: MongoDB indisponível"
+        ]
+
+    async def test_controller_do_container_registra_hit_e_miss_do_cache_nas_metricas(self, monkeypatch, tmp_path):
         """O controller não importa a telemetria (F2-07): quem liga hit/miss ao OTel é o composition root."""
-        mock_client = MagicMock()
-        mock_client.admin.command = AsyncMock(return_value={"ok": 1})
-        mock_motor_cls.return_value = mock_client
         reader = InMemoryMetricReader()
         meter_provider = MeterProvider(metric_readers=[reader])
         meter = meter_provider.get_meter("teste")

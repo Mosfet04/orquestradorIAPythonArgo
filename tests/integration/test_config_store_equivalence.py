@@ -125,7 +125,7 @@ def yaml_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_app_sobe_com_config_yaml_e_serve_as_entidades_do_arquivo():
     events = Events()
     # Coleções de config do Mongo com outro agente: se fossem lidas, ele apareceria.
-    with startup_world(events, agents=("so-no-mongo",), teams={"time-so-no-mongo": ["so-no-mongo"]}) as motors:
+    with startup_world(events, agents=("so-no-mongo",), teams={"time-so-no-mongo": ["so-no-mongo"]}) as clients:
         from src.infrastructure.repositories import mongo_base
 
         client = mongo_base.MongoClientFactory.get_client("qualquer")
@@ -140,7 +140,7 @@ def test_app_sobe_com_config_yaml_e_serve_as_entidades_do_arquivo():
     assert health.status_code == 200
     # Nenhuma consulta às coleções de config do Mongo; o cliente do container (o resto) abriu e fechou.
     assert {name: col.queries for name, col in client.collections.items() if col.queries} == {}
-    assert [m.closes for m in motors] == [1]
+    assert [m.closes for m in clients] == [[True]]
 
 
 @pytest.mark.usefixtures("offline_knowledge")
@@ -155,9 +155,9 @@ def test_app_nao_sobe_com_config_yaml_quebrado(monkeypatch: pytest.MonkeyPatch, 
 
     from src.infrastructure.repositories.yaml_config_repository import YamlConfigError
 
-    with startup_world(Events()) as motors:
+    with startup_world(Events()) as clients:
         app = app_factory.AppFactory().create_app()
         with pytest.raises(YamlConfigError, match="chave de topo desconhecida"), loopback_client(app):
             pass
 
-    assert [m.closes for m in motors] == [1]
+    assert [m.closes for m in clients] == [[True]]

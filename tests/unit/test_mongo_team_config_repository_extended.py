@@ -37,7 +37,7 @@ class _AsyncCursorStub:
 def team_repo(mock_logger):
     """Cria MongoTeamConfigRepository com collection mockada."""
     with patch(
-        "src.infrastructure.repositories.mongo_base.AsyncIOMotorClient"
+        "src.infrastructure.repositories.mongo_base.AsyncMongoClient"
     ):
         repo = MongoTeamConfigRepository(
             connection_string="mongodb://test:27017",

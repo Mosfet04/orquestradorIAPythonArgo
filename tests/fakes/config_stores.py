@@ -104,14 +104,14 @@ class MongoLiveBackend:
     Confere a fidelidade da coleção fake (F2-06, R5): a mesma suíte de contrato roda aqui. ``name``
     é ``"mongo"`` porque o contrato é o do backend Mongo (ex.: o log traz ``mongo_id``). Os
     documentos são gravados com o pymongo síncrono, ``_id`` crescente na ordem da lista, e lidos
-    pelos repositórios com um cliente motor do próprio teste.
+    pelos repositórios com um ``AsyncMongoClient`` do próprio teste (F3-09b).
     """
 
     name = "mongo"
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch, live: LiveMongo) -> None:
         self._live = live
-        client = live.motor()
+        client = live.native()
         monkeypatch.setattr(mongo_base.MongoClientFactory, "get_client", classmethod(lambda cls, _conn: client))
 
     def _collection(self, name: str, docs: Iterable[Document]) -> None:
@@ -227,6 +227,7 @@ def live_mongo_for(request: pytest.FixtureRequest) -> LiveMongo | None:
     if request.param != LIVE_BACKEND:
         return None
     live: LiveMongo = request.getfixturevalue("live_mongo")
+    request.getfixturevalue("live_native_closed")  # fecha, no loop do teste, os clientes de live.native()
     return live
 
 

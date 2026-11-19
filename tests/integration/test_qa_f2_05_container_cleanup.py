@@ -18,13 +18,13 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(name, raising=False)
 
 
-async def test_falha_no_wiring_fecha_o_cliente_motor_uma_vez_e_re_levanta_a_original() -> None:
+async def test_falha_no_wiring_fecha_o_cliente_do_app_uma_vez_e_re_levanta_a_original() -> None:
     events = Events()
-    with startup_world(events, fail_at="container") as motors:
+    with startup_world(events, fail_at="container") as clients:
         with pytest.raises(RuntimeError, match="falha injetada: container"):
             await di.DependencyContainer.create_async(AppConfig.load())
 
-    assert [m.closes for m in motors] == [1]
+    assert [m.closes for m in clients] == [[True]]
 
 
 async def test_cancelamento_durante_a_inicializacao_fecha_o_cliente_e_propaga_o_cancelamento(
@@ -34,17 +34,17 @@ async def test_cancelamento_durante_a_inicializacao_fecha_o_cliente_e_propaga_o_
         raise asyncio.CancelledError
 
     events = Events()
-    with startup_world(events) as motors:
+    with startup_world(events) as clients:
         monkeypatch.setattr(di, "MongoToolRepository", cancelled)
         with pytest.raises(asyncio.CancelledError):
             await di.DependencyContainer.create_async(AppConfig.load())
 
-    assert [m.closes for m in motors] == [1]
+    assert [m.closes for m in clients] == [[True]]
 
 
 async def test_close_que_tambem_falha_nao_mascara_a_falha_original(monkeypatch: pytest.MonkeyPatch) -> None:
     events = Events()
-    with startup_world(events, fail_at="container") as motors:
+    with startup_world(events, fail_at="container") as clients:
         original_init = di.DependencyContainer._initialize
 
         async def init_then_break_close(self: di.DependencyContainer) -> None:
@@ -63,12 +63,12 @@ async def test_close_que_tambem_falha_nao_mascara_a_falha_original(monkeypatch: 
         with pytest.raises(RuntimeError, match="falha injetada: container"):
             await di.DependencyContainer.create_async(AppConfig.load())
 
-    assert len(motors) == 1
+    assert len(clients) == 1
 
 
 async def test_falha_antes_de_abrir_o_cliente_nao_quebra_o_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
     events = Events()
-    with startup_world(events) as motors:
+    with startup_world(events) as clients:
 
         def broken_registry(*_: object, **__: object) -> None:
             raise RuntimeError("registry quebrado")
@@ -77,16 +77,16 @@ async def test_falha_antes_de_abrir_o_cliente_nao_quebra_o_cleanup(monkeypatch: 
         with pytest.raises(RuntimeError, match="registry quebrado"):
             await di.DependencyContainer.create_async(AppConfig.load())
 
-    assert [m.closes for m in motors] == [1 for _ in motors]  # o que chegou a abrir foi fechado
+    assert [m.closes for m in clients] == [[True] for _ in clients]  # o que chegou a abrir foi fechado
 
 
 async def test_container_inicializado_com_sucesso_nao_e_fechado_pelo_create_async() -> None:
     events = Events()
-    with startup_world(events) as motors:
+    with startup_world(events) as clients:
         container = await di.DependencyContainer.create_async(AppConfig.load())
-        assert [m.closes for m in motors] == [0]
+        assert [m.closes for m in clients] == [[]]
         await container.cleanup()
-        assert [m.closes for m in motors] == [1]
+        assert [m.closes for m in clients] == [[True]]
 
 
 def test_get_agent_runtime_sem_inicializar_o_container_recusa() -> None:

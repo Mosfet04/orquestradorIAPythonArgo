@@ -1,6 +1,7 @@
-"""Coleção e clientes Mongo em memória: o do motor (``FakeMotorClient``) para os repositórios de
-``src/infrastructure/repositories`` e o do pymongo nativo (``FakeAsyncMongoClient``, F3-09) para o db de
-sessões do agno (``SessionDb``, F2-08).
+"""Coleção e clientes Mongo em memória: os do pymongo nativo (``FakeAsyncMongoClient``, F3-09; o
+``FakeMongoClient`` de coleções fixas) para o db de sessões do agno (``SessionDb``, F2-08) e para os
+repositórios de ``src/infrastructure/repositories`` (F3-09b), e o do motor (``FakeMotorClient``), que só
+resta nos testes que comparam os dois drivers.
 
 Só o que os repositórios e o ``AsyncMongoDb`` do agno 2.5.8 usam em sessões e memória:
 ``find``/``find_one`` com filtro de igualdade em campos de topo (ex.: ``{"active": True}``), ``$in``,
@@ -295,7 +296,7 @@ class FakeMongoCollection:
         self.queries: list[dict[str, Any]] = []
         self.unique_keys: set[str] = set()
         self.indexes: list[dict[str, Any]] = []
-        self.client: _FakeClient | None = None
+        self.client: _FakeClient | FakeMongoClient | None = None
         """Cliente dono da coleção: depois do ``close`` dele, toda operação falha."""
 
     def _use(self, query: dict[str, Any] | None = None) -> None:
@@ -492,14 +493,56 @@ class FakeMongoCollection:
             raise BulkWriteError({"writeErrors": errors, "nInserted": inserted, "writeConcernErrors": []})
 
 
+class _BoundCollections:
+    """``client[db]``: as coleções do cliente (criadas no primeiro acesso, se o dict for um ``defaultdict``),
+    cada uma amarrada ao cliente para recusar uso depois do ``close``. O resto do dict (``get``, ``items``...)
+    é o do dict. Uma coleção pertence a um cliente só: o vínculo vale para o último cliente que a acessou."""
+
+    def __init__(self, client: FakeMongoClient) -> None:
+        self._client = client
+
+    def __getitem__(self, collection_name: str) -> FakeMongoCollection:
+        collection = self._client.collections[collection_name]
+        collection.client = self._client
+        return collection
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._client.collections, name)
+
+
 class FakeMongoClient:
-    """``client[db][collection]``: qualquer database expõe as mesmas coleções."""
+    """``client[db][collection]``: qualquer database expõe as mesmas coleções.
+
+    Também serve de cliente do app (F3-09b: container, repositórios, diário e health no mesmo cliente):
+    ``admin.command("ping")`` responde ok e ``close`` é corrotina, registrada em ``closes`` só quando
+    aguardada (``True`` = na thread do event loop), como no ``AsyncMongoClient``. Depois do ``close`` toda
+    operação nas coleções entregues por ele levanta ``InvalidOperation``, como o pymongo (um cliente fechado
+    não volta a funcionar): uso depois do fechamento, no ciclo de vida, vira teste vermelho.
+    """
 
     def __init__(self, collections: dict[str, FakeMongoCollection]) -> None:
         self.collections = collections
+        self.closes: list[bool] = []
 
-    def __getitem__(self, database_name: str) -> dict[str, FakeMongoCollection]:
-        return self.collections
+    def __getitem__(self, database_name: str) -> _BoundCollections:
+        return _BoundCollections(self)
+
+    def refuse_if_closed(self) -> None:
+        if self.closes:
+            raise InvalidOperation("Cannot use AsyncMongoClient after close")
+
+    @property
+    def admin(self) -> FakeMongoClient:
+        return self
+
+    async def command(self, name: str) -> dict[str, int]:
+        self.refuse_if_closed()
+        if name != "ping":
+            raise NotImplementedError(f"comando {name!r} fora do fake")
+        return {"ok": 1}
+
+    async def close(self) -> None:
+        self.closes.append(running_on_event_loop())
 
 
 class FakeAsyncMongoCollection(FakeMongoCollection):
@@ -529,6 +572,13 @@ class FakeMotorDatabase:
         self._client.refuse_if_closed()
         return [name for name, collection in self.collections.items() if collection.docs or collection.indexes]
 
+    async def command(self, name: str) -> dict[str, int]:
+        """Só o ``ping`` (``client.admin.command("ping")`` do startup e do health)."""
+        self._client.refuse_if_closed()
+        if name != "ping":
+            raise NotImplementedError(f"comando {name!r} fora do fake")
+        return {"ok": 1}
+
 
 class _FakeClient:
     """Um database por nome (``client[db][collection]``); depois do ``close`` toda operação levanta
@@ -546,9 +596,13 @@ class _FakeClient:
             self.databases[database_name] = FakeMotorDatabase(self)
         return self.databases[database_name]
 
+    @property
+    def admin(self) -> FakeMotorDatabase:
+        return self["admin"]
+
     def refuse_if_closed(self) -> None:
         if self.closes:
-            raise InvalidOperation("Cannot use MongoClient after close")
+            raise InvalidOperation("Cannot use AsyncMongoClient after close")
 
 
 class FakeMotorClient(_FakeClient):
@@ -613,8 +667,8 @@ class FailingMongoClient:
     async def command(self, *_: object) -> dict[str, Any]:
         raise self._error
 
-    def close(self) -> None:
-        """Nada a fechar."""
+    async def close(self) -> None:
+        """Nada a fechar (corrotina, como no ``AsyncMongoClient``)."""
 
 
 @dataclass

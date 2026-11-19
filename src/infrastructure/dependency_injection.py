@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any, get_args
 
-from motor.motor_asyncio import AsyncIOMotorClient
+import pymongo
+from pymongo import AsyncMongoClient
 
 from src.application.services.document_indexing_service import DocumentIndexingService
 from src.application.services.knowledge_search_factory import KnowledgeSearchFactory
@@ -69,6 +70,16 @@ from src.infrastructure.telemetry.metrics import TelemetryMetrics
 from src.infrastructure.web.api_key_auth import is_local_dev_mode
 from src.presentation.controllers.orquestrador_controller import OrquestradorController
 
+# Prazo do ping do startup e do health (CSOT do pymongo: vale também para a seleção de servidor,
+# ``pymongo/topology_shared.py`` ``get_server_selection_timeout``); o cliente do app espera até 30 s.
+MONGO_PING_TIMEOUT_S = 5.0
+
+
+async def ping_mongo(client: AsyncMongoClient[MongoDocument]) -> None:
+    """``ping`` no Mongo com prazo de ``MONGO_PING_TIMEOUT_S``; a falha do driver sobe."""
+    with pymongo.timeout(MONGO_PING_TIMEOUT_S):
+        await client.admin.command("ping")
+
 
 class HealthService:
     """Serviço de health check.
@@ -79,7 +90,7 @@ class HealthService:
 
     _CHECK_NAMES = ("mongodb", "memory", "otlp")
 
-    def __init__(self, mongo_client: AsyncIOMotorClient[MongoDocument], logger: ILogger) -> None:
+    def __init__(self, mongo_client: AsyncMongoClient[MongoDocument], logger: ILogger) -> None:
         self._mongo_client = mongo_client
         self._logger = logger
 
@@ -115,7 +126,7 @@ class HealthService:
 
     async def _check_mongodb(self) -> dict[str, Any]:
         try:
-            await self._mongo_client.admin.command("ping")
+            await ping_mongo(self._mongo_client)
             return {"status": "healthy"}
         except Exception as exc:  # noqa: BLE001 - health reporta unhealthy; tipo no log
             self._logger.warning(
@@ -257,7 +268,7 @@ class DependencyContainer:
     def __init__(self, config: AppConfig) -> None:
         self.config = config
         self._logger: ILogger = StructlogLoggerAdapter("app")
-        self._mongo_client: AsyncIOMotorClient[MongoDocument] | None = None
+        self._mongo_client: AsyncMongoClient[MongoDocument] | None = None
         self._session_db: SessionDb | None = None
         self._health_service: HealthService | None = None
         self._controller: OrquestradorController | None = None
@@ -340,16 +351,14 @@ class DependencyContainer:
         )
 
     async def _connect_mongo(self) -> None:
-        """Cliente Mongo do container e health service; o app sobe mesmo sem o Mongo."""
-        self._mongo_client = AsyncIOMotorClient(
-            self.config.mongo_connection_string,
-            maxPoolSize=50,
-            minPoolSize=5,
-            connectTimeoutMS=5000,
-            serverSelectionTimeoutMS=5000,
-        )
+        """Cliente Mongo do app e health service; o app sobe mesmo sem o Mongo.
+
+        Um cliente só (F3-09b): o da ``MongoClientFactory``, o mesmo dos repositórios e do diário de
+        config. O container é o dono: o ping o prende ao event loop do app e o ``cleanup`` o fecha.
+        """
+        self._mongo_client = MongoClientFactory.get_client(self.config.mongo_connection_string)
         try:
-            await self._mongo_client.admin.command("ping")
+            await ping_mongo(self._mongo_client)
         except Exception as exc:  # noqa: BLE001 - o app sobe sem Mongo (health reporta); logado
             self._logger.warning(
                 "MongoDB não disponível na inicialização", error_type=type(exc).__name__
@@ -494,11 +503,10 @@ class DependencyContainer:
         return self._health_service
 
     async def cleanup(self) -> None:
-        """Fecha o db de sessões e o cliente Mongo do container, cada um mesmo se o outro falhar.
+        """Fecha o db de sessões e o cliente Mongo do app, cada um mesmo se o outro falhar.
 
-        Nenhum ``close`` bloqueia o event loop: o do db de sessões é o do ``AsyncMongoClient`` (corrotina,
-        F3-09); o do cliente motor do container é o do pymongo síncrono (manda ``endSessions`` pela rede e,
-        com o Mongo fora, espera a seleção de servidor), por isso numa thread.
+        Os dois são ``AsyncMongoClient`` (F3-09, F3-09b): o ``close`` é corrotina, aguardada no event loop.
+        O cliente do app sai do cache da fábrica e é fechado uma vez (chamadas seguintes não fazem nada).
         """
         if self._session_db is not None:
             try:
@@ -508,12 +516,11 @@ class DependencyContainer:
                 self._logger.warning(
                     "Falha ao fechar o db de sessões", error_type=type(exc).__name__
                 )
-        if self._mongo_client:
+        if self._mongo_client is not None:
+            client, self._mongo_client = self._mongo_client, None
+            MongoClientFactory.discard(self.config.mongo_connection_string)
             try:
-                # O close do motor é síncrono e devolve None; o de um cliente async (corrotina) é aguardado.
-                result: Any = await asyncio.to_thread(self._mongo_client.close)
-                if asyncio.iscoroutine(result):
-                    await result
+                await client.close()
             except Exception as exc:  # noqa: BLE001 - shutdown segue; tipo no log
                 # Shutdown segue mesmo se o driver falhar ao fechar; o tipo vai ao log.
                 self._logger.warning(

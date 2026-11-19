@@ -18,7 +18,7 @@ from src.infrastructure.dependency_injection import build_config_admin
 from src.infrastructure.repositories.mongo_config_audit_log import MongoConfigAuditLog
 from tests.fakes.admin_config_app import agent_body, fake_audit_log, fake_runtime_swap, route_guard, tool, tool_body
 from tests.fakes.logger import RecordingLogger
-from tests.fakes.mongo import FakeMotorClient
+from tests.fakes.mongo import FakeAsyncMongoClient
 from tests.fakes.repositories import (
     InMemoryAgentConfigRepository,
     InMemoryTeamConfigRepository,
@@ -36,7 +36,7 @@ class _Store:
         self.agents = _FlakyAgents(agents or [])
         self.teams = InMemoryTeamConfigRepository()
         self.tools = tools or InMemoryToolRepository()
-        self.database = FakeMotorClient()["agno"]
+        self.database = FakeAsyncMongoClient()["agno"]
 
 
 class _FlakyAgents(InMemoryAgentConfigRepository):

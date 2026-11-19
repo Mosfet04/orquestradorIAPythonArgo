@@ -177,10 +177,10 @@ def test_startup_real_run_rest_e_agui_com_chave_e_sigterm_gracioso(spawn: Callab
     assert events[:3] == ["db:created", "db:start", "http:start"]
     # Shutdown em ordem: flush da telemetria (antes do fechamento que pode demorar), runtime (lifespans
     # do agno: http, db de sessões), cliente Mongo; cada um uma vez. O db de sessões tem um cliente só
-    # (antes, um por entidade) e nenhum close bloqueia o event loop: o do motor roda numa thread (no loop
-    # seria "motor:close:on-loop") e o do cliente nativo do db de sessões é aguardado (F3-09).
+    # (antes, um por entidade) e nenhum close bloqueia o event loop: o do cliente nativo do db de sessões
+    # (F3-09) e o do cliente do app (F3-09b) são corrotinas aguardadas.
     assert events[events.index("telemetry:shutdown"):] == [
-        "telemetry:shutdown", "runtime:close", "http:stop", "db:close", "db:stop", "motor:close",
+        "telemetry:shutdown", "runtime:close", "http:stop", "db:close", "db:stop", "mongo:close",
     ]
     assert "db:provisioned" not in events
     _assert_clean_log(child)
@@ -207,7 +207,7 @@ def test_sigterm_com_run_rest_em_andamento_conclui_o_run_e_fecha_cada_recurso_um
     assert result["r"].status_code == 200 and result["r"].json()["content"] == "resposta do modelo"
     child.assert_graceful_exit()
     events = child.events()
-    assert [events.count(n) for n in ("runtime:close", "telemetry:shutdown", "motor:close")] == [1, 1, 1]
+    assert [events.count(n) for n in ("runtime:close", "telemetry:shutdown", "mongo:close")] == [1, 1, 1]
     assert events.index("model:start") < events.index("runtime:close")  # o run terminou antes de fechar
     _assert_clean_log(child)
 
@@ -229,7 +229,7 @@ def test_sigterm_com_run_agui_em_streaming_conclui_o_stream_e_fecha_uma_vez(spaw
     assert result["r"].status_code == 200 and "RUN_FINISHED" in result["r"].text
     child.assert_graceful_exit()
     events = child.events()
-    assert [events.count(n) for n in ("runtime:close", "telemetry:shutdown", "motor:close")] == [1, 1, 1]
+    assert [events.count(n) for n in ("runtime:close", "telemetry:shutdown", "mongo:close")] == [1, 1, 1]
     _assert_clean_log(child)
 
 
@@ -239,8 +239,8 @@ def test_sigterm_com_timeout_gracioso_menor_que_o_run_responde_500_ao_run_cortad
     """SIGTERM com um run de 8 s em andamento e ``timeout_graceful_shutdown`` de 1 s.
 
     O uvicorn cancela a task do request e segue para o shutdown. Desde o F2-08 os ``close`` (db de
-    sessões e cliente Mongo) não bloqueiam o event loop (o do motor numa thread; o do cliente nativo do db
-    de sessões é corrotina aguardada, F3-09), então o shutdown cede o loop e a task
+    sessões e cliente Mongo do app) não bloqueiam o event loop (os dois são corrotinas aguardadas, F3-09 e
+    F3-09b), então o shutdown cede o loop e a task
     cancelada termina antes da saída: o cliente recebe **HTTP 500** e o uvicorn loga a exceção ASGI
     do cancelamento. Antes (closes síncronos no loop) o processo saía sem rodar a task: a conexão
     caía sem resposta e nada era logado. Decisão do usuário no F2-08: aceitar o 500 (uma resposta
@@ -272,7 +272,7 @@ def test_sigterm_com_timeout_gracioso_menor_que_o_run_responde_500_ao_run_cortad
     assert isinstance(response, httpx.Response), type(response).__name__  # resposta HTTP, não reset
     assert response.status_code == 500
     events = child.events()
-    assert [events.count(n) for n in ("runtime:close", "telemetry:shutdown", "motor:close", "db:close")] == [1, 1, 1, 1]
+    assert [events.count(n) for n in ("runtime:close", "telemetry:shutdown", "mongo:close", "db:close")] == [1, 1, 1, 1]
     assert not [e for e in events if e.endswith(":on-loop")]  # nenhum close no event loop (F2-08)
     log = child.non_event_log()
     assert "Task exception was never retrieved" not in log, log
@@ -298,7 +298,7 @@ def test_falha_no_startup_recusa_subir_e_fecha_o_que_abriu_uma_vez(
     assert code != 0, child.log()
     events = child.events()
     assert f"falha injetada: {step}" in child.non_event_log()
-    assert [events.count(n) for n in ("motor:close", "telemetry:shutdown")] == [1, 1]
+    assert [events.count(n) for n in ("mongo:close", "telemetry:shutdown")] == [1, 1]
     assert events.count("runtime:close") == runtime_closes
     assert [e for e in events if e in ("db:start", "http:start", "http:stop", "db:stop")] == agno_lifespans
     # O app nunca atendeu: o socket só entra em listen depois do startup do lifespan.
@@ -328,7 +328,7 @@ def test_falha_ao_montar_o_runtime_segue_logada_como_antes_e_fecha_uma_vez(spawn
     log = child.non_event_log()
     assert "Erro ao montar AgentOS" in log and "RuntimeError" in log
     assert "falha injetada: mount" not in log  # F2-07 (R3): o log leva o tipo do erro, nunca o texto
-    assert [events.count(n) for n in ("runtime:close", "telemetry:shutdown", "motor:close")] == [1, 1, 1]
+    assert [events.count(n) for n in ("runtime:close", "telemetry:shutdown", "mongo:close")] == [1, 1, 1]
     # Montagem não concluída: start não abre lifespan nenhum e o close do runtime não tem o que fechar.
     assert not [e for e in events if e in ("db:start", "http:start", "http:stop", "db:stop")]
     # O db de sessões é fechado pelo container, que o criou (F2-08; antes ficava para o fim do processo).
@@ -373,7 +373,7 @@ def test_sigterm_durante_o_startup_lento_termina_o_startup_e_fecha_tudo_uma_vez(
     child.assert_graceful_exit()
 
     events = child.events()
-    assert [events.count(n) for n in ("runtime:close", "telemetry:shutdown", "motor:close")] == [1, 1, 1]
+    assert [events.count(n) for n in ("runtime:close", "telemetry:shutdown", "mongo:close")] == [1, 1, 1]
     assert events.index("db:start") < events.index("runtime:close")  # o startup terminou antes do shutdown
     assert [events.count(n) for n in ("db:start", "db:stop", "http:start", "http:stop")] == [1, 1, 1, 1]
     _assert_clean_log(child)

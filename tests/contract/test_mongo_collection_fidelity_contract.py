@@ -1,7 +1,7 @@
 """Fidelidade da coleção Mongo em memória (``tests/fakes/mongo.py``) ao Mongo real (F2-06 R5, F2-08).
 
-A mesma suíte roda contra a ``FakeMongoCollection`` (pelo ``FakeMotorClient``) e, só com
-``MONGO_LIVE_URL`` (marker ``live``), contra uma coleção de um Mongo de verdade pelo motor. Cobre o
+A mesma suíte roda contra a ``FakeMongoCollection`` (pelo ``FakeAsyncMongoClient``) e, só com
+``MONGO_LIVE_URL`` (marker ``live``), contra uma coleção de um Mongo de verdade pelo ``AsyncMongoClient``. Cobre o
 que os repositórios e o ``AsyncMongoDb`` do agno usam e em que um fake costuma divergir: ordenação
 com campo ausente, igualdade BSON de booleano, índice único (``BulkWriteError`` 11000 com
 ``ordered=False``, ``DuplicateKeyError`` no upsert e no ``insert_one``), ``find_one(sort=)``,
@@ -18,18 +18,18 @@ from pymongo import ReturnDocument
 from pymongo.errors import BulkWriteError, DuplicateKeyError
 
 from tests.fakes.config_stores import LIVE_BACKEND, live_mongo_for
-from tests.fakes.mongo import FakeMotorClient
+from tests.fakes.mongo import FakeAsyncMongoClient
 
 DUPLICATE_KEY = 11000
 
 
 @pytest.fixture(params=["fake", pytest.param(LIVE_BACKEND, marks=pytest.mark.live)])
 def collection(request: pytest.FixtureRequest) -> Any:
-    """Coleção vazia: a fake ou uma do banco efêmero no Mongo real (API do motor nas duas)."""
+    """Coleção vazia: a fake ou uma do banco efêmero no Mongo real (API do ``AsyncMongoClient`` nas duas, F3-09b)."""
     live = live_mongo_for(request)
     if live is None:
-        return FakeMotorClient()["fidelidade"]["documentos"]
-    return live.motor()[live.database]["documentos"]
+        return FakeAsyncMongoClient()["fidelidade"]["documentos"]
+    return live.native()[live.database]["documentos"]
 
 
 async def _keys(cursor: Any) -> list[str]:
@@ -272,9 +272,9 @@ async def test_aggregate_das_estatisticas_de_memoria_por_usuario(collection: Any
         {"$sort": {"last_memory_updated_at": -1}},
     ]
 
-    total = await collection.aggregate([*pipeline, {"$count": "total"}]).to_list(length=1)
-    stats = await collection.aggregate(pipeline).to_list(length=None)
-    page = await collection.aggregate([*pipeline, {"$skip": 1}, {"$limit": 1}]).to_list(length=None)
+    total = await (await collection.aggregate([*pipeline, {"$count": "total"}])).to_list(length=1)
+    stats = await (await collection.aggregate(pipeline)).to_list(length=None)
+    page = await (await collection.aggregate([*pipeline, {"$skip": 1}, {"$limit": 1}])).to_list(length=None)
 
     assert total == [{"total": 2}]
     assert stats == [
@@ -327,8 +327,8 @@ async def test_aggregate_dos_runs_da_sessao_com_add_fields_e_if_null(collection:
     ]
     everything = [{"$match": {"session_id": "s1"}}, add_fields, {"$sort": {"_ri": 1, "_ca": 1}}]
 
-    latest = await collection.aggregate(recent).to_list(length=3)
-    ordered = await collection.aggregate(everything).to_list(length=None)
+    latest = await (await collection.aggregate(recent)).to_list(length=3)
+    ordered = await (await collection.aggregate(everything)).to_list(length=None)
 
     assert [(row["k"], row["_ri"], row["_ca"]) for row in latest] == [
         ("r2", 2, 200),

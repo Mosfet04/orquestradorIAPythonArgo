@@ -1,4 +1,4 @@
-"""Repositório de TeamConfig — MongoDB async (motor)."""
+"""Repositório de TeamConfig — MongoDB async (``AsyncMongoClient``)."""
 
 from __future__ import annotations
 

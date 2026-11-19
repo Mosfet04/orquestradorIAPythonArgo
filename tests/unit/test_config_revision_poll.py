@@ -13,7 +13,7 @@ from src.infrastructure.repositories.mongo_config_audit_log import MongoConfigAu
 from src.infrastructure.web.config_revision_poll import poll_config_revision, track_config_revision
 from tests.fakes.admin_config_app import agent, agent_body, fake_config_admin
 from tests.fakes.logger import RecordingLogger
-from tests.fakes.mongo import FakeMotorClient
+from tests.fakes.mongo import FakeAsyncMongoClient
 from tests.fakes.repositories import (
     InMemoryAgentConfigRepository,
     InMemoryTeamConfigRepository,
@@ -26,7 +26,7 @@ class _FlakyRevision(MongoConfigAuditLog):
     """``revision`` falha como o Mongo fora enquanto ``failures`` > 0; ``reads`` conta as leituras."""
 
     def __init__(self, failures: int) -> None:
-        super().__init__(FakeMotorClient()["agno"])
+        super().__init__(FakeAsyncMongoClient()["agno"])
         self.failures = failures
         self.reads = 0
         self.read = asyncio.Event()
@@ -79,7 +79,7 @@ async def test_falhas_seguidas_logam_uma_vez_so_pelo_tipo_e_a_volta_que_se_recup
 
 
 async def test_escrita_de_outra_replica_e_servida_pelo_laco():
-    audit = MongoConfigAuditLog(FakeMotorClient()["agno"])
+    audit = MongoConfigAuditLog(FakeAsyncMongoClient()["agno"])
     store_agents = InMemoryAgentConfigRepository([])
     other, _ = _replica(audit, store_agents)
     reader, runtime = _replica(audit, store_agents)

@@ -255,6 +255,14 @@ protected_modules = ["agno"]
 allowed_importers = ["src.infrastructure.runtime.agno"]
 # Sem baseline desde a criação (F2-07). Não acrescente ignore_imports.
 
+[[tool.importlinter.contracts]]
+id = "sem-motor"
+name = "src não importa o motor (fim de vida): o Mongo vai pelo AsyncMongoClient do pymongo (F3-09b)"
+type = "forbidden"
+source_modules = ["src"]
+forbidden_modules = ["motor"]
+# Sem baseline desde a criação (F3-09b). Não acrescente ignore_imports.
+
 # ---------------------------------------------------------------------------
 # bandit (gate a partir da F1): `bandit -q -c pyproject.toml -r src`
 # ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-"""Repositório de AgentConfig — MongoDB async (motor)."""
+"""Repositório de AgentConfig — MongoDB async (``AsyncMongoClient``)."""
 
 from __future__ import annotations
 

@@ -311,9 +311,10 @@ tests/
   have a `mongo-live` backend that checks the in-memory collection of `tests/fakes/mongo.py`
   against the real server; `tests/integration/test_session_db_live.py` covers sessions, user
   memory, run cancellation and compatibility with data written by agno's synchronous `MongoDb`
-  and by the motor client. The session db uses pymongo's `AsyncMongoClient` (F3-09), which is bound
-  to the test's event loop: create it with `live_mongo.native()` in a module that requests the
-  `live_native_closed` fixture, which awaits its `close` before the database is dropped.
+  and by the motor client. The session db (F3-09) and the repositories (F3-09b) use pymongo's
+  `AsyncMongoClient`, which is bound to the test's event loop: create it with `live_mongo.native()`
+  in a module that requests the `live_native_closed` fixture (the `mongo-live` backends of
+  `tests/fakes/config_stores.py` request it), which awaits its `close` before the database is dropped.
 - No real LLM, network or MongoDB in tests: use `tests/fakes/` (`FakeChatModel` is an
   `agno.models.base.Model`, so it can be passed straight to `Agent`/`Team`).
 - Tests that configure OpenTelemetry providers use the `reset_otel_providers` fixture.
