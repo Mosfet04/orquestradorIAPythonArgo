@@ -289,6 +289,7 @@ def _agent(data: Document, logger: ILogger, strict: bool) -> AgentConfig:
         num_history_runs=data.get("num_history_runs", AgentConfig.num_history_runs),
         add_datetime_to_context=data.get("add_datetime_to_context", AgentConfig.add_datetime_to_context),
         reasoning=data.get("reasoning", AgentConfig.reasoning),
+        expose_reasoning=data.get("expose_reasoning", AgentConfig.expose_reasoning),
     )
 
 

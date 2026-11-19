@@ -91,7 +91,7 @@ def test_descricao_opcional_aceita_none_e_texto(value):
 
 # FA-07: o que a montagem fixava no ``agno.Agent`` vira campo opcional, com o default de antes.
 _AGENT_KWARGS = {"id": "a", "nome": "A", "factory_ia_model": "ollama", "model": "m", "descricao": "d", "prompt": "p"}
-_AGENT_FLAGS = ("markdown", "add_history_to_context", "add_datetime_to_context", "reasoning")
+_AGENT_FLAGS = ("markdown", "add_history_to_context", "add_datetime_to_context", "reasoning", "expose_reasoning")
 
 
 def test_campos_de_execucao_ausentes_tem_o_default_do_comportamento_anterior():
@@ -103,7 +103,8 @@ def test_campos_de_execucao_ausentes_tem_o_default_do_comportamento_anterior():
         config.add_datetime_to_context,
         config.num_history_runs,
         config.reasoning,
-    ) == (True, True, True, 5, False)
+        config.expose_reasoning,
+    ) == (True, True, True, 5, False, True)
 
 
 @pytest.mark.parametrize("field", _AGENT_FLAGS)

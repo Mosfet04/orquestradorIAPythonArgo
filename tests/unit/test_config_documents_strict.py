@@ -70,6 +70,7 @@ def _refusal(map_document: Any, doc: dict[str, Any]) -> InvalidField:
         ({**AGENT, "rag_config": {"active": True, "chave com espaço": 1}}, "rag_config.unknown_key", ()),
         ({**AGENT, "markdown": "false"}, "markdown", ()),
         ({**AGENT, "reasoning": 1}, "reasoning", ()),
+        ({**AGENT, "expose_reasoning": "false"}, "expose_reasoning", ()),
         ({**AGENT, "add_datetime_to_context": None}, "add_datetime_to_context", ()),
         ({**AGENT, "num_history_runs": PASTED_VALUE}, "num_history_runs", ()),
         ({**AGENT, "num_history_runs": 0}, "num_history_runs", ()),
@@ -198,6 +199,7 @@ AGENT_RUN_OPTIONS: dict[str, Any] = {
     "add_datetime_to_context": False,
     "num_history_runs": 12,
     "reasoning": True,
+    "expose_reasoning": False,
 }
 TEAM_RUN_OPTIONS: dict[str, Any] = {"markdown": False, "add_history_to_context": False}
 
@@ -209,7 +211,7 @@ def test_documento_sem_os_campos_de_execucao_mapeia_para_os_defaults_de_antes():
     team = map_team_document(TEAM, logger)
 
     assert (agent.markdown, agent.add_history_to_context, agent.add_datetime_to_context) == (True, True, True)
-    assert (agent.num_history_runs, agent.reasoning) == (5, False)
+    assert (agent.num_history_runs, agent.reasoning, agent.expose_reasoning) == (5, False, True)
     assert (team.markdown, team.add_history_to_context) == (True, True)
     assert map_agent_document(AGENT, logger, strict=True) == agent
     assert map_team_document(TEAM, logger, strict=True) == team
@@ -231,7 +233,7 @@ def test_campos_de_execucao_sao_lidos_e_gravados_em_snake_case():
 
 @pytest.mark.parametrize(
     "doc",
-    [{**AGENT, "num_history_runs": "5"}, {**AGENT, "reasoning": "false"}],
+    [{**AGENT, "num_history_runs": "5"}, {**AGENT, "reasoning": "false"}, {**AGENT, "expose_reasoning": 0}],
 )
 def test_leitura_tolerante_tambem_recusa_campo_de_execucao_invalido(doc: dict[str, Any]):
     """Campo novo, sem documento legado a preservar: a entidade recusa nos dois modos (o repositório isola

@@ -188,7 +188,7 @@ O que muda para clientes e integradores entre o 2.5.8 e o 3.1.12 (decisões do d
 
 **Configuração dos agentes**
 
-- `reasoning: true` vira `ReasoningTools(add_instructions=True)`: o agente ganha as tools `think`/`analyze` e as usa no próprio run, **sem fase separada de raciocínio e sem `reasoning_max_steps`** (o campo saiu). Faz mais chamadas ao modelo por resposta. As tools aparecem como `TOOL_CALL_*` no AG-UI (o texto do raciocínio vai nos argumentos) e nas tools do run REST.
+- `reasoning: true` vira `ReasoningTools(add_instructions=True)`: o agente ganha as tools `think`/`analyze` e as usa no próprio run, **sem fase separada de raciocínio e sem `reasoning_max_steps`** (o campo saiu). Faz mais chamadas ao modelo por resposta. As tools aparecem como `TOOL_CALL_*` no AG-UI (o texto do raciocínio vai nos argumentos) e nas tools do run REST. Para não mostrar o raciocínio no AG-UI, `expose_reasoning: false` no agente (F3-10; default `true`, documento sem o campo segue mostrando): o run e a sessão guardam o raciocínio, e as rotas REST e `GET /sessions/{id}/runs` ainda o devolvem (F5).
 - Id reservado do agno em agente ou team (lista nas pré-checagens): documento inválido (`InvalidField("id")`).
 
 **Outros**

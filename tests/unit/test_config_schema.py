@@ -135,6 +135,7 @@ def test_campos_de_execucao_com_tipo_default_e_faixa_da_entidade() -> None:
         "add_datetime_to_context": {"type": "boolean", "default": True},
         "num_history_runs": {"type": "integer", "default": 5, "minimum": 1, "maximum": 50},
         "reasoning": {"type": "boolean", "default": False},
+        "expose_reasoning": {"type": "boolean", "default": True},
     }
     assert {key: value for key, value in schema["team"].items() if key != "mode"} == {
         "markdown": {"type": "boolean", "default": True},

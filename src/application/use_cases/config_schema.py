@@ -64,6 +64,7 @@ class ConfigSchema:
                 "add_datetime_to_context": _boolean(AgentConfig.add_datetime_to_context),
                 "num_history_runs": _integer(AgentConfig.num_history_runs, NUM_HISTORY_RUNS_RANGE),
                 "reasoning": _boolean(AgentConfig.reasoning),
+                "expose_reasoning": _boolean(AgentConfig.expose_reasoning),
             },
             "team": {
                 "mode": list(TEAM_MODES),

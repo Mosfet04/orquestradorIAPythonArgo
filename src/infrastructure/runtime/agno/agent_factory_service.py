@@ -43,6 +43,7 @@ from src.infrastructure.runtime.agno.rag_vector_db import (
     EmbeddingDimensionError,
     GuardedMongoVectorDb,
 )
+from src.infrastructure.runtime.agno.reasoning_visibility import PrivateReasoningTools
 from src.infrastructure.runtime.agno.user_id_guardrail import (
     UserIdRequiredGuardrail,
     needs_user_id,
@@ -444,8 +445,11 @@ class AgentFactoryService:
         user_memories = agentic_memory = config.user_memory_active
         if config.reasoning:
             # Agno 3.x: sem ``reasoning=`` (nem fase separada ou ``reasoning_max_steps``); o modelo
-            # raciocina com as tools ``think``/``analyze`` no próprio run (decisão do dono, F3-05).
-            tools = [*tools, ReasoningTools(add_instructions=True)]
+            # raciocina com as tools ``think``/``analyze`` no próprio run (decisão do dono, F3-05). Depois
+            # das tools do documento: nome repetido fica com a do documento. ``expose_reasoning=false``:
+            # a toolkit que o AG-UI reconhece e não mostra (F3-10).
+            toolkit = ReasoningTools if config.expose_reasoning else PrivateReasoningTools
+            tools = [*tools, toolkit(add_instructions=True)]
         return Agent(
             id=config.id,
             name=config.nome,

@@ -35,7 +35,10 @@ Entrada e saída neutras à versão do agno (F3-04):
   passa por ``filter_agui_events``: só os tipos de ``EMITTED_EVENT_TYPES`` chegam ao cliente
   (``RAW``, ``CUSTOM``, estado e raciocínio do 3.x são descartados, com log ``debug`` só do tipo:
   nenhum ``CUSTOM`` é previsto hoje) e o terminal é decidido aqui (o ``RUN_ERROR`` do conversor
-  do 3.x leva o texto do erro e o evento cru).
+  do 3.x leva o texto do erro e o evento cru);
+- agente com ``expose_reasoning=false`` (F3-10): os ``TOOL_CALL_*`` das tools de raciocínio dele
+  (``think``/``analyze`` da ``PrivateReasoningTools``, reconhecidas pela origem; em team, pelo membro que
+  chamou) também são descartados (``reasoning_visibility``). O run e a sessão seguem com o raciocínio.
 
 ``user_id`` só passa se for ``str`` (outro tipo vira ``None``: um ``{"$ne": null}`` chegaria ao
 filtro do ``MongoDb`` do agno). O resto da validade é do guardrail do F1-06 em entidade com
@@ -46,7 +49,7 @@ from __future__ import annotations
 
 import re
 import uuid
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Container, Sequence
 from typing import cast
 from urllib.parse import quote
 
@@ -77,6 +80,10 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 from src.domain.ports import ILogger
+from src.infrastructure.runtime.agno.reasoning_visibility import (
+    private_reasoning_tools,
+    track_private_reasoning_calls,
+)
 from src.infrastructure.runtime.agno.served_entities import Entity, ServedEntities
 
 AGUI_PATH = "/agui"
@@ -93,6 +100,9 @@ AgnoEvent = RunOutputEvent | TeamRunOutputEvent
 _FAILURE_EVENTS = (AgentRunErrorEvent, TeamRunErrorEvent, AgentRunCancelledEvent, TeamRunCancelledEvent)
 
 _TERMINAL_EVENT_TYPES = frozenset({EventType.RUN_FINISHED, EventType.RUN_ERROR})
+_TOOL_CALL_EVENT_TYPES = frozenset(
+    {EventType.TOOL_CALL_START, EventType.TOOL_CALL_ARGS, EventType.TOOL_CALL_END, EventType.TOOL_CALL_RESULT}
+)
 # Do conversor do agno, passam sem mudança (o RUN_STARTED é nosso; os terminais são decididos aqui).
 _PASSTHROUGH_EVENT_TYPES = frozenset(
     {
@@ -207,12 +217,17 @@ async def _run_events(
     thread_id = run_input.thread_id
     yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=thread_id, run_id=run_id)
     failures: list[AgnoEvent] = []
+    hidden_ids: set[str] = set()
     try:
-        stream = _start_run(entity, run_input, run_id, user_id)
+        stream = track_private_reasoning_calls(
+            _start_run(entity, run_input, run_id, user_id), private_reasoning_tools(entity), hidden_ids
+        )
         converted = async_stream_agno_response_as_agui_events(
             response_stream=_watch_failure(stream, run_id, failures), thread_id=thread_id, run_id=run_id
         )
-        async for event in filter_agui_events(converted, failures, entity_id=entity_id, run_id=run_id, logger=logger):
+        async for event in filter_agui_events(
+            converted, failures, entity_id=entity_id, run_id=run_id, logger=logger, hidden_tool_call_ids=hidden_ids
+        ):
             yield event
     except Exception as exc:  # noqa: BLE001 - o SSE já respondeu 200: a falha vira RUN_ERROR, com log
         # Nunca str(exc): texto de exceção de SDK pode trazer segredo.
@@ -227,16 +242,27 @@ async def filter_agui_events(
     entity_id: str,
     run_id: str,
     logger: ILogger,
+    hidden_tool_call_ids: Container[str] = frozenset(),
 ) -> AsyncIterator[BaseEvent]:
     """Saída do conversor do agno reduzida à lista: o resto é descartado e o terminal é decidido aqui.
 
     ``failures`` é a lista que o ``_watch_failure`` preenche enquanto o stream é consumido: no
     terminal, já tem a falha do próprio run, se houve. Nada passa depois do terminal.
+    ``hidden_tool_call_ids``: ids das chamadas de raciocínio privado (F3-10), preenchidos pelo
+    ``track_private_reasoning_calls`` antes de o conversor emitir os ``TOOL_CALL_*`` delas.
     """
     async for event in events:
         if event.type in _TERMINAL_EVENT_TYPES:
             yield _terminal_event(event, failures, entity_id, run_id, logger)
             return
+        if event.type in _TOOL_CALL_EVENT_TYPES and getattr(event, "tool_call_id", None) in hidden_tool_call_ids:
+            logger.debug(
+                "Raciocínio do agente fora do AG-UI (expose_reasoning=false)",
+                entity_id=entity_id,
+                run_id=run_id,
+                event_type=event.type.value,
+            )
+            continue
         if event.type in _PASSTHROUGH_EVENT_TYPES:
             yield event
             continue
