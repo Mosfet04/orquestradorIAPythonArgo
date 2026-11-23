@@ -1,15 +1,20 @@
-"""Coleção e cliente Mongo (motor) em memória para os repositórios de ``src/infrastructure/repositories``
-e para o db de sessões do agno (``SessionDb``, F2-08).
+"""Coleção e clientes Mongo em memória: os do pymongo nativo (``FakeAsyncMongoClient``, F3-09; o
+``FakeMongoClient`` de coleções fixas) para o db de sessões do agno (``SessionDb``, F2-08) e para os
+repositórios de ``src/infrastructure/repositories`` (F3-09b), e o do motor (``FakeMotorClient``), que só
+resta nos testes que comparam os dois drivers.
 
 Só o que os repositórios e o ``AsyncMongoDb`` do agno 2.5.8 usam em sessões e memória:
 ``find``/``find_one`` com filtro de igualdade em campos de topo (ex.: ``{"active": True}``), ``$in``,
-``$ne``, ``$exists`` e ``$or``, projeção de inclusão, ``sort`` por um campo ou por uma lista de campos (no
+``$nin``, ``$ne``, ``$exists``, ``$gt``, ``$size``, ``$not`` e ``$or``,
+projeção de inclusão, ``sort`` por um campo ou por uma lista de campos (no
 cursor ou no kwarg ``sort=``), ``skip``/``limit``/``to_list``, iteração com ``async for``,
 ``insert_one``/``insert_many`` (com ``_id`` gerado), ``replace_one``/``find_one_and_replace`` (com ``upsert``),
-``find_one_and_update`` só com ``$inc`` (com ``upsert``),
+``find_one_and_update`` só com ``$inc`` (com ``upsert``), ``update_one`` só com ``$set`` (com ``upsert``),
+``index_information``, ``drop``,
 ``delete_one``/``delete_many``, ``distinct``, ``count_documents`` e o ``aggregate`` mínimo das
 estatísticas de memória (``$match``, ``$group`` com ``$sum: 1``/``$max``, ``$sort``, ``$skip``,
-``$limit``, ``$count``). O índice único de
+``$limit``, ``$count``), dos runs da sessão do agno 3.x (``$addFields`` só com
+``{"$ifNull": ["$campo", default]}``) e da volta da migração v3.0.0 (``$group`` com ``$push``). O índice único de
 ``create_index(..., unique=True)`` é emulado: repetido vira ``BulkWriteError`` código 11000 no
 ``insert_many`` e ``DuplicateKeyError`` nas demais escritas, como no pymongo. Cada leitura devolve
 uma cópia do documento, como um documento novo vindo do banco. Igualdade como no BSON: booleano só
@@ -23,12 +28,13 @@ from __future__ import annotations
 
 import copy
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
 from bson import ObjectId
-from pymongo import ReturnDocument
+from pymongo import AsyncMongoClient, ReturnDocument
 from pymongo.errors import BulkWriteError, DuplicateKeyError, InvalidOperation, ServerSelectionTimeoutError
 from pymongo.synchronous.mongo_client import MongoClient as SyncMongoClient
 
@@ -64,6 +70,10 @@ class FakeAsyncCursor:
         self.sorts.extend(keys)
         self._items = _sorted(self._items, keys)
         self._docs = iter(self._items)
+        return self
+
+    def batch_size(self, size: int) -> FakeAsyncCursor:
+        """Só o encadeamento do motor: em memória não há lote."""
         return self
 
     def skip(self, count: int) -> FakeAsyncCursor:
@@ -123,34 +133,91 @@ def _matches(doc: dict[str, Any], query: dict[str, Any]) -> bool:
 
 
 def _operator_matches(doc: dict[str, Any], key: str, expected: dict[str, Any]) -> bool:
-    """Condição de operador num campo: ``$in``, ``$exists`` ou ``$ne``; outro falha alto."""
+    """Condição de operador num campo: ``$in``, ``$nin``, ``$exists``, ``$ne``, ``$gt``, ``$size`` e
+    ``$not`` (de outra condição de operador); vários operadores no mesmo campo valem juntos (E), como
+    no Mongo. Outro operador falha alto.
+
+    ``$nin`` é a negação do ``$in``: campo nulo ou ausente passa, salvo se ``None`` estiver na lista.
+    ``$size`` só casa com lista do tamanho dado; ``$gt`` só compara valores do mesmo tipo numérico.
+    """
+    return all(_single_operator_matches(doc, key, operator, operand) for operator, operand in expected.items())
+
+
+def _in(doc: dict[str, Any], key: str, operand: Any) -> bool:
+    return any(_field_equal(doc.get(key), option) for option in operand)
+
+
+def _gt(doc: dict[str, Any], key: str, operand: Any) -> bool:
     actual = doc.get(key)
-    if set(expected) == {"$in"}:
-        return any(_field_equal(actual, option) for option in expected["$in"])
-    if set(expected) == {"$exists"}:
-        return (key in doc) is bool(expected["$exists"])
-    if set(expected) == {"$ne"}:
-        return not _field_equal(actual, expected["$ne"])
-    raise NotImplementedError(f"FakeMongoCollection: operador não suportado em {key!r}")
+    return isinstance(actual, (int, float)) and not isinstance(actual, bool) and actual > operand
+
+
+def _not(doc: dict[str, Any], key: str, operand: Any) -> bool:
+    if not (isinstance(operand, dict) and all(k.startswith("$") for k in operand)):
+        raise NotImplementedError(f"FakeMongoCollection: $not só com operadores em {key!r}: {operand!r}")
+    return not _operator_matches(doc, key, operand)
+
+
+_OPERATORS: dict[str, Callable[[dict[str, Any], str, Any], bool]] = {
+    "$in": _in,
+    "$nin": lambda doc, key, operand: not _in(doc, key, operand),
+    "$exists": lambda doc, key, operand: (key in doc) is bool(operand),
+    "$ne": lambda doc, key, operand: not _field_equal(doc.get(key), operand),
+    "$gt": _gt,
+    "$size": lambda doc, key, operand: isinstance(doc.get(key), list) and len(doc[key]) == operand,
+    "$not": _not,
+}
+
+
+def _single_operator_matches(doc: dict[str, Any], key: str, operator: str, operand: Any) -> bool:
+    check = _OPERATORS.get(operator)
+    if check is None:
+        raise NotImplementedError(f"FakeMongoCollection: operador não suportado em {key!r}: {operator}")
+    return check(doc, key, operand)
 
 
 def _projected(doc: dict[str, Any], projection: dict[str, Any] | None) -> dict[str, Any]:
-    """Cópia do documento; com projeção de inclusão (``{"campo": 1}``), só esses campos e o ``_id``."""
+    """Cópia do documento; com projeção de inclusão (``{"campo": 1}``), só esses campos e o ``_id``.
+
+    Caminho com um ponto (``{"runs.run_id": 1}``) projeta o subcampo do subdocumento ou de cada
+    subdocumento do array, como o Mongo (item que não é documento sai; documento sem o subcampo vira ``{}``).
+    """
     if not projection:
         return copy.deepcopy(doc)
     if not all(projection.values()):
         raise NotImplementedError("FakeMongoCollection: só projeção de inclusão")
-    return {k: copy.deepcopy(v) for k, v in doc.items() if k == "_id" or k in projection}
+    projected = {k: copy.deepcopy(v) for k, v in doc.items() if k == "_id" or k in projection}
+    dotted = [path.split(".") for path in projection if "." in path]
+    if len({parts[0] for parts in dotted}) != len(dotted) or any(len(parts) != 2 for parts in dotted):
+        raise NotImplementedError(f"FakeMongoCollection: projeção pontilhada não suportada: {projection}")
+    for head, subfield in dotted:
+        _project_subfield(projected, doc.get(head), head, subfield)
+    return projected
+
+
+def _project_subfield(projected: dict[str, Any], value: Any, head: str, subfield: str) -> None:
+    if isinstance(value, dict):
+        projected[head] = _pick(value, subfield)
+    elif isinstance(value, list):
+        projected[head] = [_pick(item, subfield) for item in value if isinstance(item, dict)]
+
+
+def _pick(subdoc: dict[str, Any], field: str) -> dict[str, Any]:
+    return {field: copy.deepcopy(subdoc[field])} if field in subdoc else {}
 
 
 def _aggregate(docs: list[dict[str, Any]], pipeline: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Pipeline mínimo: ``$match``, ``$group`` (``_id: "$campo"``, ``$sum: 1``, ``$max: "$campo"``),
-    ``$sort``, ``$skip``, ``$limit`` e ``$count``. Estágio ou acumulador fora disso falha alto."""
+    """Pipeline mínimo: ``$match``, ``$addFields`` (só ``$ifNull``), ``$group`` (``_id: "$campo"``,
+    ``$sum: 1``, ``$max: "$campo"``, ``$push: "$campo"``), ``$sort``, ``$skip``, ``$limit`` e ``$count``. Estágio,
+    expressão ou acumulador fora disso falha alto."""
     rows = [copy.deepcopy(doc) for doc in docs]
     for stage in pipeline:
         ((name, spec),) = stage.items()
         if name == "$match":
             rows = [row for row in rows if _matches(row, spec)]
+        elif name == "$addFields":
+            for row in rows:
+                row.update({field_name: _if_null(row, expression) for field_name, expression in spec.items()})
         elif name == "$group":
             rows = _group(rows, spec)
         elif name == "$sort":
@@ -166,6 +233,41 @@ def _aggregate(docs: list[dict[str, Any]], pipeline: list[dict[str, Any]]) -> li
     return rows
 
 
+def _is_expression(value: Any) -> bool:
+    """``True`` se o valor seria avaliado como expressão pelo Mongo (``"$campo"``, ``{"$op": ...}``)."""
+    if isinstance(value, str):
+        return value.startswith("$")
+    if isinstance(value, dict):
+        return any(key.startswith("$") or _is_expression(item) for key, item in value.items())
+    if isinstance(value, list):
+        return any(_is_expression(item) for item in value)
+    return False
+
+
+def _if_null(row: dict[str, Any], expression: Any) -> Any:
+    """Expressão ``{"$ifNull": ["$campo", default]}``: o valor do campo, ou o default se nulo ou ausente.
+
+    Só a forma que o agno 3.x usa nos runs da sessão (campo de topo, default literal); o Mongo real
+    avaliaria diferente caminho pontilhado, default que é expressão e campo sem ``$``, e o fake não
+    os emula: qualquer outra forma falha alto.
+    """
+    if not (isinstance(expression, dict) and set(expression) == {"$ifNull"}):
+        raise NotImplementedError(f"FakeMongoCollection.aggregate: expressão fora do fake: {expression!r}")
+    args = expression["$ifNull"]
+    if not (isinstance(args, (list, tuple)) and len(args) == 2):
+        raise NotImplementedError(f"FakeMongoCollection.aggregate: $ifNull só com [campo, default]: {args!r}")
+    field_path, default = args
+    if not (isinstance(field_path, str) and field_path.startswith("$") and not field_path.startswith("$$")):
+        raise NotImplementedError(f"FakeMongoCollection.aggregate: $ifNull exige '$campo': {field_path!r}")
+    field_name = field_path.removeprefix("$")
+    if not field_name or "." in field_name:
+        raise NotImplementedError(f"FakeMongoCollection.aggregate: $ifNull só com campo de topo: {field_path!r}")
+    if _is_expression(default):
+        raise NotImplementedError(f"FakeMongoCollection.aggregate: $ifNull com default expressão: {default!r}")
+    value = row.get(field_name)
+    return default if value is None else value
+
+
 def _group(rows: list[dict[str, Any]], spec: dict[str, Any]) -> list[dict[str, Any]]:
     """Estágio ``$group``: um grupo por valor de ``_id: "$campo"``, na ordem de aparição."""
     groups: dict[Any, dict[str, Any]] = {}
@@ -179,9 +281,12 @@ def _group(rows: list[dict[str, Any]], spec: dict[str, Any]) -> list[dict[str, A
 
 
 def _accumulate(group: dict[str, Any], field_name: str, accumulator: dict[str, Any], row: dict[str, Any]) -> None:
-    """Aplica ``$sum: 1`` ou ``$max: "$campo"`` de uma linha ao grupo; outro acumulador falha alto."""
+    """Aplica ``$sum: 1``, ``$max: "$campo"`` ou ``$push: "$campo"`` de uma linha ao grupo; outro
+    acumulador falha alto."""
     ((operator, operand),) = accumulator.items()
-    if operator == "$sum" and operand == 1:
+    if operator == "$push" and isinstance(operand, str) and operand.startswith("$"):
+        group.setdefault(field_name, []).append(row.get(operand.removeprefix("$")))
+    elif operator == "$sum" and operand == 1:
         group[field_name] = group.get(field_name, 0) + 1
     elif operator == "$max" and isinstance(operand, str):
         value = row.get(operand.removeprefix("$"))
@@ -208,8 +313,8 @@ class FakeMongoCollection:
         self.queries: list[dict[str, Any]] = []
         self.unique_keys: set[str] = set()
         self.indexes: list[dict[str, Any]] = []
-        self.client: FakeMotorClient | None = None
-        """Cliente dono da coleção (``FakeMotorClient``): depois do ``close`` dele, toda operação falha."""
+        self.client: _FakeClient | FakeMongoClient | None = None
+        """Cliente dono da coleção: depois do ``close`` dele, toda operação falha."""
 
     def _use(self, query: dict[str, Any] | None = None) -> None:
         if self.client is not None:
@@ -279,6 +384,26 @@ class FakeMongoCollection:
         self.docs.append(inserted)
         return FakeWriteResult(upserted_id=inserted["_id"])
 
+    async def update_one(
+        self, filter: dict[str, Any], update: dict[str, Any], upsert: bool = False  # pylint: disable=redefined-builtin
+    ) -> FakeWriteResult:
+        """Só ``$set`` (carimbo de versão do esquema, volta da migração); sem casar e com ``upsert``,
+        cria pelos campos de igualdade do filtro."""
+        if set(update) != {"$set"}:
+            raise NotImplementedError(f"update não suportado pelo fake: {sorted(update)}")
+        self._use(filter)
+        found = next((d for d in self.docs if _matches(d, filter)), None)
+        if found is None and not upsert:
+            return FakeWriteResult()
+        changed = {**(found or {k: v for k, v in filter.items() if not isinstance(v, dict)}), **update["$set"]}
+        self._refuse_duplicate(changed, replacing=found)
+        if found is None:
+            inserted = {"_id": ObjectId(), **copy.deepcopy(changed)}
+            self.docs.append(inserted)
+            return FakeWriteResult(upserted_id=inserted["_id"])
+        found.update(copy.deepcopy(update["$set"]))
+        return FakeWriteResult(matched=1)
+
     async def find_one_and_replace(
         self,
         filter: dict[str, Any],  # pylint: disable=redefined-builtin  # nome do parâmetro no pymongo (o agno passa por nome)
@@ -340,6 +465,25 @@ class FakeMongoCollection:
             self.unique_keys.add(fields[0][0])
         return name or "_".join(f"{k}_{d}" for k, d in fields)
 
+    async def index_information(self) -> dict[str, dict[str, Any]]:
+        """Como no pymongo: nome → ``{"key": [(campo, direção)], "unique": ...}``; coleção que não existe
+        no servidor (sem documento nem índice) não tem índice, nem o ``_id_``."""
+        self._use()
+        if not (self.docs or self.indexes):
+            return {}
+        info: dict[str, dict[str, Any]] = {"_id_": {"key": [("_id", 1)]}}
+        for index in self.indexes:
+            name = index["name"] or "_".join(f"{k}_{d}" for k, d in index["keys"])
+            info[name] = {"key": list(index["keys"]), **({"unique": True} if index["unique"] else {})}
+        return info
+
+    async def drop(self) -> None:
+        """Apaga documentos e índices: a coleção deixa de existir no servidor."""
+        self._use()
+        self.docs.clear()
+        self.indexes.clear()
+        self.unique_keys.clear()
+
     async def insert_one(self, doc: dict[str, Any]) -> None:
         """Como o pymongo: ``_id`` gerado no documento passado; repetido no índice único = ``DuplicateKeyError``."""
         self._use()
@@ -366,26 +510,76 @@ class FakeMongoCollection:
             raise BulkWriteError({"writeErrors": errors, "nInserted": inserted, "writeConcernErrors": []})
 
 
+class _BoundCollections:
+    """``client[db]``: as coleções do cliente (criadas no primeiro acesso, se o dict for um ``defaultdict``),
+    cada uma amarrada ao cliente para recusar uso depois do ``close``. O resto do dict (``get``, ``items``...)
+    é o do dict. Uma coleção pertence a um cliente só: o vínculo vale para o último cliente que a acessou."""
+
+    def __init__(self, client: FakeMongoClient) -> None:
+        self._client = client
+
+    def __getitem__(self, collection_name: str) -> FakeMongoCollection:
+        collection = self._client.collections[collection_name]
+        collection.client = self._client
+        return collection
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._client.collections, name)
+
+
 class FakeMongoClient:
-    """``client[db][collection]``: qualquer database expõe as mesmas coleções."""
+    """``client[db][collection]``: qualquer database expõe as mesmas coleções.
+
+    Também serve de cliente do app (F3-09b: container, repositórios, diário e health no mesmo cliente):
+    ``admin.command("ping")`` responde ok e ``close`` é corrotina, registrada em ``closes`` só quando
+    aguardada (``True`` = na thread do event loop), como no ``AsyncMongoClient``. Depois do ``close`` toda
+    operação nas coleções entregues por ele levanta ``InvalidOperation``, como o pymongo (um cliente fechado
+    não volta a funcionar): uso depois do fechamento, no ciclo de vida, vira teste vermelho.
+    """
 
     def __init__(self, collections: dict[str, FakeMongoCollection]) -> None:
         self.collections = collections
+        self.closes: list[bool] = []
 
-    def __getitem__(self, database_name: str) -> dict[str, FakeMongoCollection]:
-        return self.collections
+    def __getitem__(self, database_name: str) -> _BoundCollections:
+        return _BoundCollections(self)
+
+    def refuse_if_closed(self) -> None:
+        if self.closes:
+            raise InvalidOperation("Cannot use AsyncMongoClient after close")
+
+    @property
+    def admin(self) -> FakeMongoClient:
+        return self
+
+    async def command(self, name: str) -> dict[str, int]:
+        self.refuse_if_closed()
+        if name != "ping":
+            raise NotImplementedError(f"comando {name!r} fora do fake")
+        return {"ok": 1}
+
+    async def close(self) -> None:
+        self.closes.append(running_on_event_loop())
+
+
+class FakeAsyncMongoCollection(FakeMongoCollection):
+    """Coleção do ``AsyncMongoClient`` do pymongo: ``aggregate`` é corrotina e o cursor sai do ``await``
+    (``await (await collection.aggregate(p)).to_list(...)``); o resto da API é a mesma do motor."""
+
+    async def aggregate(self, pipeline: list[dict[str, Any]]) -> FakeAsyncCursor:  # type: ignore[override]
+        return super().aggregate(pipeline)
 
 
 class FakeMotorDatabase:
     """``database[collection]``: a coleção nasce no primeiro acesso, como no Mongo."""
 
-    def __init__(self, client: FakeMotorClient) -> None:
+    def __init__(self, client: _FakeClient) -> None:
         self._client = client
         self.collections: dict[str, FakeMongoCollection] = {}
 
     def __getitem__(self, collection_name: str) -> FakeMongoCollection:
         if collection_name not in self.collections:
-            collection = FakeMongoCollection()
+            collection = self._client.collection_type()
             collection.client = self._client
             self.collections[collection_name] = collection
         return self.collections[collection_name]
@@ -395,31 +589,63 @@ class FakeMotorDatabase:
         self._client.refuse_if_closed()
         return [name for name, collection in self.collections.items() if collection.docs or collection.indexes]
 
+    async def command(self, name: str) -> dict[str, int]:
+        """Só o ``ping`` (``client.admin.command("ping")`` do startup e do health)."""
+        self._client.refuse_if_closed()
+        if name != "ping":
+            raise NotImplementedError(f"comando {name!r} fora do fake")
+        return {"ok": 1}
 
-class FakeMotorClient:
-    """Cliente motor em memória com um database por nome (``client[db][collection]``).
 
-    O nome da classe tem ``Motor`` de propósito: o ``AsyncMongoDb`` do agno 2.5.8 reconhece o tipo
-    do cliente injetado pelo nome da classe (``_detect_client_type``). ``close`` é síncrono, como
-    no motor, e registra em ``closes`` se rodou na thread do event loop; depois dele toda operação
-    levanta ``InvalidOperation``, como o pymongo.
-    """
+class _FakeClient:
+    """Um database por nome (``client[db][collection]``); depois do ``close`` toda operação levanta
+    ``InvalidOperation``, como o pymongo."""
+
+    collection_type: type[FakeMongoCollection] = FakeMongoCollection
 
     def __init__(self) -> None:
         self.databases: dict[str, FakeMotorDatabase] = {}
         self.closes: list[bool] = []
-        """Por ``close``: ``True`` se rodou na thread do event loop (I/O síncrono no loop)."""
+        """Por ``close``: ``True`` se rodou na thread do event loop."""
 
     def __getitem__(self, database_name: str) -> FakeMotorDatabase:
         if database_name not in self.databases:
             self.databases[database_name] = FakeMotorDatabase(self)
         return self.databases[database_name]
 
+    @property
+    def admin(self) -> FakeMotorDatabase:
+        return self["admin"]
+
     def refuse_if_closed(self) -> None:
         if self.closes:
-            raise InvalidOperation("Cannot use MongoClient after close")
+            raise InvalidOperation("Cannot use AsyncMongoClient after close")
+
+
+class FakeMotorClient(_FakeClient):
+    """Cliente motor em memória.
+
+    O nome da classe tem ``Motor`` de propósito: o ``AsyncMongoDb`` do agno reconhece o tipo do
+    cliente injetado pelo nome da classe (``_detect_client_type``). ``close`` é síncrono, como no
+    motor, e registra em ``closes`` se rodou na thread do event loop (I/O síncrono no loop).
+    """
 
     def close(self) -> None:
+        self.closes.append(running_on_event_loop())
+
+
+class FakeAsyncMongoClient(_FakeClient):
+    """Cliente ``AsyncMongoClient`` (pymongo nativo) em memória (F3-09).
+
+    O nome da classe tem ``AsyncMongo`` de propósito: é por ele que o ``_detect_client_type`` do agno
+    3.1.12 o reconhece como o cliente nativo. ``aggregate`` é corrotina, como no driver. ``close`` é
+    corrotina: só registra quando aguardado (um ``close()`` sem ``await``, ou chamado numa thread, não
+    fecha nada, como no driver).
+    """
+
+    collection_type = FakeAsyncMongoCollection
+
+    async def close(self) -> None:
         self.closes.append(running_on_event_loop())
 
 
@@ -458,8 +684,8 @@ class FailingMongoClient:
     async def command(self, *_: object) -> dict[str, Any]:
         raise self._error
 
-    def close(self) -> None:
-        """Nada a fechar."""
+    async def close(self) -> None:
+        """Nada a fechar (corrotina, como no ``AsyncMongoClient``)."""
 
 
 @dataclass
@@ -470,6 +696,10 @@ class SyncPymongoCalls:
     """``(operação, no event loop)`` de cada operação do pymongo síncrono (``find``, ``createIndexes``...)."""
     closes: list[bool] = field(default_factory=list)
     """Um item por ``MongoClient.close``."""
+    async_operations: list[str] = field(default_factory=list)
+    """Operações do ``AsyncMongoClient`` nativo (I/O async no loop, sem bloqueio), na ordem (F3-09)."""
+    async_closes: int = 0
+    """``AsyncMongoClient.close`` aguardados."""
 
     def on_event_loop(self) -> list[str]:
         """Operações que rodaram na thread do event loop (I/O síncrono no caminho async)."""
@@ -484,9 +714,13 @@ def trap_sync_pymongo(monkeypatch: pytest.MonkeyPatch) -> SyncPymongoCalls:
     essa escolha registra a operação e a thread e falha na hora com ``ServerSelectionTimeoutError``
     (o erro de um Mongo fora do ar): nenhum socket é aberto. ``MongoClient.close`` também é
     registrado. Vale para clientes reais (``MongoClient``, ``AsyncIOMotorClient``) criados no teste.
+
+    O ``AsyncMongoClient`` nativo (F3-09) não passa pelo pymongo síncrono: a escolha de servidor dele
+    vai para ``async_operations`` e falha do mesmo jeito; o ``close`` aguardado conta em ``async_closes``.
     """
     calls = SyncPymongoCalls()
     original_close = SyncMongoClient.close
+    original_async_close = AsyncMongoClient.close
 
     def select_server(self: Any, server_selector: Any, session: Any, operation: Any, *_: Any, **__: Any) -> Any:
         calls.operations.append((str(getattr(operation, "value", operation)), running_on_event_loop()))
@@ -496,6 +730,16 @@ def trap_sync_pymongo(monkeypatch: pytest.MonkeyPatch) -> SyncPymongoCalls:
         calls.closes.append(running_on_event_loop())
         original_close(self)
 
+    async def async_select_server(self: Any, selector: Any, session: Any, operation: Any, *_: Any, **__: Any) -> Any:
+        calls.async_operations.append(str(getattr(operation, "value", operation)))
+        raise ServerSelectionTimeoutError("trap_sync_pymongo: sem servidor (detector)")
+
+    async def async_close(self: Any) -> None:
+        calls.async_closes += 1
+        await original_async_close(self)
+
     monkeypatch.setattr(SyncMongoClient, "_select_server", select_server)
     monkeypatch.setattr(SyncMongoClient, "close", close)
+    monkeypatch.setattr(AsyncMongoClient, "_select_server", async_select_server)
+    monkeypatch.setattr(AsyncMongoClient, "close", async_close)
     return calls

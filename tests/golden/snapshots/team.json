@@ -12,7 +12,6 @@
       "description": "Roteia para o especialista",
       "enable_agentic_memory": true,
       "enable_session_summaries": false,
-      "enable_user_memories": true,
       "id": "time-roteador",
       "instructions": "Escolha o membro certo.",
       "markdown": true,
@@ -47,7 +46,8 @@
       "store_history_messages": true,
       "store_member_responses": true,
       "store_tool_messages": true,
-      "telemetry": false
+      "telemetry": false,
+      "update_memory_on_run": true
     },
     {
       "add_history_to_context": true,
@@ -61,7 +61,6 @@
       "description": "",
       "enable_agentic_memory": false,
       "enable_session_summaries": true,
-      "enable_user_memories": false,
       "id": "time-coordenador",
       "instructions": null,
       "markdown": true,
@@ -91,7 +90,8 @@
       "store_history_messages": true,
       "store_member_responses": true,
       "store_tool_messages": true,
-      "telemetry": false
+      "telemetry": false,
+      "update_memory_on_run": false
     }
   ],
   "factory_calls": {

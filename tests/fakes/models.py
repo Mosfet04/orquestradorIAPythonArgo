@@ -13,7 +13,7 @@ import copy
 import hashlib
 import math
 import struct
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -73,13 +73,19 @@ def _tool_name(tool: Any) -> str:
     return str(getattr(tool, "name", tool))
 
 
+ScriptItem = str | ModelResponse | Callable[[str], ModelResponse]
+"""Item do roteiro do ``FakeChatModel``: texto, resposta pronta ou função do texto das mensagens da chamada."""
+
+
 @dataclass
 class FakeChatModel(Model):
     """Modelo de chat roteirizado: devolve ``responses`` em ordem e registra cada chamada.
 
     Item ``str`` vira resposta de texto do assistente; item ``ModelResponse`` é devolvido
     como está (ex.: ``ModelResponse(role="assistant", tool_calls=[...])`` para o agno
-    executar uma tool e chamar o modelo de novo com o resultado).
+    executar uma tool e chamar o modelo de novo com o resultado); item callable recebe o texto das
+    mensagens da chamada (``"\n".join`` dos conteúdos) e devolve o ``ModelResponse``, para respostas que
+    dependem de algo que nasce no run (ex.: o id de uma tarefa criada por uma tool).
 
     Segue o contrato dos providers do agno 2.5.8 (``invoke(messages: List[Message], ...)``,
     ex.: ``agno/models/openai/chat.py``): prompt solto (``invoke("texto")``) levanta
@@ -97,7 +103,7 @@ class FakeChatModel(Model):
     id: str = "fake-chat-model"
     name: str | None = "FakeChatModel"
     provider: str | None = "fake"
-    responses: list[str | ModelResponse] = field(default_factory=list)
+    responses: list[ScriptItem] = field(default_factory=list)
     calls: list[FakeModelCall] = field(default_factory=list)
 
     @property
@@ -134,6 +140,8 @@ class FakeChatModel(Model):
         scripted = self.responses[index]
         if isinstance(scripted, ModelResponse):
             return scripted
+        if callable(scripted):
+            return scripted("\n".join(text for _, text in self.calls[-1].messages))
         return ModelResponse(role="assistant", content=scripted)
 
     # ── contrato de agno.models.base.Model ──────────────────────────

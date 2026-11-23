@@ -92,7 +92,7 @@ This project adheres to a code of conduct. By participating, you are expected to
 
 | File | Edited by | Role |
 |---|---|---|
-| `requirements.in` | hand | Direct runtime dependencies (`agno==2.5.8` exact, others with a minimum version) |
+| `requirements.in` | hand | Direct runtime dependencies (`agno==3.1.12` exact, others with a minimum version) |
 | `requirements.lock` | `pip-compile` | Every runtime package pinned with `==` and `--hash` |
 | `requirements-dev.in` | hand | Tests and tooling; constrained by `-c requirements.lock` |
 | `requirements-dev.lock` | `pip-compile` | Every dev package pinned with `==` and `--hash` |
@@ -116,6 +116,24 @@ Never edit a `.lock` file by hand. Use the `pip-tools` installed by the dev lock
 pip install --dry-run --require-hashes -r requirements.lock -r requirements-dev.lock
 ```
 
+The 2.5.8 to 3.1.12 upgrade of a deployed database (backup, session migration, rollback, contract changes) is in [docs/runbooks/f3-agno-3.md](docs/runbooks/f3-agno-3.md); it is in Portuguese.
+
+#### Temporary venv with the previous agno (dual-run, F3)
+
+The committed locks pin agno 3.1.12 (F3-05). To run the version-neutral set (`tests/security/test_run_invariants_across_agno.py`, `tests/security/test_agno_telemetry.py`, `tests/security/test_qa_f1_03_edge.py`, `tests/security/test_qa_f2_08_session_isolation.py` and `tests/unit/test_api_key_auth.py`) against agno 2.5.8, install the locks of the last commit before the bump in a separate venv outside the repo, and run them against a tree of that commit (the code of the current branch imports the 3.x API). Nothing here is committed.
+
+```bash
+B=774683f                        # last commit on agno 2.5.8
+T=$(mktemp -d); V=$(mktemp -d)   # old tree + locks, and the venv, both outside the repo
+git archive $B | tar -x -C $T
+.venv/bin/python -m venv $V
+$V/bin/pip install --require-hashes -r $T/requirements.lock -r $T/requirements-dev.lock
+N="tests/security/test_run_invariants_across_agno.py tests/security/test_agno_telemetry.py tests/security/test_qa_f1_03_edge.py tests/security/test_qa_f2_08_session_isolation.py tests/unit/test_api_key_auth.py"
+for f in $N; do cp $f $T/$f; done
+(cd $T && $V/bin/python -m pytest -q $N)
+# when finished: rm -rf "$T" "$V"
+```
+
 Without `--upgrade`/`--upgrade-package`, `pip-compile` keeps the current pins, so it never
 fixes a vulnerable version by itself. Every remaining `pip-audit` finding must be
 justified in the PR description (why it does not apply or why it cannot be fixed yet).
@@ -126,7 +144,7 @@ Notes:
 - `uvloop` is declared with `sys_platform != "win32"`. Note: `app.py` still imports `uvloop` unconditionally, so it fails on native Windows until roadmap item F1-03.
 - Optional extras are **not installed by default** and stay out of the lock: `PyJWT` (AgentOS JWT auth), `mcp` (MCP tools), `anthropic`, `groq` (model providers). To adopt one, add it to `requirements.in` with a minimum version and regenerate.
 - A new dependency needs a justification in the PR (license, maintenance, discarded alternatives).
-- Upper bounds in `requirements.in` are deliberate and explained next to each one: `fastapi<0.137` (agno 2.5.8 breaks with the `_IncludedRouter` introduced in 0.137), major caps on SDKs consumed by agno (`openai<3`, `google-genai<2`, `ag-ui-protocol<0.2`, `openinference-instrumentation-agno<0.2`) until the agno migration (F3). Do not lift them in a routine `--upgrade`.
+- Upper bounds in `requirements.in` are deliberate and explained next to each one: `fastapi<0.137` (agno 2.5.8 breaks with the `_IncludedRouter` introduced in 0.137), major caps on SDKs consumed by agno (`openai<3`, `google-genai<2`, `ag-ui-protocol<0.2`, `openinference-instrumentation-agno<0.2`). The agno 3.1.12 bump (F3-05) kept them, so the lock only carries what agno changes; lifting one is its own item. Do not lift them in a routine `--upgrade`.
 
 ### Using Docker
 
@@ -292,7 +310,11 @@ tests/
   config and for the document tree, plus `tests/contract/test_mongo_collection_fidelity_contract.py`,
   have a `mongo-live` backend that checks the in-memory collection of `tests/fakes/mongo.py`
   against the real server; `tests/integration/test_session_db_live.py` covers sessions, user
-  memory, run cancellation and compatibility with data written by agno's synchronous `MongoDb`.
+  memory, run cancellation and compatibility with data written by agno's synchronous `MongoDb`
+  and by the motor client. The session db (F3-09) and the repositories (F3-09b) use pymongo's
+  `AsyncMongoClient`, which is bound to the test's event loop: create it with `live_mongo.native()`
+  in a module that requests the `live_native_closed` fixture (the `mongo-live` backends of
+  `tests/fakes/config_stores.py` request it), which awaits its `close` before the database is dropped.
 - No real LLM, network or MongoDB in tests: use `tests/fakes/` (`FakeChatModel` is an
   `agno.models.base.Model`, so it can be passed straight to `Agent`/`Team`).
 - Tests that configure OpenTelemetry providers use the `reset_otel_providers` fixture.
@@ -376,6 +398,8 @@ pytest -m "not live" -n auto
 # Live tests against a disposable MongoDB (skipped without MONGO_LIVE_URL; never in CI), e.g. the
 # MongoDB Atlas Local of docker-compose.dev.yml (README, "Run locally"; it also has vector search):
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d mongodb
+# If mongod/mongot fail on the open-files limit (seen in the F3-06 live runs), start the
+# Atlas Local container with `--ulimit nofile=64000:64000`.
 read -rs MONGO_PW   # MONGO_ROOT_PASSWORD, read without echo (never on the command line)
 MONGO_LIVE_URL="mongodb://<user>:${MONGO_PW}@localhost:27017/?directConnection=true" pytest -m live -rs
 

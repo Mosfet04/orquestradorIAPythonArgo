@@ -136,7 +136,7 @@ async def test_memoria_e_sumario_do_agente_seguem_a_config(user_memory: bool, su
     )
 
     # memória de usuário liga as duas formas do agno juntas (automática e pela tool do agente)
-    assert (agent.enable_user_memories, agent.enable_agentic_memory) == (user_memory, user_memory)
+    assert (agent.update_memory_on_run, agent.enable_agentic_memory) == (user_memory, user_memory)
     assert agent.enable_session_summaries is summary
 
 

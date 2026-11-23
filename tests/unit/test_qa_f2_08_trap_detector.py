@@ -16,7 +16,7 @@ from agno.agent import Agent
 from agno.db.base import SessionType
 from agno.run import RunStatus
 from motor.motor_asyncio import AsyncIOMotorClient
-from pymongo import MongoClient
+from pymongo import AsyncMongoClient, MongoClient
 from pymongo.errors import ServerSelectionTimeoutError
 
 from src.infrastructure.runtime.agno.session_db import SessionDb
@@ -74,11 +74,26 @@ async def test_operacao_do_motor_passa_pelo_detector_e_roda_fora_do_loop(calls: 
     assert calls.on_event_loop() == []
 
 
+async def test_operacao_do_cliente_nativo_passa_pelo_detector_como_async_e_nao_como_sincrona(
+    calls: SyncPymongoCalls,
+) -> None:
+    """F3-09: o ``AsyncMongoClient`` não usa o pymongo síncrono; o detector o vê à parte e falha igual."""
+    client: AsyncMongoClient[dict[str, Any]] = AsyncMongoClient(URL)
+    try:
+        with pytest.raises(ServerSelectionTimeoutError):
+            await client["agno"]["agno_sessions"].find_one({"session_id": "s1"})
+    finally:
+        await client.close()
+
+    assert calls.async_operations == ["find"]
+    assert (calls.operations, calls.closes, calls.async_closes) == ([], [], 1)
+
+
 class _BlockingSessionDb(SessionDb):
     """Regressão plantada: lê a sessão com o pymongo síncrono direto na corrotina (no event loop)."""
 
     async def get_session(self, session_id: str, session_type: SessionType, user_id: str | None = None,
-                          deserialize: bool | None = True) -> Any:
+                          deserialize: bool | None = True, runs_limit: int | None = None) -> Any:
         _blocking_find_sync()
         return None
 
@@ -94,7 +109,7 @@ def _blocking_find_sync() -> None:
 
 
 async def test_run_com_db_que_bloqueia_o_loop_aparece_em_on_event_loop(calls: SyncPymongoCalls) -> None:
-    db = _BlockingSessionDb(AsyncIOMotorClient(URL), db_url=URL, db_name="agno")
+    db = _BlockingSessionDb(AsyncMongoClient(URL), db_url=URL, db_name="agno")
     agent = Agent(id="a", name="a", model=FakeChatModel(responses=["oi"] * 3), db=db, telemetry=False)
 
     run = await agent.arun("oi", user_id="ana", session_id="s1")
@@ -104,14 +119,16 @@ async def test_run_com_db_que_bloqueia_o_loop_aparece_em_on_event_loop(calls: Sy
     assert "find" in calls.on_event_loop()  # é isto que o teste de produção (sem a regressão) exige vazio
 
 
-async def test_close_do_db_chamado_direto_no_loop_aparece_em_closes(calls: SyncPymongoCalls) -> None:
-    """O mesmo para o shutdown: um ``close`` que não vá para a thread é registrado como ``True``."""
+@pytest.mark.filterwarnings("ignore:coroutine .* was never awaited:RuntimeWarning")
+async def test_close_do_cliente_nativo_numa_thread_sem_await_nao_conta_como_fechado(calls: SyncPymongoCalls) -> None:
+    """O mesmo para o shutdown (F3-09): o ``close`` do motor ia para uma thread; o do cliente nativo é
+    corrotina, e mandá-lo para a thread sem ``await`` não fecha nada: o detector não o conta."""
 
-    class _CloseOnLoop(SessionDb):
+    class _CloseInThread(SessionDb):
         async def close(self) -> None:
-            self._owned_client.close()  # regressão plantada: fecha no loop
+            await asyncio.to_thread(self._owned_client.close)  # regressão plantada: corrotina sem await
 
-    db = _CloseOnLoop(AsyncIOMotorClient(URL), db_url=URL, db_name="agno")
+    db = _CloseInThread(AsyncMongoClient(URL), db_url=URL, db_name="agno")
     await db.close()
 
-    assert calls.closes == [True]
+    assert calls.async_closes == 0

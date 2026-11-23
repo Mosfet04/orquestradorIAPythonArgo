@@ -8,6 +8,7 @@ from src.domain.entities.model_config import ModelConfig, ParamValue
 from src.domain.entities.rag_config import RagConfig
 from src.domain.entities.validation import (
     require_bool,
+    require_entity_id,
     require_int_in_range,
     require_optional_text,
     require_text,
@@ -41,13 +42,16 @@ class AgentConfig:
     add_history_to_context: bool = True
     num_history_runs: int = 5
     add_datetime_to_context: bool = True
-    # Raciocínio passo a passo do agno: mais chamadas ao modelo por resposta. No agno 2.5.8, até 10 passos
-    # (``reasoning_max_steps``, sem teto configurável aqui) e as tools do agente podem ser chamadas nessa fase:
-    # evite com tool não idempotente (POST/PUT/DELETE).
+    # Raciocínio passo a passo: o agente ganha as tools ``think``/``analyze`` (``ReasoningTools`` do agno 3.x)
+    # e as usa no próprio run, sem fase separada nem teto de passos (o ``reasoning_max_steps`` do 2.5.8 saiu).
+    # Mais chamadas ao modelo por resposta.
     reasoning: bool = False
+    # Se o texto do raciocínio (as chamadas de ``think``/``analyze``) chega ao cliente AG-UI (F3-10). Com
+    # ``False`` o raciocínio segue no run e na sessão; só o stream do AG-UI deixa de mostrá-lo.
+    expose_reasoning: bool = True
 
     def __post_init__(self):
-        require_text(self.id, "id", "ID do agente")
+        require_entity_id(self.id, "ID do agente")
         require_text(self.nome, "nome", "Nome do agente")
         require_text(self.model, "model", "Modelo do agente")
         require_text(self.factory_ia_model, "factory_ia_model", "Factory do modelo do agente")
@@ -57,6 +61,7 @@ class AgentConfig:
         require_int_in_range(self.num_history_runs, "num_history_runs", *NUM_HISTORY_RUNS_RANGE)
         require_bool(self.add_datetime_to_context, "add_datetime_to_context")
         require_bool(self.reasoning, "reasoning")
+        require_bool(self.expose_reasoning, "expose_reasoning")
         _ = self.model_config  # valida os campos do modelo
 
     @property

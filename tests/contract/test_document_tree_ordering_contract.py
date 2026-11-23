@@ -30,19 +30,25 @@ from tests.fakes.config_stores import LIVE_BACKEND, live_mongo_for
 
 
 @pytest.fixture(params=["memory", "mongo", pytest.param(LIVE_BACKEND, marks=pytest.mark.live)])
-async def tree_repo(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> IDocumentTreeRepository:
+def tree_backend(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> IDocumentTreeRepository:
+    """Síncrona: o ``live_mongo_for`` pede a fixture async que fecha o cliente nativo no loop do teste."""
     if request.param == "memory":
         return InMemoryDocumentTreeRepository()
     live = live_mongo_for(request)
-    client: Any = live.motor() if live else FakeMongoClient({"document_tree": FakeMongoCollection()})
+    client: Any = live.native() if live else FakeMongoClient({"document_tree": FakeMongoCollection()})
     monkeypatch.setattr(mongo_base.MongoClientFactory, "get_client", classmethod(lambda cls, _conn: client))
-    repo = MongoDocumentTreeRepository(
+    return MongoDocumentTreeRepository(
         connection_string="mongodb://mongo.invalid",
         database_name=live.database if live else "agno",
         logger=RecordingLogger(),
     )
-    await repo.ensure_indexes()
-    return repo
+
+
+@pytest.fixture
+async def tree_repo(tree_backend: IDocumentTreeRepository) -> IDocumentTreeRepository:
+    if isinstance(tree_backend, MongoDocumentTreeRepository):
+        await tree_backend.ensure_indexes()
+    return tree_backend
 
 
 def _node(

@@ -11,10 +11,10 @@ from __future__ import annotations
 import pytest
 from starlette.testclient import TestClient
 
-from src.infrastructure import dependency_injection as di
 from src.infrastructure.config.app_config import AppConfig
 from src.infrastructure.dependency_injection import DependencyContainer
 from src.infrastructure.providers.plugins import PluginLoadError
+from src.infrastructure.repositories import mongo_base
 from src.infrastructure.web.app_factory import AppFactory
 from tests.fakes.plugins import FakeSite, spec_module
 
@@ -39,7 +39,7 @@ def mongo_calls(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
     for name in _ENV:
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setattr(di, "AsyncIOMotorClient", _client)
+    monkeypatch.setattr(mongo_base.MongoClientFactory, "get_client", classmethod(lambda cls, conn: _client(conn)))
     monkeypatch.setenv("AGNO_TELEMETRY", "false")
     monkeypatch.setenv("OTEL_ENABLED", "false")
     return calls

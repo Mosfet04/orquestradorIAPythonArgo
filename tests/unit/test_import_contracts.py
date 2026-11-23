@@ -21,6 +21,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 AGNO_CONTRACT = "agno-so-no-runtime"
+MOTOR_CONTRACT = "sem-motor"
 COMPOSITION_ROOT_IMPORT = (
     "src.infrastructure.dependency_injection -> src.presentation.controllers.orquestrador_controller"
 )
@@ -130,7 +131,62 @@ def test_o_contrato_do_agno_protege_o_pacote_inteiro_com_uma_excecao_so() -> Non
     assert "ignore_imports" not in contract
 
 
-@pytest.mark.parametrize("contract_id", ["nucleo-sem-frameworks", "apresentacao-sem-runtime"])
+def test_o_contrato_sem_motor_passa_no_codigo_atual(project_copy: Path) -> None:
+    result = _lint_imports(project_copy, MOTOR_CONTRACT)
+
+    assert result.returncode == 0, result.stdout[-2000:]
+    assert "Contracts: 1 kept, 0 broken." in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "source"),
+    [
+        ("src/infrastructure/repositories/probe.py", "from motor.motor_asyncio import AsyncIOMotorClient\n"),
+        ("src/infrastructure/repositories/probe.py", "import motor\n"),
+        ("src/infrastructure/repositories/probe.py", "import motor.motor_asyncio\n"),
+        # import preguiçoso (dentro de função) também é import para o grafo
+        (
+            "src/infrastructure/web/probe.py",
+            "def build():\n    from motor.motor_asyncio import AsyncIOMotorClient\n    return AsyncIOMotorClient\n",
+        ),
+        # o contrato vale para o ``src`` inteiro, não só para a infraestrutura
+        ("src/application/services/probe.py", "from motor.motor_asyncio import AsyncIOMotorClient\n"),
+        ("src/presentation/controllers/probe.py", "import motor\n"),
+        ("src/domain/probe.py", "import motor\n"),
+        ("src/infrastructure/novo_pacote/probe.py", "import motor\n"),
+    ],
+    ids=[
+        "from-import",
+        "import",
+        "import-submodulo",
+        "import-em-funcao",
+        "application",
+        "presentation",
+        "domain",
+        "subpacote-novo",
+    ],
+)
+def test_importar_o_motor_em_qualquer_lugar_do_src_quebra_o_contrato(
+    project_copy: Path, relative_path: str, source: str
+) -> None:
+    module = _plant(project_copy, relative_path, source)
+
+    result = _lint_imports(project_copy, MOTOR_CONTRACT)
+
+    assert result.returncode == 1, result.stdout[-2000:]
+    assert "Contracts: 0 kept, 1 broken." in result.stdout
+    assert f"{module} -> motor" in result.stdout
+
+
+def test_o_contrato_sem_motor_proibe_o_pacote_inteiro_a_partir_do_src() -> None:
+    contract = _contracts()[MOTOR_CONTRACT]
+
+    assert contract["type"] == "forbidden"
+    assert contract["source_modules"] == ["src"]
+    assert contract["forbidden_modules"] == ["motor"]
+
+
+@pytest.mark.parametrize("contract_id", ["nucleo-sem-frameworks", "apresentacao-sem-runtime", "sem-motor"])
 def test_contratos_do_nucleo_nao_tem_baseline(contract_id: str) -> None:
     assert "ignore_imports" not in _contracts()[contract_id]
 

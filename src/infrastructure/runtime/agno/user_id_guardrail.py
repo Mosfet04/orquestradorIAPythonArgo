@@ -83,8 +83,13 @@ def needs_user_id(*, user_memories: bool, agentic_memory: bool) -> bool:
 
 
 def requires_user_id(entity: Agent | Team) -> bool:
-    """``True`` se o Agent/Team lê ou grava memória de usuário (precisa de ``user_id``)."""
+    """``True`` se o Agent/Team lê ou grava memória de usuário (precisa de ``user_id``).
+
+    Lê os atributos canônicos tipados (``update_memory_on_run``, ``enable_agentic_memory``;
+    ``bool`` no Agent e no Team). O espelho legado ``enable_user_memories`` sai no agno 3.x:
+    ler ele com default desligaria o guardrail em silêncio.
+    """
     return needs_user_id(
-        user_memories=getattr(entity, "enable_user_memories", None) is True,
-        agentic_memory=getattr(entity, "enable_agentic_memory", None) is True,
+        user_memories=entity.update_memory_on_run is True,
+        agentic_memory=entity.enable_agentic_memory is True,
     )

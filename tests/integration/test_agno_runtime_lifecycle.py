@@ -15,7 +15,7 @@ from collections import defaultdict
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Any, ClassVar
+from typing import Any
 
 import agno.os.app as agno_os_app
 import pytest
@@ -27,7 +27,7 @@ from src.infrastructure.repositories import mongo_base
 from src.infrastructure.runtime.agno.session_db import SessionDb
 from src.infrastructure.web import app_factory
 from src.infrastructure.web.app_factory import AppFactory
-from tests.fakes import FakeChatModel, FakeMongoClient, FakeMongoCollection, RecordingLogger, running_on_event_loop
+from tests.fakes import FakeChatModel, FakeMongoClient, FakeMongoCollection, RecordingLogger
 from tests.fakes.session_db import session_db_client, session_docs, use_fake_session_db
 
 pytestmark = pytest.mark.usefixtures("offline_knowledge")
@@ -37,25 +37,6 @@ _ENV_CLEAR = (
     "API_KEY_RUN", "API_KEY_ADMIN", "APP_HOST", "ENVIRONMENT", "ENABLE_DOCS", "CORS_ALLOWED_ORIGINS",
     "PLUGIN_ALLOWLIST", "ALLOW_DYNAMIC_IMPORT", "DYNAMIC_PROVIDER_SPECS", "MODEL_BASE_URL_ALLOWLIST", "SECRETS_DIR",
 )
-
-
-class _Motor:
-    """Cliente motor falso do container: ping ok, conta os ``close`` (e os feitos no event loop)."""
-
-    instances: ClassVar[list[_Motor]] = []
-
-    def __init__(self, *_: object, **__: object) -> None:
-        self.admin = self
-        self.closes = 0
-        self.closes_on_event_loop = 0
-        _Motor.instances.append(self)
-
-    async def command(self, *_: object) -> dict[str, int]:
-        return {"ok": 1}
-
-    def close(self) -> None:
-        self.closes += 1
-        self.closes_on_event_loop += running_on_event_loop()
 
 
 class _Collection(FakeMongoCollection):
@@ -69,6 +50,8 @@ class Spy:
     dbs: list[SessionDb] = field(default_factory=list)
     """Dbs de sessões criados pelo composition root (o ``SessionDb`` real sobre o cliente em memória)."""
     logger: RecordingLogger = field(default_factory=RecordingLogger)
+    app_client: FakeMongoClient = field(default_factory=lambda: FakeMongoClient({}))
+    """Cliente Mongo do app (repositórios, diário e health, F3-09b); ``closes``: um item por ``close`` aguardado."""
 
     def session_client_closes(self) -> list[list[bool]]:
         """Por db de sessões: um item por ``close`` do cliente (``True`` = rodou no event loop)."""
@@ -97,14 +80,12 @@ def spy(monkeypatch: pytest.MonkeyPatch) -> Spy:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("AGNO_TELEMETRY", "false")
     monkeypatch.setenv("OTEL_ENABLED", "false")
-    _Motor.instances.clear()
 
     collections: defaultdict[str, FakeMongoCollection] = defaultdict(_Collection)
     collections["agents_config"] = _Collection([_agent("a1"), _agent("a2")])
     collections["teams_config"] = _Collection([_team("t1", ["a1", "a2"])])
-    client = FakeMongoClient(collections)
+    result.app_client = client = FakeMongoClient(collections)
     monkeypatch.setattr(mongo_base.MongoClientFactory, "get_client", classmethod(lambda cls, _conn: client))
-    monkeypatch.setattr(di, "AsyncIOMotorClient", _Motor)
     monkeypatch.setattr(di, "StructlogLoggerAdapter", lambda _name: result.logger)
     monkeypatch.setattr(app_factory, "setup_telemetry", lambda config: None)
     monkeypatch.setattr(app_factory, "shutdown_telemetry", lambda: None)
@@ -181,7 +162,7 @@ def test_agentes_teams_e_agentos_dividem_um_db_de_sessoes(spy: Spy, app: FastAPI
     assert listed == {"agent": ["s-agente"], "team": ["s-team"]}
 
 
-def test_shutdown_fecha_o_cliente_do_db_de_sessoes_uma_vez_fora_do_event_loop_e_o_startup_nao_provisiona(
+def test_shutdown_fecha_o_cliente_do_db_de_sessoes_uma_vez_e_o_startup_nao_provisiona(
     spy: Spy, app: FastAPI
 ) -> None:
     with TestClient(app, **LOCAL) as http:  # type: ignore[arg-type]
@@ -191,10 +172,10 @@ def test_shutdown_fecha_o_cliente_do_db_de_sessoes_uma_vez_fora_do_event_loop_e_
         # Sem provisionamento: o startup não tocou em nenhuma coleção do db de sessões.
         assert session_db_client(spy.dbs[0]).databases == {}
 
-    # Um cliente (não um por entidade), fechado uma vez e numa thread: o AgentOS e o container
-    # pedem o close, e só o primeiro fecha. O cliente do container também fecha fora do loop.
-    assert spy.session_client_closes() == [[False]]
-    assert [(m.closes, m.closes_on_event_loop) for m in _Motor.instances] == [(1, 0)]
+    # Um cliente (não um por entidade), fechado uma vez (close do cliente nativo aguardado, F3-09): o AgentOS e
+    # o container pedem o close, e só o primeiro fecha. O cliente do app (F3-09b) também fecha uma vez, aguardado.
+    assert spy.session_client_closes() == [[True]]
+    assert spy.app_client.closes == [True]
 
 
 def test_falha_ao_carregar_entidades_fecha_o_cliente_mongo_uma_vez(
@@ -210,8 +191,8 @@ def test_falha_ao_carregar_entidades_fecha_o_cliente_mongo_uma_vez(
             pass  # pragma: no cover - o startup não completa
 
     assert spy.events == []  # nada montado, nada a fechar no runtime
-    assert [(m.closes, m.closes_on_event_loop) for m in _Motor.instances] == [(1, 0)]
-    assert spy.session_client_closes() == [[False]]  # o container fecha o db que criou
+    assert spy.app_client.closes == [True]
+    assert spy.session_client_closes() == [[True]]  # o container fecha o db que criou (close aguardado)
 
 
 def test_falha_num_lifespan_do_agentos_recusa_o_startup_e_fecha_o_cliente_mongo_uma_vez(
@@ -238,7 +219,7 @@ def test_falha_num_lifespan_do_agentos_recusa_o_startup_e_fecha_o_cliente_mongo_
 
     # O startup falha como no AgentOS; o db_lifespan do agno 2.5.8 não tem try/finally e não chega
     # a fechar o db, mas o container fecha o db de sessões que criou (F2-08) e o cliente Mongo dele,
-    # uma vez cada e fora do event loop.
+    # uma vez cada (os dois com close aguardado).
     assert spy.events == ["db:start", "http:start"]
-    assert [(m.closes, m.closes_on_event_loop) for m in _Motor.instances] == [(1, 0)]
-    assert spy.session_client_closes() == [[False]]
+    assert spy.app_client.closes == [True]
+    assert spy.session_client_closes() == [[True]]

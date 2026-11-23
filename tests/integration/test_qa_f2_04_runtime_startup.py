@@ -90,17 +90,6 @@ class _Tree(InMemoryDocumentTreeRepository):
         return None
 
 
-class _Motor:
-    def __init__(self, *_: object, **__: object) -> None:
-        self.admin = self
-
-    async def command(self, *_: object) -> dict[str, int]:
-        return {"ok": 1}
-
-    def close(self) -> None:
-        return None
-
-
 def _agent(agent_id: Any, **extra: Any) -> dict[str, Any]:
     doc: dict[str, Any] = {
         "id": agent_id, "nome": f"Agente {agent_id}", "factoryIaModel": "ollama", "model": f"m-{agent_id}",
@@ -218,14 +207,13 @@ def _write_docs(root: Path) -> None:
 
 
 def _patch_infrastructure(mp: pytest.MonkeyPatch, result: Booted) -> None:
-    """Coleções de config fake, motor/árvore/db de sessões falsos, logger gravado e sem telemetria."""
+    """Cliente do app falso com as coleções de config, árvore/db de sessões falsos, logger gravado, sem telemetria."""
     collections: defaultdict[str, FakeMongoCollection] = defaultdict(_Collection)
     collections["agents_config"] = _Collection(copy.deepcopy(AGENT_DOCS))
     collections["teams_config"] = _Collection(copy.deepcopy(TEAM_DOCS))
     collections["tools"] = _Collection([copy.deepcopy(TOOL_DOC)])
     client = FakeMongoClient(collections)
     mp.setattr(mongo_base.MongoClientFactory, "get_client", classmethod(lambda cls, _conn: client))
-    mp.setattr(di, "AsyncIOMotorClient", _Motor)
     mp.setattr(di, "StructlogLoggerAdapter", lambda _name: result.logger)
     mp.setattr(di, "MongoDocumentTreeRepository", lambda **_: _Tree())
     use_fake_session_db(mp)
@@ -376,7 +364,7 @@ def test_agente_com_rag_semantico_e_com_memoria_expoem_as_tools_do_framework(boo
     mem = boot.agent_details["a-mem"]
 
     assert "search_knowledge_base" in sem
-    assert mem["memory"]["enable_user_memories"] is True and mem["memory"]["enable_agentic_memory"] is True
+    assert mem["memory"]["update_memory_on_run"] is True and mem["memory"]["enable_agentic_memory"] is True
     assert boot.agent_details["a-simples"].get("knowledge") is None
 
 

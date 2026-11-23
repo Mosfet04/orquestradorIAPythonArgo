@@ -43,7 +43,7 @@ src/presentation    controllers/rotas.
 .venv/bin/mypy
 .venv/bin/lint-imports
 .venv/bin/bandit -q -c pyproject.toml -r src
-.venv/bin/pip-audit -r requirements.lock --require-hashes --disable-pip --ignore-vuln PYSEC-2026-2333
+.venv/bin/pip-audit -r requirements.lock --require-hashes --disable-pip
 # F2+: cobertura do diff (arquivos novos só aparecem staged: git add -A antes)
 .venv/bin/python -m pytest -m "not live" -n auto --cov --cov-report=xml:<tmp>/coverage.xml && .venv/bin/diff-cover <tmp>/coverage.xml --compare-branch=<base> --fail-under=85
 ```
@@ -54,7 +54,7 @@ Dependências: `requirements.in`/`requirements-dev.in` → locks com hash (`pip-
 | Fase | Gates |
 |---|---|
 | F0 | `ruff check`, `pytest -m "not live"` com cobertura, `mypy` (módulos novos), `lint-imports` (com baseline) |
-| F1 | F0 + `bandit` (sem achado novo; zera no F1-03), `pip-audit` (só os conhecidos: agno PYSEC-2026-2333 até a F3; chromadb até o F1-02), `pytest -m security` |
+| F1 | F0 + `bandit` (sem achado novo; zera no F1-03), `pip-audit` (sem ignore desde o F3-05), `pytest -m security` |
 | F2 | F1 + testes de contrato, `lint-imports` sem baseline em `domain`/`application`, cobertura do diff ≥ 85% |
 | F3+ | F2 + matriz de versões quando aplicável, evals determinísticas |
 

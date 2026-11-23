@@ -39,7 +39,7 @@ from src.presentation.routes.admin_config import router as admin_config_router
 from src.presentation.routes.admin_schema import router as admin_schema_router
 from tests.fakes.dns import public_dns
 from tests.fakes.logger import RecordingLogger
-from tests.fakes.mongo import FakeMotorClient
+from tests.fakes.mongo import FakeAsyncMongoClient
 from tests.fakes.repositories import (
     InMemoryAgentConfigRepository,
     InMemoryTeamConfigRepository,
@@ -155,7 +155,7 @@ def fake_runtime_swap(
 
 def fake_audit_log(database: Any = None) -> MongoConfigAuditLog:
     """Diário de escritas do container (FA-05) sobre o Mongo falso; ``database`` compartilhado = mesmo Mongo."""
-    return MongoConfigAuditLog(database if database is not None else FakeMotorClient()["agno"])
+    return MongoConfigAuditLog(database if database is not None else FakeAsyncMongoClient()["agno"])
 
 
 def fake_config_admin(
@@ -246,7 +246,7 @@ async def admin_world(
     team_repo = InMemoryTeamConfigRepository(teams)
     tool_repo = InMemoryToolRepository(tools)
     runtime = runtime or FakeAgentRuntime()
-    audit_db = FakeMotorClient()["agno"]
+    audit_db = FakeAsyncMongoClient()["agno"]
     audit = fake_audit_log(audit_db)
     app = AppFactory().create_app(routers=[admin_config_router, admin_schema_router])
     app.state.config_admin = fake_config_admin(agent_repo, team_repo, tool_repo, logger, runtime, audit, guard)

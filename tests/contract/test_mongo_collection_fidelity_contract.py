@@ -1,11 +1,12 @@
 """Fidelidade da coleção Mongo em memória (``tests/fakes/mongo.py``) ao Mongo real (F2-06 R5, F2-08).
 
-A mesma suíte roda contra a ``FakeMongoCollection`` (pelo ``FakeMotorClient``) e, só com
-``MONGO_LIVE_URL`` (marker ``live``), contra uma coleção de um Mongo de verdade pelo motor. Cobre o
+A mesma suíte roda contra a ``FakeMongoCollection`` (pelo ``FakeAsyncMongoClient``) e, só com
+``MONGO_LIVE_URL`` (marker ``live``), contra uma coleção de um Mongo de verdade pelo ``AsyncMongoClient``. Cobre o
 que os repositórios e o ``AsyncMongoDb`` do agno usam e em que um fake costuma divergir: ordenação
 com campo ausente, igualdade BSON de booleano, índice único (``BulkWriteError`` 11000 com
 ``ordered=False``, ``DuplicateKeyError`` no upsert e no ``insert_one``), ``find_one(sort=)``,
-``None``/``$exists``/``$or``, campo de lista, projeção e paginação.
+``None``/``$exists``/``$or``/``$nin``, campo de lista, projeção, paginação e os pipelines de
+``aggregate`` (estatísticas de memória do 2.5.8; runs da sessão do 3.x com ``$addFields``/``$ifNull``).
 """
 
 from __future__ import annotations
@@ -17,18 +18,18 @@ from pymongo import ReturnDocument
 from pymongo.errors import BulkWriteError, DuplicateKeyError
 
 from tests.fakes.config_stores import LIVE_BACKEND, live_mongo_for
-from tests.fakes.mongo import FakeMotorClient
+from tests.fakes.mongo import FakeAsyncMongoClient
 
 DUPLICATE_KEY = 11000
 
 
 @pytest.fixture(params=["fake", pytest.param(LIVE_BACKEND, marks=pytest.mark.live)])
 def collection(request: pytest.FixtureRequest) -> Any:
-    """Coleção vazia: a fake ou uma do banco efêmero no Mongo real (API do motor nas duas)."""
+    """Coleção vazia: a fake ou uma do banco efêmero no Mongo real (API do ``AsyncMongoClient`` nas duas, F3-09b)."""
     live = live_mongo_for(request)
     if live is None:
-        return FakeMotorClient()["fidelidade"]["documentos"]
-    return live.motor()[live.database]["documentos"]
+        return FakeAsyncMongoClient()["fidelidade"]["documentos"]
+    return live.native()[live.database]["documentos"]
 
 
 async def _keys(cursor: Any) -> list[str]:
@@ -271,9 +272,9 @@ async def test_aggregate_das_estatisticas_de_memoria_por_usuario(collection: Any
         {"$sort": {"last_memory_updated_at": -1}},
     ]
 
-    total = await collection.aggregate([*pipeline, {"$count": "total"}]).to_list(length=1)
-    stats = await collection.aggregate(pipeline).to_list(length=None)
-    page = await collection.aggregate([*pipeline, {"$skip": 1}, {"$limit": 1}]).to_list(length=None)
+    total = await (await collection.aggregate([*pipeline, {"$count": "total"}])).to_list(length=1)
+    stats = await (await collection.aggregate(pipeline)).to_list(length=None)
+    page = await (await collection.aggregate([*pipeline, {"$skip": 1}, {"$limit": 1}])).to_list(length=None)
 
     assert total == [{"total": 2}]
     assert stats == [
@@ -281,3 +282,59 @@ async def test_aggregate_das_estatisticas_de_memoria_por_usuario(collection: Any
         {"_id": "ana", "total_memories": 2, "last_memory_updated_at": 20},
     ]
     assert [row["_id"] for row in page] == ["ana"]
+
+
+async def test_nin_casa_com_campo_nulo_ou_ausente_e_recusa_lista_com_item_proibido(collection: Any) -> None:
+    """``$nin`` como no filtro de runs do agno 3.x: nulo e ausente passam, salvo se ``None`` estiver na lista."""
+    await collection.insert_many(
+        [
+            {"k": "ok", "status": "completed"},
+            {"k": "cancelado", "status": "cancelled"},
+            {"k": "erro", "status": "error"},
+            {"k": "nulo", "status": None},
+            {"k": "sem"},
+            {"k": "lista", "status": ["completed", "cancelled"]},
+        ]
+    )
+
+    assert await _keys(collection.find({"status": {"$nin": ["cancelled", "error"]}})) == ["ok", "nulo", "sem"]
+    assert await _keys(collection.find({"status": {"$nin": [None, "cancelled"]}})) == ["ok", "erro"]
+
+
+async def test_aggregate_dos_runs_da_sessao_com_add_fields_e_if_null(collection: Any) -> None:
+    """O pipeline de ``_get_session_runs_docs`` do ``AsyncMongoDb`` do agno 3.1.12 (runs em ``agno_runs``).
+
+    ``$ifNull`` troca campo nulo ou ausente pelo default e mantém o valor presente; ``$addFields``
+    acrescenta o campo sem tirar os demais.
+    """
+    await collection.insert_many(
+        [
+            {"k": "r2", "session_id": "s1", "run_index": 2, "created_at": 200, "status": "completed"},
+            {"k": "sem-indice", "session_id": "s1", "created_at": 50},
+            {"k": "nulo", "session_id": "s1", "run_index": None, "created_at": None, "status": None},
+            {"k": "r1", "session_id": "s1", "run_index": 1, "created_at": 100, "status": "completed"},
+            {"k": "membro", "session_id": "s1", "run_index": 3, "created_at": 300, "parent_run_id": "r2"},
+            {"k": "cancelado", "session_id": "s1", "run_index": 4, "created_at": 400, "status": "cancelled"},
+            {"k": "outra", "session_id": "s2", "run_index": 5, "created_at": 500},
+        ]
+    )
+    add_fields = {"$addFields": {"_ri": {"$ifNull": ["$run_index", 0]}, "_ca": {"$ifNull": ["$created_at", 0]}}}
+    recent = [
+        {"$match": {"session_id": "s1", "parent_run_id": None, "status": {"$nin": ["cancelled", "error"]}}},
+        add_fields,
+        {"$sort": {"_ri": -1, "_ca": -1}},
+        {"$limit": 3},
+    ]
+    everything = [{"$match": {"session_id": "s1"}}, add_fields, {"$sort": {"_ri": 1, "_ca": 1}}]
+
+    latest = await (await collection.aggregate(recent)).to_list(length=3)
+    ordered = await (await collection.aggregate(everything)).to_list(length=None)
+
+    assert [(row["k"], row["_ri"], row["_ca"]) for row in latest] == [
+        ("r2", 2, 200),
+        ("r1", 1, 100),
+        ("sem-indice", 0, 50),
+    ]
+    assert latest[0]["status"] == "completed" and latest[0]["session_id"] == "s1"
+    assert [row["k"] for row in ordered] == ["nulo", "sem-indice", "r1", "r2", "membro", "cancelado"]
+    assert ordered[0]["run_index"] is None and "run_index" not in ordered[1]

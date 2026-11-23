@@ -10,6 +10,17 @@ stubs 503 de ``/schedules`` e ``/approvals`` (``{path:path}``, todos os métodos
 (``/schedules/{schedule_id}...``, ``/approvals/count``, ``/approvals/{approval_id}...``); só a lista
 de rotas do snapshot foi regravada, e a diferença se limita a esses dois prefixos, todos ``ADMIN``.
 ``/components`` continua stub (o db é assíncrono). Middlewares e CORS seguem os da base.
+
+F3-05 (agno 3.1.12): snapshot regravado e revisto rota a rota. Sai ``GET /models``; entram 40 rotas
+(101 → 140), todas na classificação da tabela do F3-04: ``ADMIN`` para ``/queue*``,
+``/service-accounts*``, ``/filesystem*``, ``/learnings*``, ``/metrics/refresh/status`` e
+``/knowledge/content/{id}/refresh``; ``RUN`` para ``checkpoints``/``resume``/``fork``/``compact``/
+``continue`` de agente, team e workflow, ``/info`` e ``/sessions`` (``search``, ``filter-schema``,
+``run-previews``, ``media``). Na pilha entra ``RunAuthorizationMiddleware`` do agno, dentro da auth
+(não reescreve o path: só abre o contexto de autorização do run).
+
+F3-08: as cinco rotas ``/eval-runs*`` passam a ser as do 404 (``eval_runs_router``), incluídas logo
+depois das de cancel e antes do ``get_app()``; só mudam de posição no snapshot (mesmos métodos e classe).
 """
 
 from __future__ import annotations

@@ -1,7 +1,7 @@
 """F2-08: o composition root cria um db de sessões só, entrega-o às fábricas e ao runtime e o fecha.
 
 Container real (``DependencyContainer``) sobre o ``startup_world``: só o Mongo (clientes) e o modelo
-são falsos; o db de sessões é o ``SessionDb`` de produção sobre o cliente motor em memória.
+são falsos; o db de sessões é o ``SessionDb`` de produção sobre o cliente nativo em memória.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from src.infrastructure import dependency_injection as di
 from src.infrastructure.config.app_config import AppConfig
 from src.infrastructure.runtime.agno.session_db import SessionDb
 from tests.fakes import RecordingLogger
+from tests.fakes.session_db import stored_runs
 from tests.fakes.startup_world import CLEAN_ENV, Events, startup_world
 
 MARKER = "mongodb://usuario:s3nh4-do-banco@mongo.invalid"
@@ -53,20 +54,21 @@ async def test_agentes_e_teams_do_container_usam_o_mesmo_db_de_sessoes() -> None
     assert events.count("db:created") == 1
 
 
-async def test_cleanup_fecha_o_db_de_sessoes_e_o_cliente_do_container_uma_vez_e_fora_do_event_loop() -> None:
+async def test_cleanup_fecha_o_db_de_sessoes_e_o_cliente_do_container_uma_vez_sem_bloquear_o_event_loop() -> None:
     events = Events()
-    with startup_world(events) as motors:
+    with startup_world(events) as clients:
         container = await di.DependencyContainer.create_async(AppConfig.load())
-        assert [n for n in events.names if n.startswith(("db:close", "motor:close"))] == []
+        assert [n for n in events.names if n.startswith(("db:close", "mongo:close"))] == []
 
         await container.cleanup()
         first_cleanup = list(events.names)
         await container.cleanup()
 
-    # "db:close"/"motor:close" e não "...:on-loop": nenhum close rodou na thread do event loop.
-    assert [n for n in first_cleanup if n.startswith(("db:close", "motor:close"))] == ["db:close", "motor:close"]
+    # "db:close" e "mongo:close": o close do cliente nativo do db de sessões (F3-09) e o do cliente do app
+    # (F3-09b) foram aguardados, uma vez cada.
+    assert [n for n in first_cleanup if n.startswith(("db:close", "mongo:close"))] == ["db:close", "mongo:close"]
     assert events.count("db:close") == 1  # o segundo cleanup não fecha o db de novo
-    assert [m.closes for m in motors] == [2]  # o cliente do container segue como antes (close idempotente)
+    assert [m.closes for m in clients] == [[True]]  # o segundo cleanup não fecha o cliente do app de novo
     assert not [n for n in events.names if n.endswith(":on-loop")]
 
 
@@ -75,13 +77,13 @@ async def test_falha_no_wiring_depois_de_criar_o_db_de_sessoes_fecha_o_db(monkey
         raise RuntimeError("runtime quebrado")
 
     events = Events()
-    with startup_world(events) as motors:
+    with startup_world(events) as clients:
         monkeypatch.setattr(di, "AgnoRuntime", broken_runtime)
         with pytest.raises(RuntimeError, match="runtime quebrado"):
             await di.DependencyContainer.create_async(AppConfig.load())
 
     assert (events.count("db:created"), events.count("db:close")) == (1, 1)
-    assert [m.closes for m in motors] == [1]
+    assert [m.closes for m in clients] == [[True]]
     assert not [n for n in events.names if n.endswith(":on-loop")]
 
 
@@ -91,7 +93,7 @@ async def test_falha_ao_fechar_o_db_de_sessoes_e_logada_so_pelo_tipo_e_o_cliente
     logger = RecordingLogger()
     monkeypatch.setattr(di, "StructlogLoggerAdapter", lambda _name: logger)
     events = Events()
-    with startup_world(events) as motors:
+    with startup_world(events) as clients:
         container = await di.DependencyContainer.create_async(AppConfig.load())
         session_db = container._session_db
         assert session_db is not None
@@ -106,7 +108,7 @@ async def test_falha_ao_fechar_o_db_de_sessoes_e_logada_so_pelo_tipo_e_o_cliente
     warnings = [(r.message, r.context) for r in logger.records if r.level == "warning"]
     assert ("Falha ao fechar o db de sessões", {"error_type": "OSError"}) in warnings
     assert MARKER not in repr(logger.records)
-    assert [m.closes for m in motors] == [1]
+    assert [m.closes for m in clients] == [[True]]
 
 
 async def test_agente_e_team_do_container_continuam_a_mesma_conversa_no_mesmo_session_id() -> None:
@@ -132,10 +134,10 @@ async def test_agente_e_team_do_container_continuam_a_mesma_conversa_no_mesmo_se
             session_db = container._session_db
             assert session_db is not None
             docs = list(session_db.db_client[session_db.db_name]["agno_sessions"].docs)
+            runs = await stored_runs(session_db, "s1", user_id="ana")
         finally:
             await container.cleanup()
 
     assert [(d["session_id"], d["user_id"], d["session_type"]) for d in docs] == [("s1", "ana", "agent")]
-    runs = [(r.get("agent_id"), r.get("team_id")) for r in docs[0]["runs"]]
-    assert runs == [("a1", None), (None, "t1"), ("a1", None)]
-    assert docs[0]["runs"][0]["input"]["input_content"] == "meu código de cliente é 4815"
+    assert [(r.get("agent_id"), r.get("team_id")) for r in runs] == [("a1", None), (None, "t1"), ("a1", None)]
+    assert runs[0]["input"]["input_content"] == "meu código de cliente é 4815"

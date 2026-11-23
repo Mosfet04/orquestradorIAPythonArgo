@@ -1,13 +1,13 @@
 """Startup real do app (``AppFactory`` -> container -> ``AgnoRuntime`` -> AgentOS) sem Mongo, LLM nem rede.
 
 Usado pelos testes de ciclo de vida com uvicorn real (F2-05): no mesmo processo (thread) e num
-subprocesso (SIGTERM de verdade). Só o Mongo (cliente motor do container, coleções de config e o
-cliente motor do db de sessões) e o modelo são falsos; o resto da pilha é o de produção, inclusive o
+subprocesso (SIGTERM de verdade). Só o Mongo (cliente do app com as coleções de config e o cliente
+nativo do db de sessões) e o modelo são falsos; o resto da pilha é o de produção, inclusive o
 ``SessionDb`` (F2-08). Cada ponto de fechamento e de abertura registra um evento (``Events``):
-``motor:close`` (cliente do container), ``db:created`` e ``db:close`` (db de sessões e o cliente
-dele), ``db:start``, ``http:start``/``http:stop``/``db:stop`` (lifespans do agno 2.5.8),
-``runtime:close``, ``telemetry:shutdown`` e ``model:start`` (run em andamento). Um ``close`` que
-rode na thread do event loop vira ``motor:close:on-loop``/``db:close:on-loop``.
+``mongo:close`` (cliente do app, F3-09b), ``db:created`` e ``db:close`` (db de sessões e o cliente
+dele, F3-09; os dois ``close`` são corrotinas e só registram quando aguardados), ``db:start``,
+``http:start``/``http:stop``/``db:stop`` (lifespans do agno), ``runtime:close``,
+``telemetry:shutdown`` e ``model:start`` (run em andamento).
 
 Como programa (``python -m tests.fakes.startup_world``): sobe o uvicorn num socket herdado
 (``--fd``) e imprime cada evento como ``EVT <nome>`` no stdout.
@@ -38,8 +38,8 @@ from src.infrastructure.runtime.agno import runtime as agno_runtime_module
 from src.infrastructure.runtime.agno.session_db import SessionDb
 from src.infrastructure.web import app_factory
 from tests.fakes.dns import public_dns
-from tests.fakes.models import FakeChatModel, running_on_event_loop
-from tests.fakes.mongo import FakeMongoClient, FakeMongoCollection, FakeMotorClient
+from tests.fakes.models import FakeChatModel
+from tests.fakes.mongo import FakeAsyncMongoClient, FakeMongoClient, FakeMongoCollection
 
 FAIL_STEPS = ("container", "entities", "mount", "start")
 CLEAN_ENV = (
@@ -105,24 +105,22 @@ class SlowChatModel(FakeChatModel):
         yield self._next_response(*args, **kwargs)
 
 
-class _Motor:
-    """Cliente motor falso do container: ping ok, registra cada ``close``."""
+class _AppMongoClient(FakeMongoClient):
+    """Cliente Mongo do app (container, repositórios, diário e health; F3-09b): ping ok, registra o ``close``
+    aguardado."""
 
-    def __init__(self, events: Events) -> None:
+    def __init__(self, events: Events, collections: dict[str, FakeMongoCollection]) -> None:
+        super().__init__(collections)
         self._events = events
-        self.admin = self
-        self.closes = 0
 
-    async def command(self, *_: object) -> dict[str, int]:
-        return {"ok": 1}
-
-    def close(self) -> None:
-        self.closes += 1
-        self._events.add("motor:close:on-loop" if running_on_event_loop() else "motor:close")
+    async def close(self) -> None:
+        await super().close()
+        self._events.add("mongo:close")
 
 
-class _SessionMotorClient(FakeMotorClient):
-    """Cliente motor do db de sessões: registra o ``close`` e o uso depois dele."""
+class _SessionAsyncMongoClient(FakeAsyncMongoClient):
+    """Cliente nativo do db de sessões (``AsyncMongo`` no nome: o agno reconhece o tipo por ele): registra
+    o ``close`` aguardado e o uso depois dele."""
 
     def __init__(self, events: Events) -> None:
         super().__init__()
@@ -133,16 +131,16 @@ class _SessionMotorClient(FakeMotorClient):
             self._events.add("db:use-after-close")
         super().refuse_if_closed()
 
-    def close(self) -> None:
-        super().close()
-        self._events.add("db:close:on-loop" if self.closes[-1] else "db:close")
+    async def close(self) -> None:
+        await super().close()
+        self._events.add("db:close")
 
 
 class _WorldSessionDb(SessionDb):
     """O ``SessionDb`` de produção sobre o cliente falso; registra se o agno provisionar coleções."""
 
     def __init__(self, events: Events, db_url: str, db_name: str) -> None:
-        super().__init__(_SessionMotorClient(events), db_url=db_url, db_name=db_name)  # type: ignore[arg-type]
+        super().__init__(_SessionAsyncMongoClient(events), db_url=db_url, db_name=db_name)  # type: ignore[arg-type]
         self._events = events
 
     async def _create_all_tables(self) -> None:
@@ -226,27 +224,27 @@ def startup_world(
     fail_at: str | None = None,
     startup_delay: float = 0.0,
     run_delay: float = 0.0,
-) -> Iterator[list[_Motor]]:
+) -> Iterator[list[_AppMongoClient]]:
     """Troca Mongo, db de sessões e modelo por falsos e instala os espiões de ciclo de vida.
 
     ``fail_at``: etapa do startup que levanta ``RuntimeError("falha injetada: <etapa>")``
-    (``container``: no wiring, depois de o cliente motor existir; ``entities``: na carga;
+    (``container``: no wiring, depois de o cliente do app existir; ``entities``: na carga;
     ``mount``: ao montar as rotas do runtime; ``start``: num lifespan do agno).
     ``startup_delay``: espera (async) antes da carga das entidades. DNS falso (``public_dns``) na guarda da
-    ``route`` de tool. Devolve os clientes motor criados.
+    ``route`` de tool. Devolve o cliente do app quando alguém o pede à ``MongoClientFactory`` (antes, vazia).
     """
     if fail_at is not None and fail_at not in FAIL_STEPS:
         raise ValueError(f"etapa desconhecida: {fail_at}")
-    motors: list[_Motor] = []
+    clients: list[_AppMongoClient] = []
     collections: defaultdict[str, FakeMongoCollection] = defaultdict(_Collection)
     collections["agents_config"] = _Collection([agent_doc(a) for a in agents])
     collections["teams_config"] = _Collection([team_doc(t, m) for t, m in (teams or {}).items()])
-    client = FakeMongoClient(collections)
+    client = _AppMongoClient(events, collections)
 
-    def new_motor(*_: object, **__: object) -> _Motor:
-        motor = _Motor(events)
-        motors.append(motor)
-        return motor
+    def get_client(cls: object, _conn: str) -> _AppMongoClient:
+        if not clients:
+            clients.append(client)
+        return client
 
     def create_model(self: Any, config: Any) -> SlowChatModel:
         return SlowChatModel(id=config.model_id, responses=["resposta do modelo"] * 50, delay=run_delay, events=events)
@@ -264,8 +262,7 @@ def startup_world(
 
     with ExitStack() as stack:
         enter = stack.enter_context
-        enter(patch.object(mongo_base.MongoClientFactory, "get_client", classmethod(lambda cls, _conn: client)))
-        enter(patch.object(di, "AsyncIOMotorClient", new_motor))
+        enter(patch.object(mongo_base.MongoClientFactory, "get_client", classmethod(get_client)))
         enter(patch.object(app_factory, "setup_telemetry", lambda config: None))
         enter(patch.object(app_factory, "shutdown_telemetry", lambda: events.add("telemetry:shutdown")))
         enter(patch.object(di, "create_session_db", new_session_db))
@@ -279,7 +276,7 @@ def startup_world(
             enter(patch.object(di, "MongoToolRepository", _failing("container")))
         if fail_at == "mount":
             enter(patch.object(agno_runtime_module, "build_agui_router", _failing("mount")))
-        yield motors
+        yield clients
 
 
 def clean_env() -> dict[str, str]:

@@ -1,4 +1,4 @@
-"""Cliente MongoDB async compartilhado (motor)."""
+"""Cliente MongoDB async compartilhado (``AsyncMongoClient`` nativo do pymongo, F3-09b)."""
 
 from __future__ import annotations
 
@@ -9,7 +9,8 @@ from datetime import UTC, datetime
 from typing import Any, ClassVar, Generic, TypeVar
 
 from bson import ObjectId
-from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection
+from pymongo import AsyncMongoClient
+from pymongo.asynchronous.collection import AsyncCollection
 from pymongo.errors import DuplicateKeyError
 
 from src.domain.ports import ILogger
@@ -28,12 +29,17 @@ MongoDocument = dict[str, Any]
 
 
 class MongoClientFactory:
-    """Gerencia uma única instância de AsyncIOMotorClient por connection string."""
+    """Um ``AsyncMongoClient`` por connection string: o cliente Mongo do app (F3-09b).
 
-    _instances: ClassVar[dict[str, AsyncIOMotorClient[MongoDocument]]] = {}
+    O container, os repositórios e o diário de config pegam o mesmo cliente daqui. Ele não conecta no
+    construtor e se prende ao event loop da primeira operação (o do app: o container nasce no lifespan).
+    Quem o fecha é o container, no shutdown, depois de tirá-lo do cache (``discard``).
+    """
+
+    _instances: ClassVar[dict[str, AsyncMongoClient[MongoDocument]]] = {}
 
     @classmethod
-    def get_client(cls, connection_string: str) -> AsyncIOMotorClient[MongoDocument]:
+    def get_client(cls, connection_string: str) -> AsyncMongoClient[MongoDocument]:
         """Devolve o cliente compartilhado da connection string, criando-o na primeira chamada."""
         if connection_string not in cls._instances:
             use_tls = "mongodb.net" in connection_string or (
@@ -60,10 +66,17 @@ class MongoClientFactory:
                     w="majority",
                 )
 
-            cls._instances[connection_string] = AsyncIOMotorClient(
-                connection_string, **opts
-            )
+            cls._instances[connection_string] = AsyncMongoClient(connection_string, **opts)
         return cls._instances[connection_string]
+
+    @classmethod
+    def discard(cls, connection_string: str) -> None:
+        """Tira o cliente da connection string do cache, sem fechá-lo (quem fecha é o dono).
+
+        O próximo ``get_client`` cria outro, preso ao loop de quem o usar: um cliente fechado não volta
+        a funcionar (``InvalidOperation``) e um preso a outro loop levanta ``RuntimeError``.
+        """
+        cls._instances.pop(connection_string, None)
 
 
 class AsyncMongoRepository:
@@ -80,7 +93,7 @@ class AsyncMongoRepository:
         self._logger = logger
         self._client = MongoClientFactory.get_client(connection_string)
         self._db = self._client[database_name]
-        self._collection: AsyncIOMotorCollection[MongoDocument] = self._db[collection_name]
+        self._collection: AsyncCollection[MongoDocument] = self._db[collection_name]
 
     # Ordem estável dos documentos de config (F2-06): o mais antigo primeiro. A busca por id usa a
     # mesma ordem, então com id repetido acha o mesmo documento que a listagem põe na frente.

@@ -16,8 +16,9 @@ ENV/
 env/
 .venv/
 .env
-.env.local
-.env.production
+.env.*
+!.env.example
+!.env.development
 *.env
 
 # Logs - Proteger informações de runtime

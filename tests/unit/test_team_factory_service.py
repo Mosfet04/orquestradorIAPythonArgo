@@ -118,7 +118,7 @@ def test_memoria_e_sumario_do_team_seguem_a_config(user_memory: bool, summary: b
         [_agent("agent-a")],
     )
 
-    assert (team.enable_user_memories, team.enable_agentic_memory) == (user_memory, user_memory)
+    assert (team.update_memory_on_run, team.enable_agentic_memory) == (user_memory, user_memory)
     assert team.enable_session_summaries is summary
 
 

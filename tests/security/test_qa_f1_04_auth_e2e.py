@@ -311,19 +311,20 @@ def test_varredura_toda_rota_real_respeita_a_classe(sweep_apps: dict[str, FastAP
         # FA-04: alias do /admin/config/reload; sem o caso de uso no app.state (sem lifespan), 503 próprio.
         ("POST", "/admin/refresh-cache", {503}),
         ("GET", "/metrics/cache", {200}),
-        # F2-08: o AgentOS tem o db de sessões (db=). O migrate do agno 2.5.8 não funciona com Mongo
-        # (get_latest_schema_version sem table_name, no MongoDb síncrono também): 207 com a falha.
-        ("POST", "/databases/all/migrate", {207}),
+        # F2-08: o AgentOS tem o db de sessões (db=). F3-06: o agno 3.x migra o Mongo (fim do 207 do 2.5.8).
+        ("POST", "/databases/all/migrate", {200}),
         ("GET", "/registry", {200}),
         ("GET", "/components", {503}),  # db assíncrono: /components segue stub 503 (e não 401/403)
-        # Rotas reais desde o F2-08; o Mongo do agno 2.5.8 não implementa agenda nem aprovações (503).
-        ("GET", "/schedules", {503}),
+        # Rotas reais desde o F2-08. Agno 3.x: o Mongo implementa a agenda (200, lista vazia); aprovações
+        # seguem sem implementação (503).
+        ("GET", "/schedules", {200}),
         ("GET", "/approvals", {503}),  # F2-05: decisão sobre run de outro usuário é do operador
         ("POST", "/approvals/qualquer/resolve", {422}),  # rota real: o corpo é obrigatório
         ("POST", "/optimize-memories", {422}),
         ("POST", "/knowledge/search", {422}),
-        ("POST", "/knowledge/content", {400, 422}),
-        ("DELETE", "/knowledge/content", {400, 422}),
+        # Agno 3.x: sem knowledge registrada no AgentOS, 503 antes de validar o corpo.
+        ("POST", "/knowledge/content", {503}),
+        ("DELETE", "/knowledge/content", {503}),
         ("DELETE", "/sessions", {400, 404, 422, 500}),
         ("DELETE", "/memories", {400, 404, 422, 500}),
     ],

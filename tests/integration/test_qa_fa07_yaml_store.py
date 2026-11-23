@@ -31,6 +31,7 @@ agents:
     markdown: false
     add_datetime_to_context: false
     num_history_runs: 1
+    expose_reasoning: false
     active: true
   - id: ruim
     nome: Texto no booleano
@@ -41,7 +42,9 @@ agents:
     markdown: "false"
     active: true
 """
-FIELDS = ("markdown", "add_history_to_context", "num_history_runs", "add_datetime_to_context", "reasoning")
+FIELDS = (
+    "markdown", "add_history_to_context", "num_history_runs", "add_datetime_to_context", "reasoning", "expose_reasoning"
+)
 
 
 def _system(world, model_id: str) -> str:
@@ -69,6 +72,7 @@ def test_yaml_aplica_os_campos_ao_agente_servido_e_a_api_os_mostra(monkeypatch: 
         "num_history_runs": 5,
         "add_datetime_to_context": True,
         "reasoning": False,
+        "expose_reasoning": True,
     }
     assert {k: com.json()[k] for k in FIELDS} == {
         "markdown": False,
@@ -76,6 +80,7 @@ def test_yaml_aplica_os_campos_ao_agente_servido_e_a_api_os_mostra(monkeypatch: 
         "num_history_runs": 1,
         "add_datetime_to_context": False,
         "reasoning": False,
+        "expose_reasoning": False,
     }
 
 

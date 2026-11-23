@@ -9,13 +9,11 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import socket
 import subprocess
 import sys
 import textwrap
-from collections.abc import Iterator
+import time
 from pathlib import Path
-from typing import Any
 
 import pytest
 from agno.agent import Agent
@@ -26,6 +24,7 @@ from src.infrastructure.config.app_config import AppConfig
 from src.infrastructure.dependency_injection import HealthService
 from src.infrastructure.web.app_factory import AppFactory
 from tests.fakes import FakeChatModel, RecordingLogger, loopback_client
+from tests.fakes.network import NetworkAttempts, block_network
 from tests.fakes.runtime import FakeAgentRuntime
 from tests.fakes.web import mount_agent_os
 
@@ -46,42 +45,9 @@ AGUI_BODY = {
 # ── bloqueador de rede ──────────────────────────────────────────────
 
 
-class NetworkAttempts:
-    """Registra toda tentativa de resolver nome ou conectar socket; nenhuma delas funciona."""
-
-    def __init__(self) -> None:
-        self.attempts: list[str] = []
-
-    def hosts(self) -> list[str]:
-        return list(self.attempts)
-
-    def mentions(self, needle: str) -> bool:
-        return any(needle in a for a in self.attempts)
-
-
 @pytest.fixture
-def network(monkeypatch: pytest.MonkeyPatch) -> Iterator[NetworkAttempts]:
-    seen = NetworkAttempts()
-
-    def _name(host: object) -> str:
-        return host.decode() if isinstance(host, bytes) else str(host)
-
-    def getaddrinfo(host: object, *_: object, **__: object) -> Any:
-        seen.attempts.append(f"getaddrinfo:{_name(host)}")
-        raise OSError("rede bloqueada pelo teste")
-
-    def connect(_self: socket.socket, address: object) -> Any:
-        seen.attempts.append(f"connect:{address}")
-        raise OSError("rede bloqueada pelo teste")
-
-    def connect_ex(_self: socket.socket, address: object) -> int:
-        seen.attempts.append(f"connect_ex:{address}")
-        return 111
-
-    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
-    monkeypatch.setattr(socket.socket, "connect", connect)
-    monkeypatch.setattr(socket.socket, "connect_ex", connect_ex)
-    yield seen
+def network(monkeypatch: pytest.MonkeyPatch) -> NetworkAttempts:
+    return block_network(monkeypatch)
 
 
 def _clean_env(monkeypatch: pytest.MonkeyPatch, **env: str) -> None:
@@ -140,6 +106,10 @@ def test_bloqueador_de_rede_enxerga_a_telemetria_ligada(monkeypatch: pytest.Monk
 
     loopback_client(app).post("/agents/agente-1/runs", data={"message": "oi", "stream": "false"})
 
+    # Agno 3.x manda a telemetria numa thread (fila): espera o envio em vez de olhar só na volta do run.
+    deadline = time.monotonic() + 5
+    while not network.mentions("os-api.agno.com") and time.monotonic() < deadline:
+        time.sleep(0.01)
     assert network.mentions("os-api.agno.com")
 
 

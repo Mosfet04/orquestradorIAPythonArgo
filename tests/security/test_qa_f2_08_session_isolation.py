@@ -30,7 +30,7 @@ from tests.fakes import (
     InMemoryToolRepository,
     RecordingLogger,
 )
-from tests.fakes.session_db import fake_session_db, session_docs
+from tests.fakes.session_db import fake_session_db, session_docs, stored_runs
 
 HISTORY_MARK = "o cofre da Ana abre com 7421"
 
@@ -118,8 +118,9 @@ async def test_run_de_outro_usuario_com_o_session_id_de_ana_nao_ve_nem_toca_o_hi
     assert HISTORY_MARK not in _prompt(entity)  # o histórico da Ana não entra no contexto do Bruno
     anas = [d for d in session_docs(db) if d["user_id"] == "ana"]
     assert len(anas) == 1 and anas[0]["session_id"] == "s-ana"
-    assert len(anas[0]["runs"]) == 1  # nenhuma execução do Bruno foi gravada na sessão da Ana
-    assert HISTORY_MARK in str(anas[0]["runs"][0]["input"])
+    ana_runs = await stored_runs(db, "s-ana", user_id="ana")
+    assert len(ana_runs) == 1  # nenhuma execução do Bruno foi gravada na sessão da Ana
+    assert HISTORY_MARK in str(ana_runs[0]["input"])
     assert anas == before  # o documento dela segue como estava
 
 

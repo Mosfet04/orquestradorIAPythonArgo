@@ -1,7 +1,7 @@
 """F2-11, ``live``: o RAG semântico contra um Mongo com Atlas Vector Search de verdade (Atlas Local, F2-10).
 
 Só rodam com ``MONGO_LIVE_URL`` (marker ``live``; nunca na CI padrão); sem ela são pulados. Banco efêmero
-por teste (``tests/fakes/live_mongo.py``). O embedder é o ``OllamaEmbedder`` real do agno 2.5.8 com o
+por teste (``tests/fakes/live_mongo.py``). O embedder é o ``OllamaEmbedder`` real do agno 3.1.12 com o
 cliente do SDK falso (``FakeOllamaClient``, 768 posições como o ``nomic-embed-text``): nenhum Ollama nem
 modelo. Cobrem o que o servidor em memória não prova: o índice ``vectorSearch`` com o ``numDimensions``
 certo, a remoção assíncrona do índice antigo no Atlas e a consulta ``$vectorSearch`` depois da correção.
@@ -40,13 +40,15 @@ _QUERYABLE_TIMEOUT_S = 60.0
 
 
 class _Ollama(IEmbedderFactory):
-    """``OllamaEmbedder`` do agno sem ``dimensions`` (o ``rag_config`` legado) e sem rede."""
+    """``OllamaEmbedder`` do agno com o cliente do SDK falso (768 posições): sem rede."""
 
     def __init__(self) -> None:
         self.client = FakeOllamaClient(native_size=768)
 
     def create_embedder(self, config: ModelConfig) -> Embedder:
-        return OllamaEmbedder(id=config.model_id, ollama_client=self.client)  # type: ignore[arg-type]
+        """``dimensions`` só se a config trouxer (``model_params``), como no provider real."""
+        kwargs = {"dimensions": config.params["dimensions"]} if "dimensions" in config.params else {}
+        return OllamaEmbedder(id=config.model_id, ollama_client=self.client, **kwargs)  # type: ignore[arg-type]
 
 
 @pytest.fixture(autouse=True)
@@ -70,7 +72,8 @@ def _service(live: LiveMongo, logger: RecordingLogger, embedders: IEmbedderFacto
     )
 
 
-def _config() -> AgentConfig:
+def _config(*, dimensions: int | None = None) -> AgentConfig:
+    """``dimensions``: ``model_params.dimensions`` explícito (sem sonda), para forçar o vetor errado."""
     return AgentConfig(
         id=AGENT_ID,
         nome="Suporte",
@@ -79,7 +82,11 @@ def _config() -> AgentConfig:
         descricao="d",
         prompt="p",
         rag_config=RagConfig(
-            active=True, doc_name="manual.md", factory_ia_model="ollama", model="nomic-embed-text:latest"
+            active=True,
+            doc_name="manual.md",
+            factory_ia_model="ollama",
+            model="nomic-embed-text:latest",
+            model_params=None if dimensions is None else {"dimensions": dimensions},
         ),
     )
 
@@ -135,14 +142,57 @@ async def test_live_colecao_nova_nasce_com_indice_da_dimensao_real_e_busca(live_
     assert not [r for r in logger.records if r.level in {"warning", "error"}]
 
 
+async def test_live_provider_fora_na_indexacao_nao_grava_chunk_e_o_proximo_startup_indexa(
+    live_mongo: LiveMongo, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Agno 3.1.12: a sonda de dimensão responde e o provider cai na indexação. O ``OllamaEmbedder``
+    levanta ``EmbeddingError`` (no 2.5.8 devolvia ``[]``) e o ``Knowledge.insert`` o trata (conteúdo
+    ``FAILED``): nenhum chunk vai ao Atlas e o agente sobe com o RAG vazio. O próximo startup, com o
+    provider de volta, indexa e busca. Sem Atlas: o unit
+    ``test_provider_fora_na_indexacao_nao_grava_chunk_e_o_proximo_startup_indexa``.
+    """
+    falls_after_probe = _Ollama()
+    falls_after_probe.client.down_after = 1
+    logger = RecordingLogger()
+    embedders = DimensionResolvingEmbedderFactory(falls_after_probe, logger=logger)
+
+    agent = await _service(live_mongo, logger, embedders).create_agent(_config())
+
+    assert len(falls_after_probe.client.calls) > 1, "a indexação não chegou ao provider"
+    assert agent.knowledge is not None
+    assert live_mongo.collection(COLLECTION).count_documents({}) == 0
+    assert _num_dimensions(_index(live_mongo)) == 768
+    # O ramo do ``EmbeddingError`` no ``Knowledge`` (``agno/knowledge/knowledge.py``) loga o ``safe_message``
+    # dele, que começa pelo texto do ``raise_embedding_error`` (``agno/knowledge/embedder/base.py``).
+    handled = [r.getMessage() for r in caplog.records if r.name == "agno" and r.levelname == "ERROR"]
+    assert any(message.startswith("Error upserting document: Failed to generate embedding") for message in handled)
+    assert "conexão recusada" not in repr(logger.records)
+
+    back = DimensionResolvingEmbedderFactory(_Ollama(), logger=RecordingLogger())
+    next_startup = await _service(live_mongo, RecordingLogger(), back).create_agent(_config())
+
+    assert next_startup.knowledge is not None
+    assert _sizes(live_mongo) and set(_sizes(live_mongo)) == {768}
+    assert any("segunda via" in c for c in _search_until_found(next_startup.knowledge, "fatura"))  # type: ignore[arg-type]
+
+
 async def test_live_embedding_vazio_nunca_e_gravado(live_mongo: LiveMongo) -> None:
+    """Vetor de tamanho errado: o ``rag_config`` declara ``dimensions: 1024`` e o modelo devolve 768. O
+    ``OllamaEmbedder`` do 3.1.12 devolve ``[]`` (só avisa) e o ``GuardedMongoVectorDb`` recusa o chunk
+    antes do Atlas: nenhum documento gravado (nem vazio nem de 768), o agente sobe sem RAG e o erro é o
+    nosso, sem o texto do documento. Sem Atlas: o unit
+    ``test_embedding_vazio_nunca_e_gravado_e_o_agente_sobe_sem_rag``.
+    """
     logger = RecordingLogger()
 
-    agent = await _service(live_mongo, logger, _Ollama()).create_agent(_config())  # sem a sonda: O2
+    agent = await _service(live_mongo, logger, _Ollama()).create_agent(_config(dimensions=1024))
 
     assert agent.knowledge is None
     assert live_mongo.collection(COLLECTION).count_documents({}) == 0
-    assert [r.context["error_type"] for r in logger.records if r.level == "error"] == ["EmbeddingDimensionError"]
+    [error] = [record for record in logger.records if record.level == "error"]
+    assert error.context["error_type"] == "EmbeddingDimensionError"
+    assert error.context["rejected"] >= 1
+    assert "segunda via" not in repr(logger.records)
 
 
 async def test_live_colecao_legada_e_corrigida_no_startup_e_a_correcao_e_idempotente(live_mongo: LiveMongo) -> None:

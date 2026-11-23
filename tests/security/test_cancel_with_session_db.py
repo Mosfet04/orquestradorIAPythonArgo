@@ -21,7 +21,7 @@ from fastapi import FastAPI
 from src.infrastructure.runtime.agno.session_db import SessionDb
 from src.infrastructure.web.app_factory import AppFactory
 from tests.fakes import FakeChatModel
-from tests.fakes.session_db import fake_session_db, session_docs
+from tests.fakes.session_db import fake_session_db, session_docs, stored_runs
 from tests.fakes.web import mount_agent_os
 
 RUN_KEY = "f208-run-key-" + "r" * 22
@@ -81,12 +81,12 @@ async def _wait_for(predicate: Any, what: str, limit: float = 10.0) -> None:
     raise AssertionError(f"timeout esperando {what}; gerenciador={_tracked()}")
 
 
-def _stored_runs(db: SessionDb) -> list[tuple[str, str, str]]:
-    """``(session_id, user_id, status do run)`` de cada run gravado em ``agno_sessions``."""
+async def _stored_runs(db: SessionDb) -> list[tuple[str, str, str]]:
+    """``(session_id, user_id, status do run)`` de cada run gravado, pelo ``get_session`` do db."""
     return [
         (doc["session_id"], doc["user_id"], run["status"])
         for doc in session_docs(db)
-        for run in doc.get("runs") or []
+        for run in await stored_runs(db, doc["session_id"], user_id=doc["user_id"])
     ]
 
 
@@ -106,7 +106,7 @@ async def test_cancel_de_run_rest_com_db_de_sessoes_cancela_limpa_e_grava_o_run_
     assert response.status_code == 200
     assert ("RunCancelled" in response.text) if stream == "true" else (response.json()["status"] == "CANCELLED")
     assert _tracked() == {}
-    assert _stored_runs(session_db) == [("s-cancel", "ana", "CANCELLED")]
+    assert await _stored_runs(session_db) == [("s-cancel", "ana", "CANCELLED")]
 
 
 async def test_cancel_de_run_de_background_com_db_de_sessoes_cancela_e_o_run_fica_consultavel(
@@ -114,7 +114,7 @@ async def test_cancel_de_run_de_background_com_db_de_sessoes_cancela_e_o_run_fic
 ) -> None:
     async with _client(app) as client:
         started = await client.post(
-            "/agents/tic/runs", data={"message": "oi", "background": "true", "user_id": "ana"}
+            "/agents/tic/runs", data={"message": "oi", "background": "true", "stream": "false", "user_id": "ana"}
         )
         assert started.status_code == 202, started.text
         body = started.json()
@@ -124,7 +124,7 @@ async def test_cancel_de_run_de_background_com_db_de_sessoes_cancela_e_o_run_fic
 
     assert cancel.status_code == 200
     assert polled.status_code == 200 and polled.json()["status"] == "CANCELLED"
-    assert _stored_runs(session_db) == [(body["session_id"], "ana", "CANCELLED")]
+    assert await _stored_runs(session_db) == [(body["session_id"], "ana", "CANCELLED")]
 
 
 async def test_cancel_de_run_inexistente_com_db_de_sessoes_e_404_e_nao_guarda_estado(app: FastAPI) -> None:

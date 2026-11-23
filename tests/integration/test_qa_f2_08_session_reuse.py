@@ -26,7 +26,7 @@ from tests.fakes import (
     InMemoryToolRepository,
     RecordingLogger,
 )
-from tests.fakes.session_db import fake_session_db, session_docs
+from tests.fakes.session_db import fake_session_db, session_docs, stored_runs
 
 FIRST = "meu código de cliente é 4815"
 SECOND = "qual é o meu código?"
@@ -85,7 +85,7 @@ async def test_agente_que_recebe_o_session_id_de_um_team_ve_o_historico_dele() -
     assert [(d["session_id"], d["user_id"], d["session_type"]) for d in docs] == [("s1", "ana", "agent")]
     # Um documento só, com as duas execuções. O tipo é o de quem gravou por último (o ``upsert_session``
     # substitui o documento inteiro, também no ``MongoDb`` síncrono): o histórico não se perde.
-    assert len(docs[0]["runs"]) == 2
+    assert len(await stored_runs(db, "s1", user_id="ana")) == 2
 
 
 async def test_team_que_recebe_o_session_id_de_um_agente_ve_o_historico_dele() -> None:
@@ -101,7 +101,7 @@ async def test_team_que_recebe_o_session_id_de_um_agente_ve_o_historico_dele() -
     assert FIRST in _prompt(team)
     docs = session_docs(db)
     assert [(d["session_id"], d["user_id"], d["session_type"]) for d in docs] == [("s1", "ana", "team")]
-    assert len(docs[0]["runs"]) == 2
+    assert len(await stored_runs(db, "s1", user_id="ana")) == 2
 
 
 async def test_sessoes_de_um_tipo_so_continuam_separadas_por_session_id() -> None:
@@ -116,7 +116,10 @@ async def test_sessoes_de_um_tipo_so_continuam_separadas_por_session_id() -> Non
 
     assert FIRST in _prompt(other)  # o mesmo agente, mesma sessão: histórico
     assert "conversa do time" not in _prompt(other)  # sessões diferentes não se misturam
-    assert sorted((d["session_id"], d["session_type"], len(d["runs"])) for d in session_docs(db)) == [
+    stored = [
+        (d["session_id"], d["session_type"], len(await stored_runs(db, d["session_id"]))) for d in session_docs(db)
+    ]
+    assert sorted(stored) == [
         ("s-agente", "agent", 2),
         ("s-team", "team", 1),
     ]

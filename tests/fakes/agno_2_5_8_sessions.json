@@ -1,0 +1,181 @@
+[
+  {
+    "agent_data": {
+      "agent_id": "ag",
+      "model": {
+        "id": "fake-chat-model",
+        "name": "FakeChatModel",
+        "provider": "fake"
+      },
+      "name": "ag"
+    },
+    "agent_id": "ag",
+    "created_at": 1794850061,
+    "metadata": null,
+    "runs": [
+      {
+        "agent_id": "ag",
+        "agent_name": "ag",
+        "content": "O-CODIGO-DA-ANA-E-7421",
+        "content_type": "str",
+        "created_at": 1794850060,
+        "events": [],
+        "input": {
+          "input_content": "guarde o codigo"
+        },
+        "messages": [
+          {
+            "content": "guarde o codigo",
+            "created_at": 1794850061,
+            "from_history": false,
+            "id": "b5765a0c-b932-4a2e-a11c-625c167bb30e",
+            "role": "user",
+            "stop_after_tool_call": false
+          },
+          {
+            "content": "O-CODIGO-DA-ANA-E-7421",
+            "created_at": 1794850061,
+            "from_history": false,
+            "id": "962acaed-2abf-4385-b9d9-205f3da8b1dd",
+            "metrics": {
+              "time_to_first_token": 4.5374996261671185e-05
+            },
+            "role": "assistant",
+            "stop_after_tool_call": false
+          }
+        ],
+        "metrics": {
+          "duration": 0.04030703997705132,
+          "time_to_first_token": 0.04019556299317628
+        },
+        "model": "fake-chat-model",
+        "model_provider": "fake",
+        "run_id": "r-ana-1",
+        "session_id": "s-ana",
+        "session_state": {},
+        "status": "COMPLETED",
+        "user_id": "ana"
+      },
+      {
+        "agent_id": "ag",
+        "agent_name": "ag",
+        "content": "anotado",
+        "content_type": "str",
+        "created_at": 1794850060,
+        "input": {
+          "input_content": "e o segundo?"
+        },
+        "messages": [
+          {
+            "content": "e o segundo?",
+            "created_at": 1794850061,
+            "from_history": false,
+            "id": "9aaf1db7-6ddb-47fe-8841-fb8e557fc7ae",
+            "role": "user",
+            "stop_after_tool_call": false
+          },
+          {
+            "content": "anotado",
+            "created_at": 1794850061,
+            "from_history": false,
+            "id": "585596c7-2403-406e-b4eb-1ac3d9ed4e81",
+            "metrics": {
+              "time_to_first_token": 1.3986020348966122e-05
+            },
+            "role": "assistant",
+            "stop_after_tool_call": false
+          }
+        ],
+        "metrics": {
+          "duration": 0.0010147099965251982,
+          "time_to_first_token": 0.0009518630104139447
+        },
+        "model": "fake-chat-model",
+        "model_provider": "fake",
+        "run_id": "r-ana-2",
+        "session_id": "s-ana",
+        "session_state": {},
+        "status": "COMPLETED",
+        "tools": [],
+        "user_id": "ana"
+      }
+    ],
+    "session_data": {
+      "session_metrics": {},
+      "session_state": {}
+    },
+    "session_id": "s-ana",
+    "session_type": "agent",
+    "summary": null,
+    "updated_at": 1794850061,
+    "user_id": "ana"
+  },
+  {
+    "agent_data": {
+      "agent_id": "ag",
+      "model": {
+        "id": "fake-chat-model",
+        "name": "FakeChatModel",
+        "provider": "fake"
+      },
+      "name": "ag"
+    },
+    "agent_id": "ag",
+    "created_at": 1794850061,
+    "metadata": null,
+    "runs": [
+      {
+        "agent_id": "ag",
+        "agent_name": "ag",
+        "content": "oi bruno",
+        "content_type": "str",
+        "created_at": 1794850060,
+        "input": {
+          "input_content": "oi"
+        },
+        "messages": [
+          {
+            "content": "oi",
+            "created_at": 1794850061,
+            "from_history": false,
+            "id": "f21b8ba2-e20c-4055-916d-10d9ae643086",
+            "role": "user",
+            "stop_after_tool_call": false
+          },
+          {
+            "content": "oi bruno",
+            "created_at": 1794850061,
+            "from_history": false,
+            "id": "a44836dd-a711-49d9-97ff-f1e6a09e01d7",
+            "metrics": {
+              "time_to_first_token": 1.0099000064656138e-05
+            },
+            "role": "assistant",
+            "stop_after_tool_call": false
+          }
+        ],
+        "metrics": {
+          "duration": 0.0005729980184696615,
+          "time_to_first_token": 0.0005308290128596127
+        },
+        "model": "fake-chat-model",
+        "model_provider": "fake",
+        "run_id": "r-bruno-1",
+        "session_id": "s-bruno",
+        "session_state": {},
+        "status": "COMPLETED",
+        "tools": [],
+        "user_id": "bruno"
+      }
+    ],
+    "session_data": {
+      "session_metrics": {},
+      "session_state": {}
+    },
+    "session_id": "s-bruno",
+    "session_type": "agent",
+    "summary": null,
+    "updated_at": 1794850061,
+    "user_id": "bruno"
+  }
+]

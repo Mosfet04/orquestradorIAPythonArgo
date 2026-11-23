@@ -10,8 +10,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from datetime import UTC, datetime
 
-from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReturnDocument
+from pymongo.asynchronous.database import AsyncDatabase
 
 from src.domain.repositories.config_audit import ConfigAuditEntry, ConfigAuditLog, FieldChange
 from src.infrastructure.repositories.mongo_base import MongoDocument
@@ -46,7 +46,7 @@ def _entry(doc: MongoDocument) -> ConfigAuditEntry:
 class MongoConfigAuditLog(ConfigAuditLog):
     """Entradas em ``config_audit`` (com a revisão que cada uma gerou) e a revisão em ``config_revision``."""
 
-    def __init__(self, database: AsyncIOMotorDatabase[MongoDocument]) -> None:
+    def __init__(self, database: AsyncDatabase[MongoDocument]) -> None:
         self._entries = database[AUDIT_COLLECTION]
         self._revisions = database[REVISION_COLLECTION]
 

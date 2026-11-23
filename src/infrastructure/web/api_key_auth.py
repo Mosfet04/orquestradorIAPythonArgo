@@ -9,7 +9,9 @@ tabelas abaixo exige a chave run):
   ``CORSMiddleware`` mais externo, sem chamar a auth (aqui ele não tem exceção: se a
   ordem quebrar, exige chave);
 - admin: ``/admin*``, ``/metrics*``, ``/databases*``, ``/eval-runs*``,
-  ``/components*``, ``/schedules*``, ``/registry*``, ``/approvals*``, ``/optimize-memories``;
+  ``/components*``, ``/schedules*``, ``/registry*``, ``/approvals*``, ``/optimize-memories``,
+  ``/queue*``, ``/service-accounts*``, ``/filesystem*``, ``/learnings*`` (as quatro últimas só
+  existem no agno 3.x);
   ``DELETE`` em ``/sessions*`` e ``/memories*``; ``POST|PUT|PATCH|DELETE`` em
   ``/knowledge*``; docs (``/docs*``, ``/redoc``, ``/openapi.json``) fora de development;
 - run: todo o resto (inclusive rota desconhecida, que só vira 404 depois da chave).
@@ -80,6 +82,14 @@ _ADMIN_PREFIXES = (
     # quem pediu a tool sensível (F2-05). Desde o F2-08 são as rotas reais do AgentOS (``db=``).
     "/approvals",
     "/optimize-memories",
+    # Só no agno 3.x (F3-04; no 2.5.8 não existem e a entrada não tem efeito): fila durável (DLQ,
+    # requeue), contas de serviço (credenciais), arquivos de todos os agentes e learnings de
+    # qualquer usuário. As rotas novas de run e de sessão do 3.x (checkpoints, resume, continue,
+    # fork, compact) ficam run, como as de run e de sessão que já existem (dono: F5-02).
+    "/queue",
+    "/service-accounts",
+    "/filesystem",
+    "/learnings",
 )
 _ADMIN_DELETE_PREFIXES = ("/sessions", "/memories")
 _ADMIN_WRITE_PREFIXES = ("/knowledge",)

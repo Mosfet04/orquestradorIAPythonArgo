@@ -13,7 +13,6 @@
       "description": "Descrição de minimo",
       "enable_agentic_memory": false,
       "enable_session_summaries": false,
-      "enable_user_memories": false,
       "id": "minimo",
       "instructions": "Você é o minimo.",
       "knowledge": null,
@@ -27,13 +26,13 @@
       "num_history_runs": 5,
       "pre_hooks": null,
       "read_chat_history": false,
-      "reasoning": false,
       "search_knowledge": false,
       "store_events": true,
       "store_history_messages": true,
       "store_tool_messages": true,
       "telemetry": false,
-      "tools": null
+      "tools": null,
+      "update_memory_on_run": false
     }
   ],
   "Team": [],

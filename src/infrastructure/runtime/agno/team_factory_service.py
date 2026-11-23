@@ -70,7 +70,7 @@ class TeamFactoryService:
             markdown=config.markdown,
             respond_directly=(mode == TeamMode.route),
             enable_agentic_memory=agentic_memory,
-            enable_user_memories=user_memories,
+            update_memory_on_run=user_memories,
             enable_session_summaries=config.summary_active,
             add_history_to_context=config.add_history_to_context,
             num_team_history_runs=5,

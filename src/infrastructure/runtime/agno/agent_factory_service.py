@@ -12,6 +12,7 @@ from typing import Any, cast
 from agno.agent import Agent
 from agno.db.base import AsyncBaseDb
 from agno.knowledge import Knowledge
+from agno.tools.reasoning import ReasoningTools
 
 from src.application.services.document_indexing_service import DocumentIndexingService
 from src.application.services.document_path import (
@@ -42,6 +43,7 @@ from src.infrastructure.runtime.agno.rag_vector_db import (
     EmbeddingDimensionError,
     GuardedMongoVectorDb,
 )
+from src.infrastructure.runtime.agno.reasoning_visibility import PrivateReasoningTools
 from src.infrastructure.runtime.agno.user_id_guardrail import (
     UserIdRequiredGuardrail,
     needs_user_id,
@@ -305,11 +307,20 @@ class AgentFactoryService:
         collection = vector_db.collection_name
         if report.index_rebuilt:
             self._logger.warning(
-                "Índice vetorial do RAG ausente ou com dimensão diferente do embedder; recriado",
+                "Índice vetorial do RAG ausente, com dimensão diferente do embedder ou sem o "
+                "filtro user_id; recriado",
                 agent_id=agent_id,
                 collection=collection,
                 previous_dimensions=report.previous_dimensions,
                 dimensions=vector_db.dimensions,
+            )
+        if report.shared:
+            self._logger.info(
+                "Chunks do RAG sem user_id marcados como compartilhados (user_id nulo), para o "
+                "filtro por usuário da busca vetorial",
+                agent_id=agent_id,
+                collection=collection,
+                shared=report.shared,
             )
         if report.reembedded:
             self._logger.warning(
@@ -325,7 +336,7 @@ class AgentFactoryService:
                 agent_id=agent_id,
                 collection=collection,
                 failed=report.failed,
-                error_type=EmbeddingDimensionError.__name__,
+                error_type=report.error_type,
             )
             return False
         return True
@@ -401,8 +412,10 @@ class AgentFactoryService:
         """Indexa o documento na coleção do agente (já confinado a ``docs/``).
 
         ``skip_if_exists`` é checado na coleção do próprio agente (``content_hash_exists``
-        do vector db, agno 2.5.8): coleção nova (inclusive a migração da ``rag``
-        compartilhada) reindexa o documento no primeiro startup.
+        do vector db): coleção nova (inclusive a migração da ``rag``
+        compartilhada) reindexa o documento no primeiro startup. Provider fora na indexação
+        (agno 3.x): o ``Knowledge.insert`` trata o ``EmbeddingError`` (conteúdo ``FAILED``, log do
+        agno) sem gravar chunk nem levantar; o agente sobe com o RAG vazio e o próximo startup indexa.
         """
         if resolved_path is None:
             self._logger.info("Nenhum documento especificado para RAG")
@@ -430,6 +443,13 @@ class AgentFactoryService:
         knowledge: Knowledge | None,
     ) -> Agent:
         user_memories = agentic_memory = config.user_memory_active
+        if config.reasoning:
+            # Agno 3.x: sem ``reasoning=`` (nem fase separada ou ``reasoning_max_steps``); o modelo
+            # raciocina com as tools ``think``/``analyze`` no próprio run (decisão do dono, F3-05). Depois
+            # das tools do documento: nome repetido fica com a do documento. ``expose_reasoning=false``:
+            # a toolkit que o AG-UI reconhece e não mostra (F3-10).
+            toolkit = ReasoningTools if config.expose_reasoning else PrivateReasoningTools
+            tools = [*tools, toolkit(add_instructions=True)]
         return Agent(
             id=config.id,
             name=config.nome,
@@ -444,7 +464,6 @@ class AgentFactoryService:
                 )
                 else None
             ),
-            reasoning=config.reasoning,
             markdown=config.markdown,
             description=config.descricao,
             instructions=config.prompt,
@@ -452,7 +471,7 @@ class AgentFactoryService:
             add_datetime_to_context=config.add_datetime_to_context,
             num_history_runs=config.num_history_runs,
             enable_agentic_memory=agentic_memory,
-            enable_user_memories=user_memories,
+            update_memory_on_run=user_memories,
             enable_session_summaries=config.summary_active,
             # ── persistência de mensagens ──
             store_history_messages=True,

@@ -13,7 +13,7 @@ import pytest
 from src.domain.repositories.config_audit import ConfigAuditEntry, FieldChange
 from src.infrastructure.repositories.mongo_config_audit_log import MongoConfigAuditLog
 from tests.fakes.config_stores import LIVE_BACKEND, live_mongo_for
-from tests.fakes.mongo import FakeMotorClient
+from tests.fakes.mongo import FakeAsyncMongoClient
 
 AT = datetime(2026, 10, 20, 12, 30, 15, 123000, tzinfo=UTC)
 
@@ -22,8 +22,8 @@ AT = datetime(2026, 10, 20, 12, 30, 15, 123000, tzinfo=UTC)
 def database(request: pytest.FixtureRequest) -> Any:
     live = live_mongo_for(request)
     if live is None:
-        return FakeMotorClient()["agno"]
-    return live.motor()[live.database]
+        return FakeAsyncMongoClient()["agno"]
+    return live.native()[live.database]
 
 
 def _entry(entity_id: str = "a1", version: int = 1, *, kind: str = "agents", **extra: Any) -> ConfigAuditEntry:

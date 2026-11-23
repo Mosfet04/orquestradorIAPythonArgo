@@ -6,9 +6,10 @@ runtime rodam o código real (``create``, ``upsert``, ``prepare_doc``, índice d
 servidor. Só o que eles usam: ``admin.command("ping")``, ``list_collection_names``,
 ``create_collection``, ``find``/``find_one`` (igualdade, ``$in``, ``$exists`` e ``$or``, com caminho
 pontilhado e índice de lista, ex.: ``embedding.767``; projeção de inclusão), ``count_documents``,
-``update_one`` com ``$set`` (e ``upsert``), ``insert_many``, ``delete_many`` e os índices de busca
-(``list_search_indexes``, ``create_search_index``, ``drop_search_index``; o índice criado já nasce
-``READY``/``queryable``, com a definição em ``latestDefinition`` como no Atlas). O resto falha alto.
+``update_one`` com ``$set`` (e ``upsert``), ``update_many`` com ``$set``, ``insert_many``,
+``delete_many`` e os índices de busca (``list_search_indexes``, ``create_search_index``,
+``drop_search_index``; o índice criado já nasce ``READY``/``queryable``, com a definição em
+``latestDefinition`` como no Atlas). O resto falha alto.
 
 O estado vive no ``FakeVectorServer``: clientes novos (um por vector db, como no agno) enxergam os
 mesmos dados, então dois ``create_agent`` seguidos simulam dois startups do processo.
@@ -79,6 +80,7 @@ def matches(doc: dict[str, Any], query: dict[str, Any] | None) -> bool:
 @dataclass
 class _Result:
     matched_count: int = 0
+    modified_count: int = 0
     deleted_count: int = 0
     upserted_id: Any = None
 
@@ -135,6 +137,15 @@ class FakeVectorCollection:
         self._materialize()
         return _Result(upserted_id=doc["_id"])
 
+    def update_many(self, query: dict[str, Any], update: dict[str, Any]) -> _Result:
+        self._use("update_many")
+        if set(update) != {"$set"}:
+            raise NotImplementedError("FakeVectorCollection: update_many só com $set")
+        found = [d for d in self.docs.values() if matches(d, query)]
+        for doc in found:
+            doc.update(copy.deepcopy(update["$set"]))
+        return _Result(matched_count=len(found), modified_count=len(found))
+
     def insert_many(self, docs: list[dict[str, Any]], ordered: bool = True) -> None:
         self._use("insert_many")
         for doc in docs:
@@ -179,18 +190,23 @@ class FakeVectorCollection:
         return {}
 
 
-def vector_index(num_dimensions: int, name: str = "vector_index_1") -> dict[str, Any]:
-    """Índice ``vectorSearch`` como o agno cria (``path=embedding``, cosseno), já pronto."""
+def vector_index(num_dimensions: int, name: str = "vector_index_1", *, user_filter: bool = True) -> dict[str, Any]:
+    """Índice ``vectorSearch`` (``path=embedding``, cosseno), já pronto.
+
+    ``user_filter``: declara o filtro ``user_id`` (o do ``GuardedMongoVectorDb`` desde o F3-03 e o do
+    agno 3.x); ``False`` é o índice legado, como o agno 2.5.8 cria.
+    """
+    fields: list[dict[str, Any]] = [
+        {"type": "vector", "numDimensions": num_dimensions, "path": "embedding", "similarity": "cosine"}
+    ]
+    if user_filter:
+        fields.append({"type": "filter", "path": "user_id"})
     return {
         "name": name,
         "type": "vectorSearch",
         "status": "READY",
         "queryable": True,
-        "latestDefinition": {
-            "fields": [
-                {"type": "vector", "numDimensions": num_dimensions, "path": "embedding", "similarity": "cosine"}
-            ]
-        },
+        "latestDefinition": {"fields": fields},
     }
 
 
@@ -253,13 +269,17 @@ class FakeVectorServer:
         docs: list[dict[str, Any]],
         *,
         index_dimensions: int | None = None,
+        index_user_filter: bool = True,
     ) -> FakeVectorCollection:
-        """Coleção já gravada (ex.: legado com ``embedding: []``), com índice opcional."""
+        """Coleção já gravada (ex.: legado com ``embedding: []``), com índice opcional.
+
+        ``index_user_filter=False``: índice legado, sem o filtro ``user_id`` (ver ``vector_index``).
+        """
         collection = self.collection(database, name)
         for doc in docs:
             collection.docs[doc["_id"]] = copy.deepcopy(doc)
         if index_dimensions is not None:
-            collection.search_indexes.append(vector_index(index_dimensions))
+            collection.search_indexes.append(vector_index(index_dimensions, user_filter=index_user_filter))
         self.created.add((database, name))
         return collection
 

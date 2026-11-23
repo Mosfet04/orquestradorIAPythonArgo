@@ -10,7 +10,8 @@ argumentos observados são os da produção.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -18,13 +19,14 @@ import pytest
 
 from src.infrastructure import dependency_injection as di
 from src.infrastructure.config.app_config import AppConfig
+from src.infrastructure.repositories import mongo_base
 from src.infrastructure.runtime.agno.embedder_dimensions import DimensionResolvingEmbedderFactory
-from tests.fakes.startup_world import CLEAN_ENV, Events, startup_world
+from src.infrastructure.runtime.agno.session_db import create_session_db
+from tests.fakes.startup_world import CLEAN_ENV, Events, _AppMongoClient, startup_world
 
-# Ordem do wiring na base (b8440e1): cliente motor, fábrica de tools, repositórios de config,
-# RAG hierárquico, db de sessões, fábricas, runtime, casos de uso, controller.
+# Ordem do wiring na base (b8440e1), depois do cliente Mongo do app (``MongoClientFactory``, F3-09b): fábrica
+# de tools, repositórios de config, RAG hierárquico, db de sessões, fábricas, runtime, casos de uso, controller.
 STAGES = [
-    "AsyncIOMotorClient",
     "HttpToolFactory",
     "MongoAgentConfigRepository",
     "MongoTeamConfigRepository",
@@ -86,6 +88,17 @@ def _spy(monkeypatch: pytest.MonkeyPatch, spies: Spies, name: str, *, fail: Exce
     monkeypatch.setattr(di, name, wrapper)
 
 
+@contextmanager
+def _spied_world(events: Events) -> Iterator[tuple[list[_AppMongoClient], pytest.MonkeyPatch]]:
+    """``startup_world`` com um ``MonkeyPatch`` para os espiões, desfeito antes do mundo (F3-09b).
+
+    O espião de ``create_session_db`` embrulha o falso do mundo; desfeito depois dele (pelo
+    ``monkeypatch`` do teste, no teardown), devolveria o falso ao ``di`` para o resto do processo.
+    """
+    with startup_world(events) as clients, pytest.MonkeyPatch.context() as monkeypatch:
+        yield clients, monkeypatch
+
+
 def _spy_all(monkeypatch: pytest.MonkeyPatch, *, fail_at: str | None = None, exc: Exception | None = None) -> Spies:
     spies = Spies()
     for name in STAGES:
@@ -134,11 +147,9 @@ def _assert_agent_wiring(spies: Spies, config: AppConfig, registry: object, embe
     }
 
 
-async def test_etapas_rodam_na_ordem_da_base_e_cada_uma_recebe_o_que_a_anterior_devolveu(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_etapas_rodam_na_ordem_da_base_e_cada_uma_recebe_o_que_a_anterior_devolveu() -> None:
     events = Events()
-    with startup_world(events):
+    with _spied_world(events) as (_, monkeypatch):
         spies = _spy_all(monkeypatch)
         config = AppConfig.load()
         container = await di.DependencyContainer.create_async(config)
@@ -160,42 +171,42 @@ async def test_etapas_rodam_na_ordem_da_base_e_cada_uma_recebe_o_que_a_anterior_
             await container.cleanup()
 
 
-@pytest.mark.parametrize("stage", STAGES[1:])
+@pytest.mark.parametrize("stage", STAGES)
 async def test_falha_em_qualquer_etapa_depois_do_mongo_fecha_o_cliente_e_o_db_de_sessoes_so_se_ja_existe(
-    monkeypatch: pytest.MonkeyPatch, stage: str
+    stage: str,
 ) -> None:
     events = Events()
-    with startup_world(events) as motors:
+    with _spied_world(events) as (clients, monkeypatch):
         spies = _spy_all(monkeypatch, fail_at=stage, exc=RuntimeError(f"falha em {stage}"))
         with pytest.raises(RuntimeError, match=f"falha em {stage}"):
             await di.DependencyContainer.create_async(AppConfig.load())
 
     assert spies.names() == STAGES[: STAGES.index(stage) + 1]  # nada roda depois da etapa que falhou
-    assert [m.closes for m in motors] == [1]
+    assert [m.closes for m in clients] == [[True]]
     db_exists = stage in AFTER_SESSION_DB
     assert (events.count("db:created"), events.count("db:close")) == ((1, 1) if db_exists else (0, 0))
     assert not [n for n in events.names if n.endswith(":on-loop")]
 
 
-async def test_falha_ao_criar_o_db_de_sessoes_fecha_o_cliente_do_container(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_falha_ao_criar_o_db_de_sessoes_fecha_o_cliente_do_container() -> None:
     """``create_session_db`` é a única etapa que atribui ``_session_db``: se ela falha não há db a fechar."""
     events = Events()
-    with startup_world(events) as motors:
+    with _spied_world(events) as (clients, monkeypatch):
         _spy_all(monkeypatch, fail_at="create_session_db", exc=OSError("sem cliente"))
         with pytest.raises(OSError, match="sem cliente"):
             await di.DependencyContainer.create_async(AppConfig.load())
 
-    assert [m.closes for m in motors] == [1]
+    assert [m.closes for m in clients] == [[True]]
     assert events.count("db:close") == 0
 
 
 @pytest.mark.parametrize("exc_type", [asyncio.CancelledError, KeyboardInterrupt])
 @pytest.mark.parametrize("stage", ["MongoDocumentTreeRepository", "create_session_db", "AgnoRuntime"])
 async def test_cancelamento_nas_etapas_novas_fecha_o_que_abriu_e_propaga(
-    monkeypatch: pytest.MonkeyPatch, stage: str, exc_type: type[BaseException]
+    stage: str, exc_type: type[BaseException]
 ) -> None:
     events = Events()
-    with startup_world(events) as motors:
+    with _spied_world(events) as (clients, monkeypatch):
 
         def interrupted(*_: Any, **__: Any) -> Any:
             raise exc_type()
@@ -204,54 +215,56 @@ async def test_cancelamento_nas_etapas_novas_fecha_o_que_abriu_e_propaga(
         with pytest.raises(exc_type):
             await di.DependencyContainer.create_async(AppConfig.load())
 
-    assert [m.closes for m in motors] == [1]
+    assert [m.closes for m in clients] == [[True]]
     assert events.count("db:close") == events.count("db:created")
 
 
 async def test_ping_cancelado_fecha_o_cliente_ja_criado_e_propaga(monkeypatch: pytest.MonkeyPatch) -> None:
     events = Events()
-    with startup_world(events) as motors:
-        new_motor = di.AsyncIOMotorClient
+    with startup_world(events) as clients:
+        async def command(*_: object) -> dict[str, int]:
+            raise asyncio.CancelledError
 
-        def motor_with_cancelled_ping(*args: Any, **kwargs: Any) -> Any:
-            motor = new_motor(*args, **kwargs)
-
-            async def command(*_: object) -> dict[str, int]:
-                raise asyncio.CancelledError
-
-            motor.command = command
-            return motor
-
-        monkeypatch.setattr(di, "AsyncIOMotorClient", motor_with_cancelled_ping)
+        monkeypatch.setattr(mongo_base.MongoClientFactory.get_client("qualquer"), "command", command)
         with pytest.raises(asyncio.CancelledError):
             await di.DependencyContainer.create_async(AppConfig.load())
 
-    assert [m.closes for m in motors] == [1]
+    assert [m.closes for m in clients] == [[True]]
     assert events.count("db:created") == 0
 
 
-async def test_mongo_fora_no_ping_nao_impede_o_startup_e_o_health_service_existe(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_mongo_fora_no_ping_nao_impede_o_startup_e_o_health_service_existe() -> None:
     events = Events()
-    with startup_world(events) as motors:
+    with _spied_world(events) as (clients, monkeypatch):
         spies = _spy_all(monkeypatch)
-        new_motor = di.AsyncIOMotorClient
 
-        def motor_without_server(*args: Any, **kwargs: Any) -> Any:
-            motor = new_motor(*args, **kwargs)
+        async def command(*_: object) -> dict[str, int]:
+            raise ConnectionError("mongo fora")
 
-            async def command(*_: object) -> dict[str, int]:
-                raise ConnectionError("mongo fora")
-
-            motor.command = command
-            return motor
-
-        monkeypatch.setattr(di, "AsyncIOMotorClient", motor_without_server)
+        monkeypatch.setattr(mongo_base.MongoClientFactory.get_client("qualquer"), "command", command)
         container = await di.DependencyContainer.create_async(AppConfig.load())
         try:
             assert container.health_service is not None
-            assert [c.name for c in spies.calls if c.name != "AsyncIOMotorClient"] == STAGES[1:]
-            assert [m.closes for m in motors] == [0]
+            assert spies.names() == STAGES
+            assert [m.closes for m in clients] == [[]]
         finally:
             await container.cleanup()
+
+
+async def test_espioes_do_startup_saem_antes_do_mundo_falso_e_o_di_volta_ao_db_de_sessoes_real() -> None:
+    """Regressão (F3-09b): espião sobre um nome que o ``startup_world`` já trocou sai antes dele.
+
+    Desfeito depois do mundo (o ``monkeypatch`` do teste, no teardown), o espião guardava o
+    ``create_session_db`` falso como original e o devolvia ao ``di``: os testes seguintes do mesmo
+    processo montavam o db de sessões falso (cujo ``close`` não fecha ``AsyncMongoClient`` nenhum).
+    """
+    with pytest.MonkeyPatch.context() as guard:
+        # Rede: se a regressão voltar, o resto do processo continua vendo o real.
+        guard.setattr(di, "create_session_db", create_session_db)
+        with _spied_world(Events()) as (_, monkeypatch):
+            _spy_all(monkeypatch)
+            container = await di.DependencyContainer.create_async(AppConfig.load())
+            await container.cleanup()
+        leaked = vars(di)["create_session_db"]
+
+    assert leaked is create_session_db

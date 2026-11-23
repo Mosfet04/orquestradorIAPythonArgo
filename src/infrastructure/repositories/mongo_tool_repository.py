@@ -1,4 +1,4 @@
-"""Repositório de Tools — MongoDB async (motor)."""
+"""Repositório de Tools — MongoDB async (``AsyncMongoClient``)."""
 
 from __future__ import annotations
 

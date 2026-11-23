@@ -32,6 +32,29 @@ def require_text(value: object, field: str, label: str) -> None:
         raise InvalidField(field, f"{label} não pode estar vazio")
 
 
+RESERVED_ENTITY_IDS = frozenset(
+    {
+        "os-manager-internal",
+        "platform-builder-internal",
+        "platform-manager-internal",
+        "company-manager-internal",
+        "product-manager-internal",
+    }
+)
+"""Ids das entidades internas do runtime (agno 3.x reserva mesmo com o recurso desligado).
+
+Um agente ou team com um deles faz o AgentOS recusar a montagem inteira (todas as entidades caem).
+Lista acompanhada por teste contra a do agno (``tests/unit/test_agno_runtime.py``).
+"""
+
+
+def require_entity_id(value: object, label: str) -> None:
+    """``require_text`` do campo ``id`` e recusa de id reservado pelo runtime (sem ecoar o valor)."""
+    require_text(value, "id", label)
+    if value in RESERVED_ENTITY_IDS:
+        raise InvalidField("id", f"{label} é reservado pelo runtime; escolha outro")
+
+
 def require_optional_text(value: object, field: str, label: str) -> None:
     """Aceita ``None`` ou ``str`` (vazia inclusive); outro tipo é ``InvalidField`` sem o valor.
 

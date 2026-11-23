@@ -12,8 +12,13 @@
 # um --upgrade. Nenhum desses tetos segura correção de CVE (ver pip-audit).
 
 # === Core AI Framework ===
-# Versão exata: toda a evidência do roadmap (docs/roadmap/) é da 2.5.8.
-agno==2.5.8
+# Versão exata: a evidência da migração (docs/roadmap/F3-migracao-agno.md) é da 3.1.12.
+agno==3.1.12
+# O AgentOS 3.x usa os dois sem declará-los como dependência: python-multipart (Form/UploadFile
+# das rotas de run) e sqlalchemy com o extra asyncio (greenlet): montar um Team importa
+# agno.db.postgres (AgentOS._nearest_postgres, agno/os/app.py), mesmo sem Postgres configurado.
+python-multipart>=0.0.20
+sqlalchemy[asyncio]>=2.0.0
 
 # === Web Framework ===
 # Teto <0.137: a partir da 0.137 o include_router embrulha as rotas em _IncludedRouter

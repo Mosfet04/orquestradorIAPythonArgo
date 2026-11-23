@@ -8,15 +8,16 @@ efêmero de nome único, apagado no teardown, e nada mais é tocado no servidor.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
 from motor.motor_asyncio import AsyncIOMotorClient
-from pymongo import MongoClient
+from pymongo import AsyncMongoClient, MongoClient
 
 LIVE_URL_ENV = "MONGO_LIVE_URL"
 # Falha rápida se o servidor da URL não responder (o padrão do driver é 30 s).
@@ -31,6 +32,7 @@ class LiveMongo:
     database: str
     _sync: MongoClient[dict[str, Any]] | None = field(default=None, repr=False)
     _motors: list[AsyncIOMotorClient[dict[str, Any]]] = field(default_factory=list, repr=False)
+    _natives: list[AsyncMongoClient[dict[str, Any]]] = field(default_factory=list, repr=False)
 
     def sync(self) -> MongoClient[dict[str, Any]]:
         """Cliente pymongo síncrono (um por teste): para semear e conferir o que ficou gravado."""
@@ -45,6 +47,29 @@ class LiveMongo:
         )
         self._motors.append(client)
         return client
+
+    def native(self) -> AsyncMongoClient[dict[str, Any]]:
+        """``AsyncMongoClient`` novo (F3-09), preso ao event loop do teste: peça a fixture
+        ``live_native_closed``, que o fecha com ``await`` nesse loop antes de apagar o banco."""
+        client: AsyncMongoClient[dict[str, Any]] = AsyncMongoClient(
+            self.url, serverSelectionTimeoutMS=_SERVER_SELECTION_TIMEOUT_MS
+        )
+        self._natives.append(client)
+        return client
+
+    async def close_natives(self) -> None:
+        """Fecha os clientes de ``native()`` (o ``close`` deles é corrotina).
+
+        Teardown robusto: um ``close`` que levanta não impede o dos demais, a lista é esvaziada de
+        qualquer jeito e os erros sobem no fim (um só, ou um ``BaseExceptionGroup`` se forem vários).
+        """
+        natives, self._natives = list(self._natives), []
+        results = await asyncio.gather(*(client.close() for client in natives), return_exceptions=True)
+        errors = [result for result in results if isinstance(result, BaseException)]
+        if len(errors) == 1:
+            raise errors[0]
+        if errors:
+            raise BaseExceptionGroup("falha ao fechar clientes nativos", errors)
 
     def collection(self, name: str) -> Any:
         """Coleção (pymongo síncrono) do banco efêmero."""
@@ -71,3 +96,11 @@ def live_mongo() -> Iterator[LiveMongo]:
         yield live
     finally:
         live.close()
+
+
+@pytest.fixture
+async def live_native_closed(live_mongo: LiveMongo) -> AsyncIterator[None]:
+    """Fecha, no event loop do teste, os ``AsyncMongoClient`` de ``live_mongo.native()`` (antes de o banco
+    efêmero ser apagado). Pedido pelos módulos ``live`` do db de sessões (``pytestmark``)."""
+    yield
+    await live_mongo.close_natives()

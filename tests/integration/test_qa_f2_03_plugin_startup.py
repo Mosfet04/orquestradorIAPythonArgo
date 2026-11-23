@@ -20,7 +20,7 @@ from collections import defaultdict
 from collections.abc import Iterator
 from importlib.metadata import entry_points
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any
 
 import pytest
 import uvicorn
@@ -69,23 +69,6 @@ SPEC = ProviderSpec(
 """
 
 
-class FakeMotor:
-    """Cliente motor falso do composition root: ping ok, ``close`` registrado."""
-
-    instances: ClassVar[list[FakeMotor]] = []
-
-    def __init__(self, *_: object, **__: object) -> None:
-        self.closed = False
-        self.admin = self
-        FakeMotor.instances.append(self)
-
-    async def command(self, *_: object) -> dict[str, int]:
-        return {"ok": 1}
-
-    def close(self) -> None:
-        self.closed = True
-
-
 class _Collection(FakeMongoCollection):
     async def create_index(self, *_: object, **__: object) -> str:
         return "idx"
@@ -101,6 +84,8 @@ class Booted:
         self.created: list[Any] = []
         self.logger = RecordingLogger()
         self.agent_collection = _Collection()
+        self.app_clients: list[FakeMongoClient] = []
+        """Cliente Mongo do app (F3-09b) quando o composition root o pede à ``MongoClientFactory``."""
 
     def ids(self) -> list[str]:
         return sorted(a["id"] for a in self.agents) if isinstance(self.agents, list) else []
@@ -156,7 +141,6 @@ def site(plugin_site: FakeSite, monkeypatch: pytest.MonkeyPatch) -> FakeSite:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("AGNO_TELEMETRY", "false")
     monkeypatch.setenv("OTEL_ENABLED", "false")
-    FakeMotor.instances.clear()
     return plugin_site
 
 
@@ -177,8 +161,12 @@ def _install_fakes(monkeypatch: pytest.MonkeyPatch, result: Booted, docs: list[d
     collections: defaultdict[str, FakeMongoCollection] = defaultdict(_Collection)  # tools, árvore...
     collections["agents_config"] = result.agent_collection
     client = FakeMongoClient(collections)
-    monkeypatch.setattr(mongo_base.MongoClientFactory, "get_client", classmethod(lambda cls, _conn: client))
-    monkeypatch.setattr(di, "AsyncIOMotorClient", FakeMotor)
+
+    def get_client(cls: object, _conn: str) -> FakeMongoClient:
+        result.app_clients[:] = [client]
+        return client
+
+    monkeypatch.setattr(mongo_base.MongoClientFactory, "get_client", classmethod(get_client))
     use_fake_session_db(monkeypatch)
     monkeypatch.setattr(di, "StructlogLoggerAdapter", lambda _name: result.logger)
     monkeypatch.setattr(app_factory, "setup_telemetry", lambda config: None)
@@ -247,7 +235,7 @@ def test_plugin_liberado_sobe_no_startup_real_e_o_modelo_dele_e_criado_e_exposto
         {"distribution": "Acme_AI.Plugin", "version": "2.0.1", "entry_point": "acmeai", "provider_id": "acmeai"},
     )
     assert PLUGIN_KEY not in result.log_blob() and "ACMEAI_API_KEY" not in result.log_blob()
-    assert [m.closed for m in FakeMotor.instances] == [True]  # shutdown fecha o cliente
+    assert [c.closes for c in result.app_clients] == [[True]]  # shutdown fecha o cliente (close aguardado)
 
 
 def test_plugin_sem_chave_no_ambiente_isola_so_o_documento_dele(
@@ -367,7 +355,7 @@ def test_sem_allowlist_o_plugin_instalado_nao_e_importado_e_o_app_sobe(
 
 
 def _assert_nothing_opened(result: Booted) -> None:
-    assert FakeMotor.instances == []  # nenhum cliente Mongo aberto
+    assert result.app_clients == []  # nenhum cliente Mongo aberto
     assert result.agent_collection.queries == []  # nenhum documento lido
 
 
@@ -447,7 +435,7 @@ def test_falha_tardia_no_wiring_nao_deixa_cliente_mongo_aberto(
         with TestClient(app, **LOCAL):  # type: ignore[arg-type]
             pass  # pragma: no cover
 
-    assert FakeMotor.instances and all(client.closed for client in FakeMotor.instances)
+    assert [c.closes for c in result.app_clients] == [[True]]
 
 
 def test_import_dinamico_no_dev_local_com_o_flag_e_usavel_e_auditado(

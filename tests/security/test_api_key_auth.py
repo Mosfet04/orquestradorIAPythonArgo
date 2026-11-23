@@ -353,12 +353,15 @@ def test_nada_que_reescreva_path_fica_dentro_da_auth(
 ):
     """Middleware dentro da auth vê o request depois da classificação: se reescrevesse o
     path (ex.: tirar ``/playground``), uma rota admin passaria com a chave run."""
+    from agno.os.authz.run_context import RunAuthorizationMiddleware
     from agno.os.middleware.trailing_slash import TrailingSlashMiddleware
 
     classes = [m.cls for m in build_app(with_agent_os=with_agent_os, **env).user_middleware]
     inner = classes[classes.index(ApiKeyAuthMiddleware) + 1 :]
 
-    assert set(inner) <= {TrailingSlashMiddleware, MetricsMiddleware}, inner
+    # Agno 3.x: RunAuthorizationMiddleware só abre o contexto de autorização do run (não toca o path,
+    # ``agno/os/authz/run_context.py``).
+    assert set(inner) <= {TrailingSlashMiddleware, RunAuthorizationMiddleware, MetricsMiddleware}, inner
 
 
 def test_auth_sobrevive_a_falha_na_montagem_do_agentos(monkeypatch: pytest.MonkeyPatch):
