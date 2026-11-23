@@ -191,12 +191,15 @@ def _projected(doc: dict[str, Any], projection: dict[str, Any] | None) -> dict[s
     if len({parts[0] for parts in dotted}) != len(dotted) or any(len(parts) != 2 for parts in dotted):
         raise NotImplementedError(f"FakeMongoCollection: projeção pontilhada não suportada: {projection}")
     for head, subfield in dotted:
-        value = doc.get(head)
-        if isinstance(value, dict):
-            projected[head] = _pick(value, subfield)
-        elif isinstance(value, list):
-            projected[head] = [_pick(item, subfield) for item in value if isinstance(item, dict)]
+        _project_subfield(projected, doc.get(head), head, subfield)
     return projected
+
+
+def _project_subfield(projected: dict[str, Any], value: Any, head: str, subfield: str) -> None:
+    if isinstance(value, dict):
+        projected[head] = _pick(value, subfield)
+    elif isinstance(value, list):
+        projected[head] = [_pick(item, subfield) for item in value if isinstance(item, dict)]
 
 
 def _pick(subdoc: dict[str, Any], field: str) -> dict[str, Any]:
