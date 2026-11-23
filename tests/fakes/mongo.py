@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import copy
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -142,24 +143,37 @@ def _operator_matches(doc: dict[str, Any], key: str, expected: dict[str, Any]) -
     return all(_single_operator_matches(doc, key, operator, operand) for operator, operand in expected.items())
 
 
-def _single_operator_matches(doc: dict[str, Any], key: str, operator: str, operand: Any) -> bool:
+def _in(doc: dict[str, Any], key: str, operand: Any) -> bool:
+    return any(_field_equal(doc.get(key), option) for option in operand)
+
+
+def _gt(doc: dict[str, Any], key: str, operand: Any) -> bool:
     actual = doc.get(key)
-    if operator == "$in":
-        return any(_field_equal(actual, option) for option in operand)
-    if operator == "$nin":
-        return not any(_field_equal(actual, option) for option in operand)
-    if operator == "$exists":
-        return (key in doc) is bool(operand)
-    if operator == "$ne":
-        return not _field_equal(actual, operand)
-    if operator == "$gt":
-        numbers = (int, float)
-        return isinstance(actual, numbers) and not isinstance(actual, bool) and actual > operand
-    if operator == "$size":
-        return isinstance(actual, list) and len(actual) == operand
-    if operator == "$not" and isinstance(operand, dict) and all(k.startswith("$") for k in operand):
-        return not _operator_matches(doc, key, operand)
-    raise NotImplementedError(f"FakeMongoCollection: operador não suportado em {key!r}: {operator}")
+    return isinstance(actual, (int, float)) and not isinstance(actual, bool) and actual > operand
+
+
+def _not(doc: dict[str, Any], key: str, operand: Any) -> bool:
+    if not (isinstance(operand, dict) and all(k.startswith("$") for k in operand)):
+        raise NotImplementedError(f"FakeMongoCollection: $not só com operadores em {key!r}: {operand!r}")
+    return not _operator_matches(doc, key, operand)
+
+
+_OPERATORS: dict[str, Callable[[dict[str, Any], str, Any], bool]] = {
+    "$in": _in,
+    "$nin": lambda doc, key, operand: not _in(doc, key, operand),
+    "$exists": lambda doc, key, operand: (key in doc) is bool(operand),
+    "$ne": lambda doc, key, operand: not _field_equal(doc.get(key), operand),
+    "$gt": _gt,
+    "$size": lambda doc, key, operand: isinstance(doc.get(key), list) and len(doc[key]) == operand,
+    "$not": _not,
+}
+
+
+def _single_operator_matches(doc: dict[str, Any], key: str, operator: str, operand: Any) -> bool:
+    check = _OPERATORS.get(operator)
+    if check is None:
+        raise NotImplementedError(f"FakeMongoCollection: operador não suportado em {key!r}: {operator}")
+    return check(doc, key, operand)
 
 
 def _projected(doc: dict[str, Any], projection: dict[str, Any] | None) -> dict[str, Any]:

@@ -237,6 +237,7 @@ async def test_mongo_fora_no_ping_nao_impede_o_startup_e_o_health_service_existe
     events = Events()
     with _spied_world(events) as (clients, monkeypatch):
         spies = _spy_all(monkeypatch)
+
         async def command(*_: object) -> dict[str, int]:
             raise ConnectionError("mongo fora")
 

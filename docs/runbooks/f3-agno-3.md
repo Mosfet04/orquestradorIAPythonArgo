@@ -164,20 +164,20 @@ Não faz parte desta virada. O `cleanup_legacy_runs_field` do agno recusa rodar 
 
 O que muda para clientes e integradores entre o 2.5.8 e o 3.1.12 (decisões do dono, aceitas; detalhes nos README):
 
-**Sessões e dono**
+### Sessões e dono
 
 - Sessão de outro `user_id`: REST e AG-UI respondem `404 {"detail": "Session not found"}` antes do run (o 2.5.8 rodava numa conversa à parte); anônimo em sessão que tem dono também. A chave `API_KEY_ADMIN` não é bypass: a chave da API não é uma identidade.
 - `run_id` já gravado em outra sessão ou de outro `user_id`: no REST (`run_id` do form) a resposta é 200 e o run roda, mas **não é gravado** (o agno loga um aviso) e o run do dono fica como estava. No AG-UI, um `runId` já gravado (de qualquer sessão ou usuário) é trocado por um UUID4 do servidor, devolvido no `RUN_STARTED`: o cliente deve usar o `runId` dos eventos. Regravar o próprio run pelo REST (`continue`, `regenerate`) segue valendo.
 - Mongo de sessões fora: o run falha (REST e AG-UI respondem 500 sem o texto do erro); o 2.5.8 seguia sem sessão.
 
-**AG-UI**
+### AG-UI
 
 - O histórico da conversa vem da sessão gravada no servidor para o `threadId`, não das mensagens anteriores enviadas pelo cliente: só a última mensagem `user` e `forwardedProps.user_id` entram; `state`, client tools, `context` e mídia são ignorados (contrato novo desde o F3-04).
 - `TOOL_CALL_RESULT` vem serializado em JSON com escape ASCII.
 - O conversor do 3.x também emite `REASONING_*`, `STATE_*`, `CUSTOM` e `RAW`; o filtro de saída os descarta (a lista permitida está no README).
 - Cancelamento: cancelar o team cancela o membro em andamento; cancelar o membro encerra o team como cancelado (AG-UI `RUN_ERROR` com `code` `run_cancelled`).
 
-**Rotas REST do AgentOS**
+### Rotas REST do AgentOS
 
 - `background=true` sem `stream=false` vira SSE (stream é o default); para resposta em background sem stream, mande `stream=false`.
 - `GET /models` deixou de existir.
@@ -186,12 +186,12 @@ O que muda para clientes e integradores entre o 2.5.8 e o 3.1.12 (decisões do d
 - Novas rotas administrativas (só `API_KEY_ADMIN`): `/queue*`, `/service-accounts*`, `/filesystem*`, `/learnings*`. O total de rotas do AgentOS passa de 101 para 140 no app montado.
 - `GET /agents/{id}`: a chave `memory` continua no 3.1.12, mas seu conteúdo é o do 3.x (a configuração de memória usa `update_memory_on_run`); não dependa do formato de `enable_user_memories`, removido.
 
-**Configuração dos agentes**
+### Configuração dos agentes
 
 - `reasoning: true` vira `ReasoningTools(add_instructions=True)`: o agente ganha as tools `think`/`analyze` e as usa no próprio run, **sem fase separada de raciocínio e sem `reasoning_max_steps`** (o campo saiu). Faz mais chamadas ao modelo por resposta. As tools aparecem como `TOOL_CALL_*` no AG-UI (o texto do raciocínio vai nos argumentos) e nas tools do run REST. Para não mostrar o raciocínio no AG-UI, `expose_reasoning: false` no agente (F3-10; default `true`, documento sem o campo segue mostrando): o run e a sessão guardam o raciocínio, e as rotas REST e `GET /sessions/{id}/runs` ainda o devolvem (F5).
 - Id reservado do agno em agente ou team (lista nas pré-checagens): documento inválido (`InvalidField("id")`).
 
-**Outros**
+### Outros
 
 - Os runs ficam em `agno_runs` (um documento por run, chave `run_id`); o `get_session` junta os da coleção com os do campo legado.
 - Telemetria (só com `AGNO_TELEMETRY=true`) sai numa thread em fila, não no fim do run. O app assume `AGNO_TELEMETRY=false`. `/eval-runs*` responde 404 até a F8 (F3-08): os evals do agno ignorariam a variável.

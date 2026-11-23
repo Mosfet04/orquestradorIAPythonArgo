@@ -65,7 +65,7 @@ class TestMongoClientFactory:
         """F3-09b: o cliente é o ``AsyncMongoClient`` do pymongo (não o motor); o construtor não conecta."""
         client = MongoClientFactory.get_client("mongodb://mongo.test.invalid:27017")
         try:
-            assert type(client) is AsyncMongoClient
+            assert isinstance(client, AsyncMongoClient)
         finally:
             await client.close()
 

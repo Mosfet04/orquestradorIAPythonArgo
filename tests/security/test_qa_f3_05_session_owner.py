@@ -60,10 +60,11 @@ class World:
     member_model: FakeChatModel
     team_model: FakeChatModel
 
-    def client(self, key: dict[str, str] = RUN) -> httpx.AsyncClient:
+    def client(self, key: dict[str, str] | None = None) -> httpx.AsyncClient:
+        """Cliente HTTP do app; sem ``key``, com a chave run."""
         # Sem re-levantar a exceção do app: o que se confere é a resposta que o cliente recebe.
         transport = httpx.ASGITransport(app=self.app, raise_app_exceptions=False)
-        return httpx.AsyncClient(transport=transport, base_url="http://test", headers=key)
+        return httpx.AsyncClient(transport=transport, base_url="http://test", headers=RUN if key is None else key)
 
     def model_calls(self) -> int:
         return len(self.agent_model.calls) + len(self.member_model.calls) + len(self.team_model.calls)

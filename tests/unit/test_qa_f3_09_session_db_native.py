@@ -26,7 +26,7 @@ from tests.fakes.mongo import FakeAsyncMongoClient, FakeMotorClient, SyncPymongo
 pytestmark = pytest.mark.unit
 
 MARKER = "SENHA-DO-MONGO-F309"
-URL_WITH_SECRET = "mongodb://" + "usuario:" + MARKER + "@mongo.test.invalid:27017"
+MONGO_URL_WITH_MARKER = "mongodb://" + "usuario:" + MARKER + "@mongo.test.invalid:27017"
 
 
 @pytest.fixture
@@ -143,7 +143,7 @@ def test_create_session_db_fora_de_um_event_loop_nao_conecta_e_fecha_no_loop_de_
     """O cliente só se prende ao loop da primeira operação: criar fora de loop é seguro (CLI, container)."""
     with warnings.catch_warnings():
         warnings.simplefilter("error")  # avisos de código síncrono viram falha (os do GC: filterwarnings acima)
-        db = create_session_db(URL_WITH_SECRET, "banco")
+        db = create_session_db(MONGO_URL_WITH_MARKER, "banco")
         assert isinstance(db.db_client, AsyncMongoClient)
         assert db.db_client._opened is False
 
@@ -153,7 +153,7 @@ def test_create_session_db_fora_de_um_event_loop_nao_conecta_e_fecha_no_loop_de_
 
 async def test_uso_depois_do_close_com_o_cliente_real_levanta_invalid_operation_sem_a_uri() -> None:
     """Sem o detector: a recusa do driver vem antes de qualquer escolha de servidor (nenhuma rede)."""
-    db = create_session_db(URL_WITH_SECRET, "banco")
+    db = create_session_db(MONGO_URL_WITH_MARKER, "banco")
     await db.close()
 
     with pytest.raises(InvalidOperation) as caught:
@@ -165,7 +165,7 @@ async def test_uso_depois_do_close_com_o_cliente_real_levanta_invalid_operation_
 async def test_com_o_mongo_fora_a_operacao_falha_o_close_roda_uma_vez_e_nada_vai_ao_pymongo_sincrono(
     calls: SyncPymongoCalls,
 ) -> None:
-    db = create_session_db(URL_WITH_SECRET, "banco")
+    db = create_session_db(MONGO_URL_WITH_MARKER, "banco")
 
     with pytest.raises(ServerSelectionTimeoutError):
         await db.get_user_memories(user_id="ana")

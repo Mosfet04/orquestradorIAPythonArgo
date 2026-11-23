@@ -40,7 +40,7 @@ async def test_container_real_usa_um_cliente_nativo_saudavel_e_o_cleanup_o_fecha
     container = await di.DependencyContainer.create_async(AppConfig.load())
     client = container._mongo_client
     try:
-        assert type(client) is AsyncMongoClient
+        assert isinstance(client, AsyncMongoClient)
         health = await container.health_service.check_async()  # type: ignore[union-attr]
         repository = MongoToolRepository(connection_string=live_app_env.url, logger=RecordingLogger())
         assert repository._client is client
