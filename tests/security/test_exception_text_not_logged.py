@@ -37,6 +37,8 @@ from src.infrastructure.repositories.mongo_document_tree_repository import Mongo
 from src.infrastructure.repositories.mongo_team_config_repository import MongoTeamConfigRepository
 from src.infrastructure.repositories.mongo_tool_repository import MongoToolRepository
 from src.infrastructure.runtime.agno.http_tool_factory import HttpToolFactory
+from src.infrastructure.security.guarded_http import GuardedAsyncTransport
+from src.infrastructure.security.ssrf import DestinationRule
 from src.infrastructure.web import app_factory
 from src.presentation.controllers.orquestrador_controller import OrquestradorController
 from tests.fakes import (
@@ -260,7 +262,7 @@ def _upstream_raising(monkeypatch: pytest.MonkeyPatch, make_error: Callable[[htt
         raise make_error(request)
 
     monkeypatch.setattr(
-        httpx, "AsyncClient", lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs)
+        httpx, "AsyncClient", lambda **kwargs: real_client(**{**kwargs, "transport": httpx.MockTransport(handler)})
     )
 
 
@@ -322,9 +324,12 @@ async def test_tool_http_com_header_invalido_nao_devolve_o_valor_do_header() -> 
             parameters=[ToolParameter(name="q", type=ParameterType.STRING, description="termo")],
             headers={"Authorization": f"Bearer {secret}\n"},
         )
-        (function,) = await HttpToolFactory(logger=logger).create_tools_from_configs([tool])
+        # Pelo transporte guardado do app (F4-01), com o loopback do modo dev liberado.
+        factory = HttpToolFactory(logger=logger, transport=GuardedAsyncTransport(DestinationRule(allow_loopback=True)))
+        (function,) = await factory.create_tools_from_configs([tool])
 
         result = await function.entrypoint(q="x")
+        await factory.aclose()
 
     assert result == "Erro na requisição: falha ao chamar a tool (LocalProtocolError)"
     _assert_only_the_error_type(logger, "Request error", error_type="LocalProtocolError", marker=secret)
@@ -345,7 +350,7 @@ async def test_tool_http_com_argumento_de_rota_que_nao_codifica_loga_e_devolve_s
         return httpx.Response(200, json={"ok": True})
 
     monkeypatch.setattr(
-        httpx, "AsyncClient", lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs)
+        httpx, "AsyncClient", lambda **kwargs: real_client(**{**kwargs, "transport": httpx.MockTransport(handler)})
     )
     tool = Tool(
         id="pedido",

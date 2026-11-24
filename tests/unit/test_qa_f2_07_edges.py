@@ -133,7 +133,7 @@ async def test_resultado_da_tool_http_nao_ecoa_o_texto_da_excecao(monkeypatch: p
         raise RuntimeError(f"falha interna: {MARKER}")
 
     monkeypatch.setattr(
-        httpx, "AsyncClient", lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs)
+        httpx, "AsyncClient", lambda **kwargs: real_client(**{**kwargs, "transport": httpx.MockTransport(handler)})
     )
     (function,) = await HttpToolFactory(logger=RecordingLogger()).create_tools_from_configs([_TOOL])
 

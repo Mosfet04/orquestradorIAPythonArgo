@@ -54,7 +54,7 @@ def upstream(monkeypatch: pytest.MonkeyPatch) -> Upstream:
         return state.handler(request)
 
     def client(**kwargs: Any) -> httpx.AsyncClient:
-        return real_client(transport=httpx.MockTransport(handler), **kwargs)
+        return real_client(**{**kwargs, "transport": httpx.MockTransport(handler)})
 
     monkeypatch.setattr(httpx, "AsyncClient", client)
     return state

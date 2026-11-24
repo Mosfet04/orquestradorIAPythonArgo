@@ -144,7 +144,7 @@ Notes:
 - `uvloop` is declared with `sys_platform != "win32"`. Note: `app.py` still imports `uvloop` unconditionally, so it fails on native Windows until roadmap item F1-03.
 - Optional extras are **not installed by default** and stay out of the lock: `PyJWT` (AgentOS JWT auth), `mcp` (MCP tools), `anthropic`, `groq` (model providers). To adopt one, add it to `requirements.in` with a minimum version and regenerate.
 - A new dependency needs a justification in the PR (license, maintenance, discarded alternatives).
-- Upper bounds in `requirements.in` are deliberate and explained next to each one: `fastapi<0.137` (agno 2.5.8 breaks with the `_IncludedRouter` introduced in 0.137), major caps on SDKs consumed by agno (`openai<3`, `google-genai<2`, `ag-ui-protocol<0.2`, `openinference-instrumentation-agno<0.2`). The agno 3.1.12 bump (F3-05) kept them, so the lock only carries what agno changes; lifting one is its own item. Do not lift them in a routine `--upgrade`.
+- Upper bounds in `requirements.in` are deliberate and explained next to each one: `fastapi<0.137` (agno 2.5.8 breaks with the `_IncludedRouter` introduced in 0.137), major caps on SDKs consumed by agno (`openai<3`, `google-genai<2`, `ag-ui-protocol<0.2`, `openinference-instrumentation-agno<0.2`), `httpx<0.29` (the guarded transport of F4-01 replaces an httpx internal; `tests/golden/test_f4_01_httpx_internals_golden.py` pins it; `httpcore<2` is declared because it is imported directly). The agno 3.1.12 bump (F3-05) kept them, so the lock only carries what agno changes; lifting one is its own item. Do not lift them in a routine `--upgrade`.
 
 ### Using Docker
 

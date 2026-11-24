@@ -41,7 +41,8 @@ class RecordingUpstream:
 
         def client(**kwargs: Any) -> httpx.AsyncClient:
             transport: httpx.AsyncBaseTransport = wrap(mock) if wrap else mock
-            return real_client(transport=transport, **{**client_defaults, **kwargs})
+            # O transporte do pedido (o guardado da tool, F4-01) dá lugar ao falso: nada sai da máquina.
+            return real_client(**{**client_defaults, **kwargs, "transport": transport})
 
         monkeypatch.setattr(httpx, "AsyncClient", client)
         return self

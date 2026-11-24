@@ -172,7 +172,7 @@ def http_requests(monkeypatch: pytest.MonkeyPatch) -> list[httpx.Request]:
         return httpx.Response(200, json={"logradouro": "Praça da Sé"})
 
     def client(**kwargs: Any) -> httpx.AsyncClient:
-        return real_client(transport=httpx.MockTransport(handler), **kwargs)
+        return real_client(**{**kwargs, "transport": httpx.MockTransport(handler)})
 
     monkeypatch.setattr(httpx, "AsyncClient", client)
     return seen

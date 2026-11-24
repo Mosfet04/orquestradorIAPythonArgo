@@ -191,7 +191,8 @@ def upstream(monkeypatch: pytest.MonkeyPatch) -> list[httpx.Request]:
         requests.append(request)
         return httpx.Response(200, json={"logradouro": "Praça da Sé"})
 
-    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real_client(transport=httpx.MockTransport(handler), **kw))
+    mock = httpx.MockTransport(handler)
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real_client(**{**kw, "transport": mock}))
     return requests
 
 
@@ -255,7 +256,8 @@ async def test_tool_http_com_falha_do_upstream_nao_quebra_o_stream_nem_vaza_o_er
         raise httpx.ConnectError("conexão recusada em 10.0.0.9 token=segredo-xyz", request=request)
 
     real_client: Callable[..., httpx.AsyncClient] = httpx.AsyncClient
-    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real_client(transport=httpx.MockTransport(boom), **kw))
+    mock = httpx.MockTransport(boom)
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real_client(**{**kw, "transport": mock}))
     models = _ScriptedModelFactory({"a1": [_tool_call("cep", {"cep": "01001000"}), "não consegui"]})
     agent = await _http_agent(models, "a1")
     client = TestClient(_mount(monkeypatch, [agent], []))

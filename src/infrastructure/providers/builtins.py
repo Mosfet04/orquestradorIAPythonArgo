@@ -10,11 +10,18 @@ F2-02: ``<PROVEDOR>_API_KEY`` (gemini lê ``GEMINI_API_KEY``; azure ``AZURE_API_
 placeholder ``"not-provided"``: sem ``api_key_ref``, nada é passado e o SDK ``openai`` não cai
 na ``OPENAI_API_KEY`` do ambiente (cairia com ``api_key=None``, e mandaria a chave da OpenAI ao
 ``base_url`` do documento). Pelo mesmo motivo o embedder não é o ``OpenAIEmbedder``.
+
+``guarded_http`` (F4-01, conferido no agno 3.1.12): o ``client_params`` do chat OpenAI/Groq vai ao
+construtor do SDK nos dois caminhos (``agno/models/openai/chat.py``, ``_get_client_params``), então o
+``httpx.AsyncClient`` guardado serve ao async (o do app) e o síncrono falha fechado (``TypeError`` do SDK);
+os embedders OpenAI usam os dois caminhos e são as subclasses de ``guarded_embedders`` (um cliente para
+cada); o ``ollama`` repassa os mesmos kwargs ao ``httpx.Client`` e ao ``httpx.AsyncClient``
+(``ollama/_client.py``): o transporte duplo atende os dois.
 """
 
 from __future__ import annotations
 
-from src.infrastructure.providers.registry import ClassSpec, OperatorEnv, ProviderSpec
+from src.infrastructure.providers.registry import ClassSpec, GuardedHttpKind, OperatorEnv, ProviderSpec
 
 
 def _same(*names: str) -> dict[str, str]:
@@ -46,6 +53,9 @@ _OLLAMA_OPTIONS = (
     "frequency_penalty",
 )
 _EMBEDDER_PARAMS = _same("dimensions")
+_SDK_ASYNC_CLIENT: dict[str, GuardedHttpKind] = {"client_params.http_client": "async_client"}
+_EMBEDDER_CLIENTS: dict[str, GuardedHttpKind] = {"sync_http_client": "sync_client", "async_http_client": "async_client"}
+_GUARDED_EMBEDDERS = "src.infrastructure.runtime.agno.guarded_embedders"
 
 OLLAMA = ProviderSpec(
     id="ollama",
@@ -55,6 +65,7 @@ OLLAMA = ProviderSpec(
         params={**{name: f"options.{name}" for name in _OLLAMA_OPTIONS}, **_same("keep_alive", "timeout")},
         base_url_kwarg="host",
         untrusted_url_kwargs={"client_params.follow_redirects": False},
+        guarded_http={"client_params.transport": "transport"},
     ),
     embedder=ClassSpec(
         class_path="agno.knowledge.embedder.ollama.OllamaEmbedder",
@@ -62,6 +73,7 @@ OLLAMA = ProviderSpec(
         base_url_kwarg="host",
         api_key_kwarg=None,  # OllamaEmbedder não tem api_key (o SDK lê OLLAMA_API_KEY sozinho)
         untrusted_url_kwargs={"client_kwargs.follow_redirects": False},
+        guarded_http={"client_kwargs.transport": "transport"},
     ),
     # Com OLLAMA_API_KEY e sem host, o agno aponta para o Ollama Cloud.
     default_hosts=frozenset({"ollama.com"}),
@@ -71,10 +83,16 @@ OPENAI = ProviderSpec(
     id="openai",
     sdk_package="openai",
     chat=ClassSpec(
-        class_path="agno.models.openai.chat.OpenAIChat", params=_OPENAI_CHAT_PARAMS, base_url_kwarg="base_url"
+        class_path="agno.models.openai.chat.OpenAIChat",
+        params=_OPENAI_CHAT_PARAMS,
+        base_url_kwarg="base_url",
+        guarded_http=_SDK_ASYNC_CLIENT,
     ),
     embedder=ClassSpec(
-        class_path="agno.knowledge.embedder.openai.OpenAIEmbedder", params=_EMBEDDER_PARAMS, base_url_kwarg="base_url"
+        class_path=f"{_GUARDED_EMBEDDERS}.GuardedOpenAIEmbedder",
+        params=_EMBEDDER_PARAMS,
+        base_url_kwarg="base_url",
+        guarded_http=_EMBEDDER_CLIENTS,
     ),
     default_hosts=frozenset({"api.openai.com"}),
     api_key_env="OPENAI_API_KEY",
@@ -121,6 +139,7 @@ GROQ = ProviderSpec(
             "max_retries",
         ),
         base_url_kwarg="base_url",
+        guarded_http=_SDK_ASYNC_CLIENT,
     ),
     default_hosts=frozenset({"api.groq.com"}),
     api_key_env="GROQ_API_KEY",
@@ -151,12 +170,16 @@ OPENAI_COMPATIBLE = ProviderSpec(
     id="openai_compatible",
     sdk_package="openai",
     chat=ClassSpec(
-        class_path="agno.models.openai.like.OpenAILike", params=_OPENAI_CHAT_PARAMS, base_url_kwarg="base_url"
+        class_path="agno.models.openai.like.OpenAILike",
+        params=_OPENAI_CHAT_PARAMS,
+        base_url_kwarg="base_url",
+        guarded_http=_SDK_ASYNC_CLIENT,
     ),
     embedder=ClassSpec(
-        class_path="agno.knowledge.embedder.openai_like.OpenAILikeEmbedder",
+        class_path=f"{_GUARDED_EMBEDDERS}.GuardedOpenAILikeEmbedder",
         params=_EMBEDDER_PARAMS,
         base_url_kwarg="base_url",
+        guarded_http=_EMBEDDER_CLIENTS,
     ),
     requires_base_url=True,
 )

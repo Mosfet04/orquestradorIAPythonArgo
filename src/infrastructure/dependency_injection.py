@@ -64,7 +64,8 @@ from src.infrastructure.runtime.agno.http_tool_factory import HttpToolFactory
 from src.infrastructure.runtime.agno.llm_summary_generator import LLMSummaryGenerator
 from src.infrastructure.runtime.agno.session_db import SessionDb, create_session_db
 from src.infrastructure.runtime.agno.team_factory_service import TeamFactoryService
-from src.infrastructure.security.ssrf import system_resolver
+from src.infrastructure.security.guarded_http import GuardedAsyncTransport, GuardedHttp
+from src.infrastructure.security.ssrf import DestinationRule, system_resolver
 from src.infrastructure.security.tool_route_guard import ToolRouteGuard
 from src.infrastructure.telemetry.metrics import TelemetryMetrics
 from src.infrastructure.web.api_key_auth import is_local_dev_mode
@@ -174,14 +175,22 @@ def build_provider_registry(config: AppConfig, logger: ILogger) -> ProviderRegis
     recusados). Síncrono e com I/O: chame fora do event loop.
     """
     dev_mode = is_local_dev_mode(config)
+    # Clientes guardados dos SDKs com base_url da config (F4-01): o host já passou pela policy na montagem;
+    # na conexão, só metadata/link-local recusados e TCP no IP conferido. Montados aqui (fora do event loop:
+    # o TLS lê disco), não no primeiro modelo (o team monta o dele no loop).
+    http = GuardedHttp(DestinationRule(public_only=False), resolver=system_resolver)
+    http.async_client()
+    http.sync_client()
     registry = ProviderRegistry(
         BUILTIN_PROVIDERS,
         secrets_dir=config.secrets_dir,
         policy=DestinationPolicy(
             allowlist=config.model_base_url_allowlist,
             allow_loopback=dev_mode,
+            resolver=system_resolver,
         ),
         operator_base_urls={"ollama": config.ollama_base_url} if config.ollama_base_url else None,
+        http=http,
     )
     load_provider_plugins(
         registry,
@@ -275,6 +284,8 @@ class DependencyContainer:
         self._config_admin: ConfigAdmin | None = None
         self._config_schema: ConfigSchema | None = None
         self._runtime: AgnoRuntime | None = None
+        self._providers: ProviderRegistry | None = None
+        self._tool_factory: HttpToolFactory | None = None
 
     @classmethod
     async def create_async(cls, config: AppConfig) -> DependencyContainer:
@@ -297,6 +308,7 @@ class DependencyContainer:
         # thread: descobrir entry points lê metadados em disco e carregar plugin importa código.
         # Um registry atende modelos e embedders (portas IModelFactory e IEmbedderFactory).
         providers = await asyncio.to_thread(build_provider_registry, self.config, self._logger)
+        self._providers = providers
         # Embedders com a dimensão real do modelo (sonda uma vez por config, F2-11): um só, para o
         # RAG semântico e o hierárquico (indexação e busca) compartilharem o cache.
         embedders = DimensionResolvingEmbedderFactory(providers, logger=self._logger)
@@ -304,7 +316,20 @@ class DependencyContainer:
         await self._connect_mongo()
 
         # ── Wiring ──────────────────────────────────────────────────
-        tool_factory = HttpToolFactory(logger=self._logger, secrets_dir=self.config.secrets_dir)
+        # Um cliente para todas as tools (F4-01), sobre o transporte guardado: destino conferido na conexão
+        # com a mesma regra da escrita (TOOL_ROUTE_ALLOWLIST, loopback só no modo dev). Em thread: o TLS lê disco.
+        tool_transport = await asyncio.to_thread(
+            GuardedAsyncTransport,
+            DestinationRule(
+                trusted_hosts=frozenset(self.config.tool_route_allowlist),
+                allow_loopback=is_local_dev_mode(self.config),
+            ),
+            resolver=system_resolver,
+        )
+        tool_factory = HttpToolFactory(
+            logger=self._logger, secrets_dir=self.config.secrets_dir, transport=tool_transport
+        )
+        self._tool_factory = tool_factory
 
         agent_config_repo, team_config_repo, tool_repo = self._build_config_repositories()
 
@@ -503,11 +528,19 @@ class DependencyContainer:
         return self._health_service
 
     async def cleanup(self) -> None:
-        """Fecha o db de sessões e o cliente Mongo do app, cada um mesmo se o outro falhar.
+        """Fecha os clientes HTTP guardados, o db de sessões e o cliente Mongo do app, cada um mesmo se outro falhar.
 
-        Os dois são ``AsyncMongoClient`` (F3-09, F3-09b): o ``close`` é corrotina, aguardada no event loop.
-        O cliente do app sai do cache da fábrica e é fechado uma vez (chamadas seguintes não fazem nada).
+        Os dois do Mongo são ``AsyncMongoClient`` (F3-09, F3-09b): o ``close`` é corrotina, aguardada no event loop.
+        O cliente do app sai do cache da fábrica e é fechado uma vez (chamadas seguintes não fazem nada). Os HTTP
+        (F4-01): o das tools e os entregues aos SDKs de modelo com ``base_url`` da config; idempotentes.
         """
+        for name, closer in (("tools", self._tool_factory), ("modelos", self._providers)):
+            if closer is None:
+                continue
+            try:
+                await closer.aclose()
+            except Exception as exc:  # noqa: BLE001 - shutdown segue; tipo no log
+                self._logger.warning("Falha ao fechar o cliente HTTP", client=name, error_type=type(exc).__name__)
         if self._session_db is not None:
             try:
                 # Idempotente: o lifespan de db do AgentOS pode já ter fechado.

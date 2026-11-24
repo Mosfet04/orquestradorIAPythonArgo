@@ -258,7 +258,7 @@ def test_openai_base_url_do_ambiente_vale_sem_config_e_a_base_url_da_config_prev
     from_env = registry.create_model(ModelConfig("openai", "m")).get_client()  # type: ignore[attr-defined]
     from_config = registry.create_model(
         ModelConfig("openai_compatible", "m", base_url=f"https://{GATEWAY}/v1")
-    ).get_client()  # type: ignore[attr-defined]
+    ).get_async_client()  # type: ignore[attr-defined]  # com base_url da config, só o assíncrono (F4-01)
 
     assert str(from_env.base_url).startswith("https://proxy.operador.invalid/v1")
     assert str(from_config.base_url).startswith(f"https://{GATEWAY}/v1")
