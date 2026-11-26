@@ -51,6 +51,7 @@ Ordem de execução = numeração. Cada item passa por `/dev-cycle <item> --comm
 | FA-05 | concluído |
 | FA-06 | concluído |
 | FA-07 | concluído |
+| FA-08 | concluído (`updated_at` em ISO 8601 UTC com `Z`, `null` sem o campo) |
 | F3-01 | concluído |
 | F3-02 | concluído |
 | F3-03 | concluído |

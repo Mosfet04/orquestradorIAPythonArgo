@@ -43,7 +43,7 @@ async def test_agente_legado_camel_case_relido_pelo_runtime_volta_igual_depois_d
     before = await repo.get_agent_by_id("a")
     assert before.factory_ia_model == "openai"
 
-    assert await repo.save(before, 0) == 1
+    assert (await repo.save(before, 0)).version == 1
 
     assert await repo.get_agent_by_id("a") == before
     assert await repo.get_active_agents() == [before]
@@ -79,7 +79,7 @@ async def test_version_0_explicita_e_nula_se_comportam_como_legado(monkeypatch: 
     repo = MongoBackend(monkeypatch).agents(docs)
 
     assert [(v.entity.id, v.version) for v in await repo.list_all()] == [("zero", 0), ("nula", 0), ("sem", 0)]
-    assert [await repo.save(_agent(i, "novo"), 0) for i in ("zero", "nula", "sem")] == [1, 1, 1]
+    assert [(await repo.save(_agent(i, "novo"), 0)).version for i in ("zero", "nula", "sem")] == [1, 1, 1]
     await repo.delete("zero", 1)
     assert [(v.entity.id, v.version) for v in await repo.list_all()] == [("nula", 1), ("sem", 1)]
 

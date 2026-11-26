@@ -8,6 +8,8 @@ acima de ``MAX_BODY_BYTES`` é 413, contado na leitura do stream (vale também s
 ``PUT`` e ``DELETE`` exigem ``If-Match`` com a versão lida (ausente: 428; outra versão: 412).
 ``DELETE`` é lógico (``active: false``); ``?hard=true`` remove o documento. O ``version`` que a resposta
 acrescenta ao documento pode voltar no corpo (a UI reenvia o que leu) e é descartado: vale o ``If-Match``.
+O ``updated_at`` (FA-08, hora da última gravação em ISO 8601 UTC com ``Z``; ``null`` se o store não a guarda)
+também é descartado do corpo: o servidor grava a hora dele.
 
 Troca a quente (FA-04): a escrita só grava se a config monta no runtime (senão 422 com o tipo do erro, sem
 o texto) e a resposta leva no header ``Runtime-Revision`` a revisão do runtime que já serve a mudança.
@@ -23,7 +25,8 @@ pelo mesmo caminho do ``PUT``.
 from __future__ import annotations
 
 import json
-from typing import get_args
+from datetime import UTC, datetime
+from typing import Any, get_args
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
@@ -48,8 +51,9 @@ MAX_PAGE_SIZE = 200
 MAX_BODY_BYTES = 1024 * 1024
 # Versão no If-Match: inteiro curto (int() de um texto gigante custa CPU e tem teto no Python).
 _MAX_VERSION_DIGITS = 18
-# Chave da versão no documento que a API mostra (não é campo da entidade).
+# Chaves dos metadados que a API acrescenta ao documento (não são campos da entidade): versão e hora da gravação.
 _VERSION = "version"
+_UPDATED_AT = "updated_at"
 RUNTIME_REVISION_HEADER = "Runtime-Revision"
 
 # Recusa do caso de uso ou da porta -> (status, texto fixo); nunca o texto da exceção.
@@ -63,6 +67,34 @@ _REFUSALS: dict[type[Exception], tuple[int, str]] = {
     ConfigVersionConflict: (412, "Versão divergente: releia a config"),
 }
 _USE_CASE_ERRORS = tuple(_REFUSALS)
+
+# OpenAPI das respostas com o documento (FA-08): os campos da entidade são os do ``/admin/schema`` (nada de schema
+# paralelo aqui); só os metadados que a API acrescenta ao documento são descritos.
+_DOCUMENT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        _VERSION: {"type": "integer", "minimum": 0},
+        _UPDATED_AT: {"anyOf": [{"type": "string", "format": "date-time"}, {"type": "null"}]},
+    },
+    "required": [_VERSION, _UPDATED_AT],
+    "additionalProperties": True,
+}
+_PAGE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "items": {"type": "array", "items": _DOCUMENT_SCHEMA},
+        "total": {"type": "integer"},
+        "offset": {"type": "integer"},
+        "limit": {"type": "integer"},
+    },
+    "required": ["items", "total", "offset", "limit"],
+}
+
+
+def _documented(status_code: int, schema: dict[str, Any]) -> dict[int | str, dict[str, Any]]:
+    """``responses`` da rota: o schema JSON da resposta de sucesso (o corpo é montado à mão, sem modelo)."""
+    return {status_code: {"content": {"application/json": {"schema": schema}}}}
+
 
 router = APIRouter(prefix="/admin/config", tags=["admin-config"])
 
@@ -99,6 +131,7 @@ async def _json_object(request: Request) -> dict[str, object]:
     if not isinstance(body, dict):
         raise InvalidConfig()
     body.pop(_VERSION, None)
+    body.pop(_UPDATED_AT, None)
     return body
 
 
@@ -150,8 +183,19 @@ def _hard(request: Request) -> bool:
     return raw == "true"
 
 
+def updated_at_text(moment: object) -> str | None:
+    """Hora da gravação em ISO 8601 UTC, com ``Z`` e em segundos; ``None`` se não for datetime.
+
+    Sem fuso (o pymongo sem ``tz_aware``) é UTC; com fuso, convertido para UTC.
+    """
+    if not isinstance(moment, datetime):
+        return None
+    utc = moment.replace(tzinfo=UTC) if moment.utcoffset() is None else moment.astimezone(UTC)
+    return utc.replace(tzinfo=None).isoformat(timespec="seconds") + "Z"
+
+
 def _body(item: Versioned[ConfigDocument]) -> ConfigDocument:
-    return {**item.entity, _VERSION: item.version}
+    return {**item.entity, _VERSION: item.version, _UPDATED_AT: updated_at_text(item.updated_at)}
 
 
 def _item(item: Versioned[ConfigDocument], status_code: int = 200) -> JSONResponse:
@@ -193,21 +237,21 @@ def _error(exc: Exception) -> JSONResponse:
 def _add_routes(kind: ConfigKind) -> None:
     """``GET``/``POST`` na coleção e ``GET``/``PUT``/``DELETE`` no item, para um tipo de config."""
 
-    @router.get(f"/{kind}", name=f"list_{kind}")
+    @router.get(f"/{kind}", name=f"list_{kind}", responses=_documented(200, _PAGE_SCHEMA))
     async def list_configs(request: Request) -> Response:
         offset, limit = _page(request)
         items = await _editor(request, kind).list_all()
         page = [_body(item) for item in items[offset : offset + limit]]
         return JSONResponse({"items": page, "total": len(items), "offset": offset, "limit": limit})
 
-    @router.get(f"/{kind}/{{entity_id}}", name=f"get_{kind}")
+    @router.get(f"/{kind}/{{entity_id}}", name=f"get_{kind}", responses=_documented(200, _DOCUMENT_SCHEMA))
     async def get_config(request: Request, entity_id: str) -> Response:
         try:
             return _item(await _editor(request, kind).get(entity_id))
         except _USE_CASE_ERRORS as exc:
             return _error(exc)
 
-    @router.post(f"/{kind}", name=f"create_{kind}", status_code=201)
+    @router.post(f"/{kind}", name=f"create_{kind}", status_code=201, responses=_documented(201, _DOCUMENT_SCHEMA))
     async def create_config(request: Request) -> Response:
         try:
             body = await _json_object(request)
@@ -215,7 +259,7 @@ def _add_routes(kind: ConfigKind) -> None:
         except _USE_CASE_ERRORS as exc:
             return _error(exc)
 
-    @router.put(f"/{kind}/{{entity_id}}", name=f"replace_{kind}")
+    @router.put(f"/{kind}/{{entity_id}}", name=f"replace_{kind}", responses=_documented(200, _DOCUMENT_SCHEMA))
     async def replace_config(request: Request, entity_id: str) -> Response:
         expected_version = _if_match(request)
         try:
@@ -226,7 +270,7 @@ def _add_routes(kind: ConfigKind) -> None:
         except _USE_CASE_ERRORS as exc:
             return _error(exc)
 
-    @router.delete(f"/{kind}/{{entity_id}}", name=f"delete_{kind}")
+    @router.delete(f"/{kind}/{{entity_id}}", name=f"delete_{kind}", responses=_documented(200, _DOCUMENT_SCHEMA))
     async def delete_config(request: Request, entity_id: str) -> Response:
         expected_version = _if_match(request)
         hard = _hard(request)
@@ -247,7 +291,11 @@ def _add_routes(kind: ConfigKind) -> None:
         page = [_history_item(entry) for entry in entries[offset : offset + limit]]
         return JSONResponse({"items": page, "total": len(entries), "offset": offset, "limit": limit})
 
-    @router.post(f"/{kind}/{{entity_id}}/history/{{version}}/restore", name=f"restore_{kind}")
+    @router.post(
+        f"/{kind}/{{entity_id}}/history/{{version}}/restore",
+        name=f"restore_{kind}",
+        responses=_documented(200, _DOCUMENT_SCHEMA),
+    )
     async def restore_config(request: Request, entity_id: str, version: str) -> Response:
         expected_version = _if_match(request)
         restored = _version(version)

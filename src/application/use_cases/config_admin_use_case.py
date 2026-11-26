@@ -393,9 +393,9 @@ class ConfigEditor(ABC, Generic[E]):
             current = await self._current(entity_id, expected_version)
             await self._ensure_unused(entity_id)
 
-            async def delete() -> int:
+            async def delete() -> Versioned[E]:
                 await self._repository.delete(entity_id, expected_version)
-                return expected_version
+                return current
 
             _, revision = await self._published(audited, entity_id, current.entity, None, delete)
             return revision
@@ -417,18 +417,21 @@ class ConfigEditor(ABC, Generic[E]):
         entity_id: str,
         before: E | None,
         after: E | None,
-        write: Callable[[], Awaitable[int]],
-    ) -> tuple[int, int]:
-        """Monta (``_built``), grava (``write``, que devolve a versão), registra e troca o runtime.
+        write: Callable[[], Awaitable[Versioned[E]]],
+    ) -> tuple[Versioned[E], int]:
+        """Monta (``_built``), grava (``write``, que devolve o documento gravado ou o removido), registra e troca.
 
-        Devolve a versão e a revisão nova do runtime. Montagem recusada (``ConfigNotBuildable``) não grava nada.
+        Devolve o que ``write`` devolveu e a revisão nova do runtime. Montagem recusada (``ConfigNotBuildable``)
+        não grava nada.
         Falha depois de gravar loga só o tipo do erro e sobe (o ``POST /admin/config/reload`` recupera): sem o
         registro, nenhuma réplica troca (todas seguem a config anterior); sem a troca, o poll desta a refaz.
         """
         build = await self._built(entity_id, after)
-        version = await write()
+        written = await write()
         try:
-            store_revision = await audited.log.record(self._entry(audited.actor, entity_id, version, before, after))
+            store_revision = await audited.log.record(
+                self._entry(audited.actor, entity_id, written.version, before, after)
+            )
             runtime_revision = self._runtime.swap(build if build is not None else await self._runtime.build())
         except Exception as exc:
             self._logger.error(
@@ -438,7 +441,7 @@ class ConfigEditor(ABC, Generic[E]):
             )
             raise
         self._runtime.published(store_revision)
-        return version, runtime_revision
+        return written, runtime_revision
 
     def _entry(self, actor: str, entity_id: str, version: int, before: E | None, after: E | None) -> ConfigAuditEntry:
         """Entrada do diário com o documento e o diff como a API os mostra (nunca valor de header)."""
@@ -536,13 +539,13 @@ class ConfigEditor(ABC, Generic[E]):
         return await self._saved(audited, current.entity, entity, expected_version)
 
     async def _saved(self, audited: _Audited, before: E | None, entity: E, expected_version: int) -> ConfigWrite:
-        version, revision = await self._published(
+        saved, revision = await self._published(
             audited, entity.id, before, entity, lambda: self._repository.save(entity, expected_version)
         )
-        return ConfigWrite(self._shown(Versioned(entity, version)), revision)
+        return ConfigWrite(self._shown(saved), revision)
 
     def _shown(self, item: Versioned[E]) -> Versioned[ConfigDocument]:
-        return Versioned(self._document(item.entity), item.version)
+        return Versioned(self._document(item.entity), item.version, item.updated_at)
 
 
 class AgentConfigEditor(ConfigEditor[AgentConfig]):

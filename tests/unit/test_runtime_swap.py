@@ -44,7 +44,7 @@ class _YieldingAgents(InMemoryAgentConfigRepository):
         await asyncio.sleep(0)
         return await super().list_all()
 
-    async def save(self, entity: AgentConfig, expected_version: int) -> int:
+    async def save(self, entity: AgentConfig, expected_version: int) -> Versioned[AgentConfig]:
         await asyncio.sleep(0)
         return await super().save(entity, expected_version)
 

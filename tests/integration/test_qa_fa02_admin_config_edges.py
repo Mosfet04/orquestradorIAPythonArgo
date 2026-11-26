@@ -18,6 +18,7 @@ from bson import ObjectId
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.team_config import TeamConfig
 from src.domain.entities.tool import Tool
+from src.domain.repositories.versioning import Versioned
 from src.infrastructure.repositories import mongo_base
 from src.infrastructure.web import app_factory
 from src.presentation.routes.admin_config import router as admin_config_router
@@ -312,7 +313,8 @@ async def test_ciclo_get_put_de_tool_com_parametros_post_e_headers_nao_muda_nada
         second = await world.client.get(f"{BASE}/tools/busca", headers=ADMIN)
 
     assert created.status_code == 201 and replaced.status_code == 200
-    assert second.json() == {**first.json(), "version": 2}
+    assert second.json() == {**first.json(), "version": 2, "updated_at": second.json()["updated_at"]}
+    assert second.json()["updated_at"] >= first.json()["updated_at"]
     assert first.json()["headers"] == {"X-Cliente": "***", "X-Outro": "***"}
     assert first.json()["http_method"] == "POST"
     stored = (await world.tools.list_all())[0].entity
@@ -524,7 +526,7 @@ class _YieldingAgents(InMemoryAgentConfigRepository):
         await asyncio.sleep(0)
         return await super().list_all()
 
-    async def save(self, entity: AgentConfig, expected_version: int) -> int:
+    async def save(self, entity: AgentConfig, expected_version: int) -> Versioned[AgentConfig]:
         await asyncio.sleep(0)
         return await super().save(entity, expected_version)
 
@@ -590,7 +592,7 @@ class _YieldingTeams(InMemoryTeamConfigRepository):
         await asyncio.sleep(0)
         return await super().list_all()
 
-    async def save(self, entity: TeamConfig, expected_version: int) -> int:
+    async def save(self, entity: TeamConfig, expected_version: int) -> Versioned[TeamConfig]:
         await asyncio.sleep(0)
         return await super().save(entity, expected_version)
 

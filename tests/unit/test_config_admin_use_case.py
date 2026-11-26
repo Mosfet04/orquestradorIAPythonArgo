@@ -32,7 +32,7 @@ from tests.fakes.repositories import (
 class _LosesCreationRace(InMemoryAgentConfigRepository):
     """Outro processo criou o mesmo id entre a leitura e a gravação."""
 
-    async def save(self, entity: AgentConfig, expected_version: int) -> int:
+    async def save(self, entity: AgentConfig, expected_version: int) -> Versioned[AgentConfig]:
         raise ConfigVersionConflict(entity.id, expected_version)
 
 
@@ -43,7 +43,7 @@ class _YieldingAgents(InMemoryAgentConfigRepository):
         await asyncio.sleep(0)
         return await super().list_all()
 
-    async def save(self, entity: AgentConfig, expected_version: int) -> int:
+    async def save(self, entity: AgentConfig, expected_version: int) -> Versioned[AgentConfig]:
         await asyncio.sleep(0)
         return await super().save(entity, expected_version)
 
