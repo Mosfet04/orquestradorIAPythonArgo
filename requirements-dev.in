@@ -9,6 +9,13 @@
 
 # Garante que pacotes compartilhados com o runtime fiquem na mesma versão do lock de runtime.
 -c requirements.lock
+# E os do extra mcp (F4-02) na versão do lock dele (gere requirements-mcp.lock antes deste).
+-c requirements-mcp.lock
+
+# === Extra mcp nos testes (F4-02) ===
+# O cliente MCP (src/infrastructure/mcp_client/) e o servidor falso em processo (tests/fakes/mcp_server.py)
+# usam o SDK; a suíte roda com o extra instalado. Justificativa da dependência: requirements-mcp.in.
+mcp
 
 # === Testes ===
 pytest>=8.4.0

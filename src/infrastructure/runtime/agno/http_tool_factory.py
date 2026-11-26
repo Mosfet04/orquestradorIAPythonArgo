@@ -7,7 +7,7 @@ import json
 import random
 import re
 import zlib
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
@@ -15,10 +15,10 @@ from urllib.parse import quote
 import httpx
 from agno.tools.function import Function
 
-from src.domain.entities.model_config import FILE_SCHEME, is_secret_ref
+from src.domain.entities.model_config import is_secret_ref
 from src.domain.entities.tool import HttpMethod, ParameterType, Tool, ToolParameter
 from src.domain.ports import ILogger, IToolFactory
-from src.infrastructure.config.secrets import DEFAULT_SECRETS_DIR, SecretResolutionError, resolve_secret
+from src.infrastructure.config.secrets import DEFAULT_SECRETS_DIR, UnresolvedHeaderError, resolve_header_refs
 from src.infrastructure.security.guarded_http import GuardedAsyncTransport, cookieless_jar
 from src.infrastructure.security.ssrf import BlockedDestinationError, DestinationRule
 
@@ -159,6 +159,9 @@ class HttpToolFactory(IToolFactory):
         """Cria uma ``Function`` do agno por tool HTTP; tool inválida é descartada com log."""
         functions: list[Function] = []
         for tool in tools:
+            if tool.is_mcp:  # a route é o servidor MCP, não um endpoint a chamar com http_method
+                self._logger.error("Tool MCP recusada pela fábrica HTTP (vai pela fábrica MCP)", tool_id=tool.id)
+                continue
             invalid = _invalid_route_placeholders(tool)
             if invalid:
                 self._logger.error(
@@ -208,9 +211,9 @@ class HttpToolFactory(IToolFactory):
                 return f"Erro nos argumentos da tool {tool.id}: {exc}"
             try:
                 headers = (
-                    await _resolved_headers(configured_headers, secrets_dir) if has_refs else dict(configured_headers)
+                    await resolve_header_refs(configured_headers, secrets_dir) if has_refs else dict(configured_headers)
                 )
-            except _UnresolvedHeader as exc:
+            except UnresolvedHeaderError as exc:
                 logger.error(
                     "Header por referência da tool não resolvido; a chamada não saiu",
                     tool_id=tool.id,
@@ -220,7 +223,7 @@ class HttpToolFactory(IToolFactory):
                 return f"Erro na tool {tool.id}: header por referência não resolvido ({exc.name})"
             return await _send(shared_client, tool, arguments, headers, limits, logger)
 
-        instructions = _build_instructions(tool)
+        instructions = build_instructions(tool)
         return Function(
             name=tool.id,
             description=tool.description,
@@ -259,7 +262,7 @@ def build_parameters_schema(parameters: list[ToolParameter]) -> dict[str, Any]:
     }
 
 
-def _build_instructions(tool: Tool) -> str | None:
+def build_instructions(tool: Tool) -> str | None:
     """Texto que o agno põe no system message; ``None`` se a tool não tem instruções."""
     text = (tool.instructions or "").strip()
     if not text:
@@ -287,31 +290,6 @@ class _ArgumentError(ValueError):
     def __init__(self, message: str, names: list[str]) -> None:
         super().__init__(message)
         self.names = names
-
-
-class _UnresolvedHeader(Exception):
-    """Referência de header que não resolveu: o nome do header e o tipo do erro (o texto cita variável ou caminho)."""
-
-    def __init__(self, name: str, error_type: str) -> None:
-        super().__init__("header por referência não resolvido")
-        self.name = name
-        self.error_type = error_type
-
-
-async def _resolved_headers(headers: Mapping[str, str], secrets_dir: str) -> dict[str, str]:
-    """Headers com cada referência trocada pelo valor agora; ``file:`` lê o arquivo fora do event loop."""
-    resolved: dict[str, str] = {}
-    for name, value in headers.items():
-        try:
-            if not is_secret_ref(value):
-                resolved[name] = value
-            elif value.startswith(f"{FILE_SCHEME}:"):
-                resolved[name] = await asyncio.to_thread(resolve_secret, value, secrets_dir=secrets_dir)
-            else:
-                resolved[name] = resolve_secret(value, secrets_dir=secrets_dir)  # env: sem I/O
-        except (SecretResolutionError, OSError) as exc:  # OSError: leitura do arquivo que falha no meio
-            raise _UnresolvedHeader(name, type(exc).__name__) from None
-    return resolved
 
 
 def _has_json_type(value: Any, expected: str) -> bool:

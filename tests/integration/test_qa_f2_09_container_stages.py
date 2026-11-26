@@ -28,6 +28,10 @@ from tests.fakes.startup_world import CLEAN_ENV, Events, _AppMongoClient, startu
 # de tools, repositórios de config, RAG hierárquico, db de sessões, fábricas, runtime, casos de uso, controller.
 STAGES = [
     "HttpToolFactory",
+    # F4-02: sessões MCP e o despacho HTTP/MCP das tools, logo depois da fábrica HTTP
+    "McpSessions",
+    "McpToolFactory",
+    "ToolFactoryBySource",
     "MongoAgentConfigRepository",
     "MongoTeamConfigRepository",
     "MongoToolRepository",
@@ -133,7 +137,11 @@ def _assert_agent_wiring(spies: Spies, config: AppConfig, registry: object, embe
     assert agent_kwargs["indexing_service"] is spies.only("DocumentIndexingService").result
     assert agent_kwargs["search_factory"] is spies.only("KnowledgeSearchFactory").result
     assert agent_kwargs["tool_repository"] is spies.only("MongoToolRepository").result
-    assert agent_kwargs["tool_factory"] is spies.only("HttpToolFactory").result
+    assert agent_kwargs["tool_factory"] is spies.only("ToolFactoryBySource").result
+    router_kwargs = spies.only("ToolFactoryBySource").kwargs
+    assert router_kwargs["http"] is spies.only("HttpToolFactory").result
+    assert router_kwargs["mcp"] is spies.only("McpToolFactory").result
+    assert spies.only("McpToolFactory").args[0] is spies.only("McpSessions").result
     assert agent_kwargs["model_factory"] is registry and agent_kwargs["embedder_factory"] is embedders
     assert (agent_kwargs["db_url"], agent_kwargs["db_name"]) == (
         config.mongo_connection_string,

@@ -12,6 +12,7 @@ from typing import Any, cast
 from agno.agent import Agent
 from agno.db.base import AsyncBaseDb
 from agno.knowledge import Knowledge
+from agno.tools.function import Function
 from agno.tools.reasoning import ReasoningTools
 
 from src.application.services.document_indexing_service import DocumentIndexingService
@@ -191,6 +192,7 @@ class AgentFactoryService:
                 )
 
         tools: list[Any] = []
+        names: set[str] = set()
         for tool_config in tool_configs:
             try:
                 created = await self._tool_factory.create_tools_from_configs(
@@ -210,8 +212,29 @@ class AgentFactoryService:
                     agent_id=config.id,
                     tool_id=tool_config.id,
                 )
-            tools.extend(created)
+            tools.extend(self._unique_functions(config.id, tool_config.id, created, names))
         return tools
+
+    def _unique_functions(self, agent_id: str, tool_id: str, created: list[Any], names: set[str]) -> list[Any]:
+        """Tira a ``Function`` cujo nome outra tool do agente já usa (o provider recusaria o request inteiro).
+
+        Vale para HTTP contra MCP e para ``<id>__<nome>`` que colide (``a`` + ``b__c`` contra ``a__b`` + ``c``):
+        fica a que chegou primeiro, e a de depois é recusada com log.
+        """
+        unique: list[Any] = []
+        for item in created:
+            if isinstance(item, Function):
+                if item.name in names:
+                    self._logger.error(
+                        "Função de tool recusada: nome repetido no agente",
+                        agent_id=agent_id,
+                        tool_id=tool_id,
+                        function=item.name,
+                    )
+                    continue
+                names.add(item.name)
+            unique.append(item)
+        return unique
 
     def _log_rejected_doc_name(self, agent_id: str, exc: DocumentPathError) -> None:
         self._logger.error(

@@ -67,7 +67,7 @@ def test_contexto_real_so_tem_allowlist_e_nenhum_segredo():
     files = _context_files()
     assert "app.py" in files and "requirements.lock" in files
     top_level = {f.split("/")[0] for f in files}
-    assert top_level <= {"app.py", "src", "docs", "requirements.lock"}, sorted(top_level)
+    assert top_level <= {"app.py", "src", "docs", "requirements.lock", "requirements-mcp.lock"}, sorted(top_level)
     leaked = [
         f
         for f in files

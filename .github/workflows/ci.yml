@@ -41,6 +41,7 @@ jobs:
           cache: pip
           cache-dependency-path: |
             requirements.lock
+            requirements-mcp.lock
             requirements-dev.lock
 
       - name: Instalar dependências (locks com hash)
@@ -78,6 +79,7 @@ jobs:
           cache: pip
           cache-dependency-path: |
             requirements.lock
+            requirements-mcp.lock
             requirements-dev.lock
 
       - name: Instalar dependências (locks com hash)
@@ -119,6 +121,7 @@ jobs:
           cache: pip
           cache-dependency-path: |
             requirements.lock
+            requirements-mcp.lock
             requirements-dev.lock
 
       - name: Instalar dependências (locks com hash)
@@ -132,6 +135,11 @@ jobs:
       - name: pip-audit
         if: ${{ !cancelled() }}
         run: pip-audit -r requirements.lock --require-hashes --disable-pip
+
+      # Extra opcional mcp (F4-02): fora do lock de runtime, mas instalado na imagem com WITH_MCP=true.
+      - name: pip-audit (extra mcp)
+        if: ${{ !cancelled() }}
+        run: pip-audit -r requirements-mcp.lock --require-hashes --disable-pip
 
   # Job isolado: o segredo nunca divide o runner com checkout, `pip install` ou
   # código do repositório. Só roda em push ou PR do próprio repositório (em PR de

@@ -17,8 +17,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 # Dependências só pelo lock de runtime, com hash. Todo pacote do lock tem wheel para
 # Linux x86_64/aarch64 (cp312), então a imagem não precisa de compilador.
-COPY requirements.lock .
-RUN pip install --no-cache-dir --require-hashes --only-binary=:all: -r requirements.lock
+# Extra opcional mcp (tools de servidor MCP, F4-02): docker build --build-arg WITH_MCP=true .
+ARG WITH_MCP=false
+COPY requirements.lock requirements-mcp.lock ./
+RUN pip install --no-cache-dir --require-hashes --only-binary=:all: -r requirements.lock \
+    && if [ "$WITH_MCP" = "true" ]; then \
+        pip install --no-cache-dir --require-hashes --only-binary=:all: -r requirements.lock -r requirements-mcp.lock; \
+    fi
 
 # Usuário sem privilégios. O código fica com dono root (somente leitura para o app).
 # setup_structlog só faz mkdir de logs/ no cwd (nada grava lá hoje): o diretório já

@@ -94,7 +94,9 @@ This project adheres to a code of conduct. By participating, you are expected to
 |---|---|---|
 | `requirements.in` | hand | Direct runtime dependencies (`agno==3.1.12` exact, others with a minimum version) |
 | `requirements.lock` | `pip-compile` | Every runtime package pinned with `==` and `--hash` |
-| `requirements-dev.in` | hand | Tests and tooling; constrained by `-c requirements.lock` |
+| `requirements-mcp.in` | hand | Optional `mcp` extra (MCP server tools, F4-02); constrained by `-c requirements.lock` |
+| `requirements-mcp.lock` | `pip-compile` | The `mcp` extra pinned with `==` and `--hash` (installed with the runtime lock; image: `--build-arg WITH_MCP=true`) |
+| `requirements-dev.in` | hand | Tests and tooling (and the `mcp` extra); constrained by `-c requirements.lock` and `-c requirements-mcp.lock` |
 | `requirements-dev.lock` | `pip-compile` | Every dev package pinned with `==` and `--hash` |
 | `requirements.txt` | hand | Compatibility shim: `-r requirements.lock` |
 
@@ -105,6 +107,8 @@ Never edit a `.lock` file by hand. Use the `pip-tools` installed by the dev lock
 .venv/bin/pip-compile --upgrade --generate-hashes --allow-unsafe --strip-extras \
     --output-file=requirements.lock requirements.in
 .venv/bin/pip-compile --upgrade --generate-hashes --allow-unsafe --strip-extras \
+    --output-file=requirements-mcp.lock requirements-mcp.in
+.venv/bin/pip-compile --upgrade --generate-hashes --allow-unsafe --strip-extras \
     --output-file=requirements-dev.lock requirements-dev.in
 
 # Or upgrade a single package (repeat on the dev lock if the package is shared)
@@ -113,7 +117,8 @@ Never edit a `.lock` file by hand. Use the `pip-tools` installed by the dev lock
 
 # ALWAYS audit the result and check that both locks install
 .venv/bin/pip-audit -r requirements.lock --require-hashes --disable-pip
-pip install --dry-run --require-hashes -r requirements.lock -r requirements-dev.lock
+.venv/bin/pip-audit -r requirements-mcp.lock --require-hashes --disable-pip
+pip install --dry-run --require-hashes -r requirements.lock -r requirements-mcp.lock -r requirements-dev.lock
 ```
 
 The 2.5.8 to 3.1.12 upgrade of a deployed database (backup, session migration, rollback, contract changes) is in [docs/runbooks/f3-agno-3.md](docs/runbooks/f3-agno-3.md); it is in Portuguese.
@@ -142,7 +147,8 @@ Notes:
 
 - Locks are generated on **Linux / CPython 3.12** and validated for Linux CPython 3.11 and 3.12 (Docker image and CI). `pip-compile` resolves for the machine it runs on: Windows-only transitive dependencies are dropped. That is why `colorama` is listed explicitly in `requirements.in`. On native Windows, if `--require-hashes` still fails, use WSL/Docker or regenerate locally (and do not commit that lock).
 - `uvloop` is declared with `sys_platform != "win32"`. Note: `app.py` still imports `uvloop` unconditionally, so it fails on native Windows until roadmap item F1-03.
-- Optional extras are **not installed by default** and stay out of the lock: `PyJWT` (AgentOS JWT auth), `mcp` (MCP tools), `anthropic`, `groq` (model providers). To adopt one, add it to `requirements.in` with a minimum version and regenerate.
+- Optional extras are **not installed by default** and stay out of the lock: `PyJWT` (AgentOS JWT auth), `anthropic`, `groq` (model providers). To adopt one, add it to `requirements.in` with a minimum version and regenerate.
+- The `mcp` extra (F4-02) has its own lock, `requirements-mcp.lock`, compiled after the runtime lock and before the dev lock (which is constrained by it); `mcp<2` because 2.x moves to `httpx2`, outside the guarded transport. CI audits it with `pip-audit -r requirements-mcp.lock --require-hashes --disable-pip`.
 - A new dependency needs a justification in the PR (license, maintenance, discarded alternatives).
 - Upper bounds in `requirements.in` are deliberate and explained next to each one: `fastapi<0.137` (agno 2.5.8 breaks with the `_IncludedRouter` introduced in 0.137), major caps on SDKs consumed by agno (`openai<3`, `google-genai<2`, `ag-ui-protocol<0.2`, `openinference-instrumentation-agno<0.2`), `httpx<0.29` (the guarded transport of F4-01 replaces an httpx internal; `tests/golden/test_f4_01_httpx_internals_golden.py` pins it; `httpcore<2` is declared because it is imported directly). The agno 3.1.12 bump (F3-05) kept them, so the lock only carries what agno changes; lifting one is its own item. Do not lift them in a routine `--upgrade`.
 

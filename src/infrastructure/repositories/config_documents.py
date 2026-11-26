@@ -385,7 +385,13 @@ def _tool(data: Document, strict: bool) -> Tool:
         instructions=_of_type(data.get("instructions", ""), "instructions", _OPTIONAL_TEXT, strict),
         headers=_headers(data.get("headers", {})),
         active=_of_type(data.get("active", True), "active", bool, strict),
+        mcp_tools=_mcp_tools(data.get("mcp_tools")),
     )
+
+
+def _mcp_tools(value: object) -> Any:
+    """``mcp_tools`` (F4-02) como cópia em ``dict``; nome e hash são conferidos pela entidade."""
+    return dict(value) if isinstance(value, Mapping) else value
 
 
 def log_invalid_document(

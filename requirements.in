@@ -89,7 +89,7 @@ colorama>=0.4.6
 # === Extras opcionais (NÃO instalados por padrão, fora do lock) ===
 # Só são necessários para os providers/recursos correspondentes:
 #   PyJWT      -> autenticação JWT do AgentOS (agno[os])
-#   mcp        -> tools MCP (agno[mcp])
+#   mcp        -> tools de servidor MCP (F4-02): lock próprio, requirements-mcp.in/requirements-mcp.lock
 #   anthropic  -> provider "anthropic" (agno[anthropic])
 #   groq       -> provider "groq" (agno[groq])
 # Para adotar um deles: acrescente aqui com versão mínima e regenere o lock.

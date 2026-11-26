@@ -8,9 +8,9 @@ import pytest
 from src.domain.entities.tool import HttpMethod, ParameterType, Tool, ToolParameter
 from src.infrastructure.runtime.agno.http_tool_factory import (
     HttpToolFactory,
-    _build_instructions,
     _resolve_url,
     _serialize,
+    build_instructions,
     build_parameters_schema,
 )
 
@@ -141,13 +141,13 @@ class TestParametersSchema:
 
 class TestBuildInstructions:
     def test_with_instructions(self):
-        assert _build_instructions(_make_tool(instructions="  Use com cuidado ")) == (
+        assert build_instructions(_make_tool(instructions="  Use com cuidado ")) == (
             "Instruções da tool test-tool: Use com cuidado"
         )
 
     @pytest.mark.parametrize("instructions", [None, "", "   "])
     def test_without_instructions(self, instructions):
-        assert _build_instructions(_make_tool(instructions=instructions)) is None
+        assert build_instructions(_make_tool(instructions=instructions)) is None
 
 
 # ── http_function execution ─────────────────────────────────────────

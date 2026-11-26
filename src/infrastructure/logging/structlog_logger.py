@@ -213,6 +213,19 @@ def add_service_metadata(logger, method_name, event_dict):
     return event_dict
 
 
+_SHA256_HEX = re.compile(r"[0-9a-f]{64}")
+
+
+def _is_sha256_hash_field(key: str, value: Any) -> bool:
+    """Campo ``*_hash`` com SHA-256 em hex minúsculo (o hash de schema das tools MCP, F4-02).
+
+    Exceção estreita ao padrão ``aws_secret_key`` (40 caracteres), que mascarava 40 dos 64 caracteres do hash que
+    o operador copia do log para a config. Hex minúsculo não é a forma de uma chave AWS (base64 misto); nome
+    sensível (``secret_hash``, ``token_hash``...) continua mascarado antes desta checagem.
+    """
+    return key.endswith("_hash") and isinstance(value, str) and _SHA256_HEX.fullmatch(value) is not None
+
+
 def sanitize_log_data(logger, method_name, event_dict):
     """Sanitiza dados sensíveis nos logs."""
     # Campos que não devem ser sanitizados (metadados do sistema)
@@ -247,7 +260,7 @@ def sanitize_log_data(logger, method_name, event_dict):
                     event_dict[key] = f"***MASKED***[hash:{value_hash}]"
                 else:
                     event_dict[key] = "***MASKED***"
-            else:
+            elif not _is_sha256_hash_field(key_lower, value):
                 # Para campos não sensíveis, aplicar sanitização geral
                 event_dict[key] = DataSanitizer.sanitize_data(value)
 

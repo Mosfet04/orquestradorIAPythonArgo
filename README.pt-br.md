@@ -101,12 +101,14 @@ python app.py
 |---|---|
 | `requirements.in` | Dependências diretas de runtime (`agno==3.1.12` exato) |
 | `requirements.lock` | Gerado por `pip-compile --generate-hashes`; versões exatas + hashes |
-| `requirements-dev.in` / `requirements-dev.lock` | Testes e ferramentas de qualidade (pytest, pytest-randomly, pytest-xdist, ruff, mypy, import-linter, bandit, pip-audit, diff-cover, respx, pip-tools) |
+| `requirements-mcp.in` / `requirements-mcp.lock` | Extra opcional `mcp` (tools de servidor MCP), com `-c requirements.lock` |
+| `requirements-dev.in` / `requirements-dev.lock` | Testes e ferramentas de qualidade (pytest, pytest-randomly, pytest-xdist, ruff, mypy, import-linter, bandit, pip-audit, diff-cover, respx, pip-tools) e o extra `mcp` |
 | `requirements.txt` | Só compatibilidade: `-r requirements.lock` |
 
 - O lock é gerado em Linux/CPython 3.12 e validado para Linux CPython 3.11/3.12 (Docker e CI). No Windows nativo, se o `--require-hashes` falhar, use WSL/Docker ou regenere o lock localmente.
 - `uvloop` só é instalado fora do Windows (`sys_platform != "win32"`); o `app.py` o importa com guarda e só o usa fora do Windows (no Windows, loop padrão).
-- Extras opcionais, **não instalados por padrão** (fora do lock): `PyJWT` (auth JWT do AgentOS), `mcp` (tools MCP), `anthropic` e `groq` (providers de modelo). Para adotar um deles, acrescente-o ao `requirements.in` e regenere o lock. Sem o pacote, agente/team com aquele provider não carrega e o log diz qual pacote instalar (ex.: `pip install groq`).
+- Extras opcionais, **não instalados por padrão** (fora do lock): `PyJWT` (auth JWT do AgentOS), `anthropic` e `groq` (providers de modelo). Para adotar um deles, acrescente-o ao `requirements.in` e regenere o lock. Sem o pacote, agente/team com aquele provider não carrega e o log diz qual pacote instalar (ex.: `pip install groq`).
+- Extra `mcp` (tools de servidor MCP, F4-02): lock próprio com hash, `requirements-mcp.in`/`requirements-mcp.lock` (`mcp<2`), fora do lock de runtime: `pip install --require-hashes -r requirements.lock -r requirements-mcp.lock` (imagem: `docker build --build-arg WITH_MCP=true .`). Sem ele o app sobe e a tool MCP é recusada com log que diz o que instalar. O lock de dev já o inclui (a suíte testa o cliente MCP).
 - Nunca edite um `.lock` à mão. Comandos de regeneração: [CONTRIBUTING.md](CONTRIBUTING.md#dependencies-and-lock-files).
 
 ### Com Docker Compose
@@ -913,6 +915,32 @@ Cada documento define uma ferramenta HTTP que agentes podem usar:
 - Na chamada (todo store, inclusive documento gravado antes e YAML): um cliente HTTP para todas as tools, com o destino conferido a cada conexão nova pela mesma regra da escrita (host público, de `TOOL_ROUTE_ALLOWLIST` ou loopback no modo dev; metadata nunca) e o TCP aberto no IP conferido (fecha DNS rebinding; sem proxy do ambiente). Destino recusado: o modelo recebe `Erro na tool <id>: destino recusado pela guarda de rede`. Limites: 30 s por request (por operação do httpx e como prazo total de cada tentativa), corpo da resposta até 1 MiB depois de descomprimido (acima, `resposta acima do limite de ... bytes`; gzip/deflate são descomprimidos com saída limitada, outro `Content-Encoding` é recusado); o cliente compartilhado não guarda cookie (o `Set-Cookie` de uma tool não vai na chamada de outra); retry com backoff exponencial e jitter (até 2 repetições) em falha transiente ou 502/503/504, só em GET/PUT/DELETE ou quando a conexão nem abriu. Falha de rede volta ao modelo só com o tipo do erro. Placeholder `{x}` no esquema ou no host recusa a tool na carga; parâmetro de rota vazio, `.` ou `..` é recusado sem chamar o upstream; a query fixa da `route` é mantida junto dos argumentos de GET/DELETE.
 - Escrita pela API admin (`POST`/`PUT`/restauração de tool; documento gravado antes segue lido como está): a `route` tem de ser `http(s)://host[:porta]/...` com host fixo (`{x}` só no caminho e na query), sem credencial, espaço nem `\`; o host tem de ser público (IP literal ou nome que resolve só para IP público, conferido uma vez na escrita), de `TOOL_ROUTE_ALLOWLIST` (aceita IP privado) ou, no modo dev local, loopback; metadata de nuvem e link-local nunca (senão 422 `route`). Header: nome token HTTP e valor sem quebra de linha ou caractere de controle; referência só para host da `TOOL_ROUTE_ALLOWLIST` (ou loopback no modo dev), para quem tem a chave admin não mandar as chaves do processo para um host seu; nome sensível (`Authorization`, `Proxy-Authorization`, `Cookie`, terminado em `-Key`/`_Key`/`-Token`/`_Token`) não aceita valor novo em texto, só referência ou o `***` que mantém o gravado (senão 422 `headers`). O `GET` mostra a referência (não é segredo, como o `api_key_ref`) e mascara o texto.
 - A função da tool é assíncrona: use `Agent.arun` (o AgentOS já usa). No `Agent.run` síncrono o agno recusa o run com erro explícito.
+
+#### Tool de servidor MCP (`mcp_tools`, F4-02)
+
+Um documento de `tools` com `mcp_tools` aponta para um servidor MCP por **streamable HTTP** (só `http(s)`: nada de stdio nem processo local) e diz quais tools dele o agente pode usar, cada uma com o hash do schema fixado:
+
+```json
+{
+  "id": "github",
+  "name": "GitHub MCP",
+  "description": "Servidor MCP do GitHub",
+  "route": "https://mcp.example.com/mcp",
+  "headers": {"Authorization": "env:GITHUB_API_KEY"},
+  "mcp_tools": {
+    "search_issues": "<sha256 hex do schema>",
+    "get_issue": "<sha256 hex do schema>"
+  },
+  "active": true
+}
+```
+
+- Exige o extra `mcp` (ver "Dependências"); sem ele, o agente sobe sem a tool e o log diz o que instalar. `parameters` não é declarado (vem do servidor) e `http_method` é ignorado.
+- Allowlist: só as tools de `mcp_tools` chegam ao agente (nome `<id>__<nome no servidor>`, ex.: `github__search_issues`; nome na allowlist com letras, dígitos, `_` e `-`, até 64; o nome exposto também tem de caber em 64, senão a tool é recusada com log; nome de função repetido no agente, inclusive contra uma tool HTTP, recusa com log a que vem depois); o resto do servidor nunca é exposto nem chamado.
+- Hash fixado: SHA-256 (hex minúsculo) do JSON canônico (chaves ordenadas, sem espaço, UTF-8) de `{"name", "description", "inputSchema"}` da tool como o servidor a lista: é o que o modelo vê. Schema divergente (ex.: descrição trocada para injetar instrução) recusa a tool, inclusive a de um agente já montado; o log leva `tool_id`, `mcp_tool`, `expected_hash` e `observed_hash` (nunca o schema). Para obter o hash: `python -c "from src.infrastructure.mcp_client.sessions import schema_hash; print(schema_hash(nome, descricao, input_schema))"` com o que o servidor lista, ou o `observed_hash` do log depois de revisar a tool. Nome repetido no servidor também recusa.
+- Destino: a `route` passa pela mesma guarda das tools HTTP, na escrita pela API (422 `route`) e na conexão (host público, de `TOOL_ROUTE_ALLOWLIST` ou loopback no modo dev; metadata nunca; TCP no IP conferido; sem proxy do ambiente nem cookie). O SDK só segue redirect na mesma origem. Headers por referência (`env:`/`file:`), com as mesmas regras da escrita, são resolvidos ao abrir a sessão (rotação vale na reconexão).
+- Ciclo de vida: uma sessão por servidor, aberta na montagem do primeiro agente que o usa (startup, dentro do lifespan) e encerrada no shutdown (com o `DELETE` da sessão, se o servidor deu id). Falha numa chamada fecha a sessão e a chamada seguinte reabre, conferindo os hashes de novo; mudar `route`/`headers` fecha a sessão antiga. Cada montagem (startup, reload) lista as tools de novo.
+- Limites: 30 s para abrir a sessão e por chamada; cada resposta HTTP do servidor até 4 MiB, sem compressão (o cliente pede `identity`; resposta comprimida ou acima do teto vira erro curto e a sessão reabre na chamada seguinte); o stream GET de notificações do servidor não é aberto; resultado até 1 Mi caracteres (acima, erro curto). Texto do resultado vai ao modelo; outro conteúdo (imagem, áudio, recurso) vira `[conteúdo <tipo> omitido]`. Erro da tool (`isError`) chega como `Erro na tool MCP <id>/<nome>: <texto do servidor>`; falha de rede ou de protocolo, só com o tipo do erro. As `instructions` que o servidor manda no `initialize` não vão ao modelo; as `instructions` do documento vão uma vez ao system message.
 
 ### Collection: `teams_config`
 

@@ -16,7 +16,7 @@ import httpx
 import pytest
 
 from src.domain.entities.tool import HttpMethod, ParameterType, Tool, ToolParameter
-from src.infrastructure.runtime.agno import http_tool_factory
+from src.infrastructure.config import secrets
 from src.infrastructure.runtime.agno.http_tool_factory import HttpToolFactory
 from tests.fakes.http_upstream import RecordingUpstream
 from tests.fakes.logger import RecordingLogger
@@ -253,7 +253,7 @@ async def test_tool_sem_referencia_nao_le_arquivo_nem_ambiente(
     def boom(*_: object, **__: object) -> str:
         raise AssertionError("não deveria resolver segredo")
 
-    monkeypatch.setattr(http_tool_factory, "resolve_secret", boom)
+    monkeypatch.setattr(secrets, "resolve_secret", boom)
 
     await _call(_tool({"Accept": "text/plain", "X-Nome": "valor"}), RecordingLogger(), "/run/secrets")
 
@@ -266,13 +266,13 @@ async def test_leitura_do_arquivo_roda_fora_do_event_loop(
     (tmp_path / "cep").write_text(SECRET)
     loop_thread = threading.get_ident()
     threads: list[int] = []
-    real = http_tool_factory.resolve_secret
+    real = secrets.resolve_secret
 
     def spy(ref: str, **kwargs: Any) -> str:
         threads.append(threading.get_ident())
         return real(ref, **kwargs)
 
-    monkeypatch.setattr(http_tool_factory, "resolve_secret", spy)
+    monkeypatch.setattr(secrets, "resolve_secret", spy)
 
     await _call(_tool({"X-Api-Key": f"file:{tmp_path}/cep"}), RecordingLogger(), str(tmp_path))
 
