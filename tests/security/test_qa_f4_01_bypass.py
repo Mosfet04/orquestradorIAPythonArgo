@@ -28,7 +28,7 @@ from tests.fakes import RecordingLogger
 from tests.fakes.dns import PUBLIC_IP
 from tests.fakes.network_backend import RecordingAsyncBackend, http_response
 
-SECRET = "sk-qa-f401-valor-que-nunca-sai"  # noqa: S105 - marcador de vazamento, não é segredo
+LEAK_MARKER = "sk-qa-f401-valor-que-nunca-sai"  # marcador de vazamento, não é segredo
 REFUSED = "Erro na tool t: destino recusado pela guarda de rede"
 
 
@@ -245,7 +245,7 @@ async def test_modo_dev_local_libera_so_o_loopback_literal(
 async def test_redirect_para_metadata_nao_e_seguido_e_o_segredo_nao_vai_junto(
     monkeypatch: pytest.MonkeyPatch, status: int, method: HttpMethod
 ):
-    monkeypatch.setenv("QAF401_API_KEY", SECRET)
+    monkeypatch.setenv("QAF401_API_KEY", LEAK_MARKER)
     backend = RecordingAsyncBackend(
         http_response(status, b"", {"Location": "http://169.254.169.254/latest/meta-data"})
     )
@@ -275,8 +275,8 @@ def _failing(exc: Exception) -> RecordingAsyncBackend:
     "scenario", ["destino_recusado", "connect_recusado", "connect_com_texto_do_segredo", "http_500"]
 )
 async def test_segredo_de_header_nao_aparece_em_resultado_nem_em_log(monkeypatch: pytest.MonkeyPatch, scenario: str):
-    monkeypatch.setenv("QAF401_API_KEY", SECRET)
-    leaking = httpcore.ConnectError(f"Authorization: Bearer {SECRET}")
+    monkeypatch.setenv("QAF401_API_KEY", LEAK_MARKER)
+    leaking = httpcore.ConnectError(f"Authorization: Bearer {LEAK_MARKER}")
     stack = {
         "destino_recusado": _Stack(dns=_Dns(["10.0.0.5"])),
         "connect_recusado": _Stack(backend=RecordingAsyncBackend(refuse=(PUBLIC_IP,))),
@@ -286,8 +286,8 @@ async def test_segredo_de_header_nao_aparece_em_resultado_nem_em_log(monkeypatch
     result = await stack.call(_tool(headers={"Authorization": "env:QAF401_API_KEY"}))
 
     assert result.startswith("Erro")
-    assert SECRET not in result
-    assert SECRET not in stack.logged()
+    assert LEAK_MARKER not in result
+    assert LEAK_MARKER not in stack.logged()
     if scenario == "destino_recusado":
         assert stack.backend.sent() == b""  # o segredo nem chegou ao fio do destino recusado
 

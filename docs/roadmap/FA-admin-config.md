@@ -69,6 +69,7 @@ Resultado (decisão registrada): campos opcionais planos nas entidades, com o de
 
 Origem: QA1-09 do playground (`../playgroundOrquestrador/docs/roadmap/QA1-correcoes.md`; decisões D-QA1-09-1 e D-QA1-09-0 em `docs/decisions/0037-qa1-correcoes.md`): a coluna "Atualizado" das listas de agents, teams e tools precisa da data da última gravação. Hoje o `MongoConfigRepository.save` grava `updated_at` (datetime UTC, `mongo_base.py`) em cada documento, mas a resposta não o devolve: `_body` em `src/presentation/routes/admin_config.py` devolve só `{**item.entity, "version"}`, e `Versioned` não carrega o campo.
 Escopo:
+
 - `updated_at` na lista (`GET /admin/config/{agents,teams,tools}`) e no GET por id, e também nas respostas de POST/PUT/DELETE lógico/restore, que já usam `_body`.
 - Documento sem o campo (store YAML, legado do seed, valor que não é datetime) ⇒ `updated_at: null`, sem erro e sem isolar o documento.
 - O `updated_at` continua metadado do documento, não campo da entidade: o modo estrito segue recusando-o no corpo de escrita, a não ser que ele venha do ciclo GET → PUT da UI, como o `version`. Se a escrita passar a descartá-lo como faz com o `version`, isso é decisão a levar ao usuário.

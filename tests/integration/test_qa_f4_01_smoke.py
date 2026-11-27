@@ -36,8 +36,8 @@ from tests.fakes.web import LOOPBACK_BASE_URL, LOOPBACK_CLIENT
 RUN_KEY = "qaf401-run-key-" + "r" * 21
 ADMIN_KEY = "qaf401-admin-key-" + "a" * 19
 RUN = {"Authorization": f"Bearer {RUN_KEY}"}
-SECRET = "tok-qaf401-valor-que-nunca-sai"  # noqa: S105 - marcador de vazamento, não é segredo
-SECRET_ENV = "QAF401_API_KEY"  # noqa: S105 - nome da variável de teste
+LEAK_MARKER = "tok-qaf401-valor-que-nunca-sai"  # marcador de vazamento, não é segredo
+REF_ENV_NAME = "QAF401_API_KEY"  # nome da variável de teste
 
 CONFIG = """
 agents:
@@ -125,7 +125,7 @@ def _smoke_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, script: list[Any
         "APP_HOST": "127.0.0.1",
         "API_KEY_RUN": RUN_KEY,
         "API_KEY_ADMIN": ADMIN_KEY,
-        SECRET_ENV: SECRET,
+        REF_ENV_NAME: LEAK_MARKER,
     }.items():
         monkeypatch.setenv(name, value)
 
@@ -190,8 +190,8 @@ def test_tool_publica_sai_pelo_ip_conferido_interna_e_recusada_e_o_shutdown_fech
     # só a tool pública (e a 1ª chamada do rebind) abriram TCP, no IP conferido; a interna e o rebind não
     assert connects == [(PUBLIC_IP, 443), (PUBLIC_IP, 443)]
     assert b"GET /cep/01001000 HTTP/1.1" in wire and b"Host: api.example.invalid\r\n" in wire
-    assert f"X-Token: {SECRET}".encode() in wire  # a referência foi resolvida e foi ao destino público
-    assert wire.count(SECRET.encode()) == 1  # e só a ele: nem à tool interna, nem ao rebind
+    assert f"X-Token: {LEAK_MARKER}".encode() in wire  # a referência foi resolvida e foi ao destino público
+    assert wire.count(LEAK_MARKER.encode()) == 1  # e só a ele: nem à tool interna, nem ao rebind
     assert any("Praca da Se" in content for content in tool_results)
     assert sum("destino recusado pela guarda de rede" in content for content in tool_results) == 2
     assert dns_calls == [
@@ -201,7 +201,7 @@ def test_tool_publica_sai_pelo_ip_conferido_interna_e_recusada_e_o_shutdown_fech
         "rebind.example.invalid",  # 2ª chamada: a conexão confere de novo e recusa (metadata)
     ]
     for visible in (run.text, "\n".join(tool_results), caplog.text):
-        assert SECRET not in visible
+        assert LEAK_MARKER not in visible
         assert "10.0.0.5" not in visible and "169.254.169.254" not in visible
     # um único transporte das tools, fechado exatamente uma vez no shutdown (o dos modelos não conta)
     assert len(smoke.tool_transports) == 1

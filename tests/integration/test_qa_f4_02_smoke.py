@@ -35,8 +35,8 @@ from tests.fakes.web import LOOPBACK_BASE_URL, LOOPBACK_CLIENT
 RUN_KEY = "qaf402-run-key-" + "r" * 21
 ADMIN_KEY = "qaf402-admin-key-" + "a" * 19
 RUN = {"Authorization": f"Bearer {RUN_KEY}"}
-SECRET = "tok-qaf402-valor-que-nunca-sai"  # noqa: S105 - marcador de vazamento, não é segredo
-SECRET_ENV = "QAF402_API_KEY"  # noqa: S105 - nome da variável de teste
+LEAK_MARKER = "tok-qaf402-valor-que-nunca-sai"  # marcador de vazamento, não é segredo
+REF_ENV_NAME = "QAF402_API_KEY"  # nome da variável de teste
 
 SEARCH = mcp_tool("search", "Busca issues", {"q": {"type": "string"}})
 DELETE_REPO = mcp_tool("delete_repo", "Apaga o repositório")
@@ -58,7 +58,7 @@ tools:
     description: Servidor MCP
     route: https://mcp.example.com/mcp
     http_method: GET
-    headers: {{Authorization: "env:{SECRET_ENV}"}}
+    headers: {{Authorization: "env:{REF_ENV_NAME}"}}
     mcp_tools: {{search: "{SEARCH_HASH}"}}
     active: true
   - id: outro
@@ -105,7 +105,7 @@ def _smoke_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, script: list[Any
         "API_KEY_RUN": RUN_KEY,
         "API_KEY_ADMIN": ADMIN_KEY,
         "TOOL_ROUTE_ALLOWLIST": "mcp.example.com",  # header por referência só vai a host do operador
-        SECRET_ENV: SECRET,
+        REF_ENV_NAME: LEAK_MARKER,
     }.items():
         monkeypatch.setenv(name, value)
 
@@ -171,10 +171,10 @@ def test_sessao_abre_no_startup_so_a_tool_conferida_chega_ao_modelo_e_o_shutdown
     assert run.json()["content"] == "fim"
     assert exposed == [("gh__search",), ("gh__search",)]  # nada de delete_repo, nem da tool de hash divergente
     assert calls == [("search", {"q": "bug"})]
-    assert call_auth == {SECRET}  # a referência foi resolvida e foi ao servidor declarado
+    assert call_auth == {LEAK_MARKER}  # a referência foi resolvida e foi ao servidor declarado
     assert any("ok search" in content for content in tool_results)
     for visible in (run.text, "\n".join(tool_results), caplog.text):
-        assert SECRET not in visible
+        assert LEAK_MARKER not in visible
     # o hash divergente foi recusado com log (nunca o schema), e o app subiu
     assert "diverge do hash fixado" in caplog.text
     assert "Apaga o repositório" not in caplog.text

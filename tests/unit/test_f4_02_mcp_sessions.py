@@ -22,7 +22,7 @@ from src.infrastructure.mcp_client.sessions import (
 from tests.fakes.logger import RecordingLogger
 from tests.fakes.mcp_server import FAKE_MCP_URL, FakeMcpServer, mcp_tool
 
-SECRET = "valor-de-teste-do-header"  # noqa: S105 - marcador de vazamento, não é segredo
+LEAK_MARKER = "valor-de-teste-do-header"  # marcador de vazamento, não é segredo
 
 
 def _hash(tool: types.Tool) -> str:
@@ -182,7 +182,7 @@ async def test_tool_fora_da_allowlist_nao_e_chamada():
 
 
 async def test_headers_por_referencia_resolvidos_na_conexao_sem_vazar(monkeypatch):
-    monkeypatch.setenv("GITHUB_API_KEY", SECRET)
+    monkeypatch.setenv("GITHUB_API_KEY", LEAK_MARKER)
     logger = RecordingLogger()
     async with FakeMcpServer([SEARCH]) as server:
         sessions = _sessions(server, logger)
@@ -193,8 +193,8 @@ async def test_headers_por_referencia_resolvidos_na_conexao_sem_vazar(monkeypatc
         finally:
             await sessions.aclose()
 
-    assert {r.headers["authorization"] for r in server.requests} == {SECRET}
-    assert SECRET not in repr(logger.records)
+    assert {r.headers["authorization"] for r in server.requests} == {LEAK_MARKER}
+    assert LEAK_MARKER not in repr(logger.records)
 
 
 async def test_header_que_nao_resolve_recusa_o_servidor_sem_conectar(monkeypatch):

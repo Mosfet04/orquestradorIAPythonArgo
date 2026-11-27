@@ -21,12 +21,12 @@ from src.infrastructure.runtime.agno.mcp_tool_factory import McpToolFactory
 from tests.fakes.logger import LoggedRecord, RecordingLogger
 from tests.fakes.mcp_server import FAKE_MCP_URL, FakeMcpServer, mcp_tool
 
-HEADER_SECRET = "valor-do-header-resolvido-f403"  # noqa: S105 - marcador de vazamento
+LEAK_HEADER_VALUE = "valor-do-header-resolvido-f403"  # marcador de vazamento
 ARGUMENT_VALUE = "cpf-123.456.789-09-f403"
 BODY_TEXT = "corpo-da-resposta-f403"
 EXCEPTION_TEXT = "texto-da-excecao-f403"
 UNDECLARED_NAME = "nome-inventado-pelo-modelo-f403"
-MARKERS = (HEADER_SECRET, ARGUMENT_VALUE, BODY_TEXT, EXCEPTION_TEXT, UNDECLARED_NAME)
+MARKERS = (LEAK_HEADER_VALUE, ARGUMENT_VALUE, BODY_TEXT, EXCEPTION_TEXT, UNDECLARED_NAME)
 
 SEARCH = mcp_tool("search", "Busca issues", {"q": {"type": "string"}})
 
@@ -51,13 +51,13 @@ def _http_tool() -> Tool:
         route="https://api.example.com/cadastro",
         http_method=HttpMethod.POST,
         parameters=[ToolParameter(name="cpf", type=ParameterType.STRING, description="CPF", required=True)],
-        headers={"Authorization": "env:CADASTRO_API_KEY", "X-Fixo": HEADER_SECRET},
+        headers={"Authorization": "env:CADASTRO_API_KEY", "X-Fixo": LEAK_HEADER_VALUE},
     )
 
 
 @pytest.mark.parametrize("outcome", ["ok", "http_error", "exception", "refused"])
 async def test_evento_http_nao_leva_header_argumento_corpo_nem_excecao(monkeypatch, outcome: str):
-    monkeypatch.setenv("CADASTRO_API_KEY", HEADER_SECRET)
+    monkeypatch.setenv("CADASTRO_API_KEY", LEAK_HEADER_VALUE)
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
