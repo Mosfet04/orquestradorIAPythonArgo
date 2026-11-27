@@ -2,17 +2,15 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
-
 import httpx
 import pytest
 
 from src.domain.entities.tool import HttpMethod, ParameterType, Tool, ToolParameter
 from src.infrastructure.runtime.agno.http_tool_factory import (
     HttpToolFactory,
-    _build_instructions,
     _resolve_url,
     _serialize,
+    build_instructions,
     build_parameters_schema,
 )
 
@@ -99,17 +97,13 @@ class TestResolveUrl:
 
 class TestSerialize:
     def test_json_response(self):
-        resp = MagicMock(spec=httpx.Response)
-        resp.json.return_value = {"status": "ok"}
-        result = _serialize(resp)
-        assert "ok" in result
+        assert _serialize(b'{"status": "ok"}', "utf-8") == "{'status': 'ok'}"
 
     def test_text_fallback(self):
-        resp = MagicMock(spec=httpx.Response)
-        resp.json.side_effect = ValueError("not json")
-        resp.text = "plain text"
-        result = _serialize(resp)
-        assert result == "plain text"
+        assert _serialize(b"plain text", "utf-8") == "plain text"
+
+    def test_invalid_bytes_are_replaced(self):
+        assert _serialize(b"ok \xff", "utf-8") == "ok \ufffd"
 
 
 # ── schema e instruções ─────────────────────────────────────────────
@@ -147,127 +141,77 @@ class TestParametersSchema:
 
 class TestBuildInstructions:
     def test_with_instructions(self):
-        assert _build_instructions(_make_tool(instructions="  Use com cuidado ")) == (
+        assert build_instructions(_make_tool(instructions="  Use com cuidado ")) == (
             "Instruções da tool test-tool: Use com cuidado"
         )
 
     @pytest.mark.parametrize("instructions", [None, "", "   "])
     def test_without_instructions(self, instructions):
-        assert _build_instructions(_make_tool(instructions=instructions)) is None
+        assert build_instructions(_make_tool(instructions=instructions)) is None
 
 
 # ── http_function execution ─────────────────────────────────────────
 
 
 class TestHttpFunction:
-    async def _get_entrypoint(self, factory, tool):
-        """Helper: cria a ``Function`` e retorna o entrypoint dela."""
+    """Upstream: ``httpx.MockTransport`` no ``transport=`` da fábrica (F4-01: cliente compartilhado)."""
+
+    async def _get_entrypoint(self, mock_logger, tool, handler):
+        """Helper: cria a ``Function`` sobre o upstream falso e retorna o entrypoint dela e os requests vistos."""
+        seen: list[httpx.Request] = []
+
+        def record(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return handler(request)
+
+        factory = HttpToolFactory(logger=mock_logger, transport=httpx.MockTransport(record), retry_backoff=0.0)
         (fn_obj,) = await factory.create_tools_from_configs([tool])
         assert fn_obj.name == "test-tool"
-        return fn_obj.entrypoint
+        return fn_obj.entrypoint, seen
 
-    async def test_get_request_success(self, factory):
+    async def test_get_request_success(self, mock_logger):
         tool = _make_tool(http_method=HttpMethod.GET, parameters=[_param("q")])
-        fn = await self._get_entrypoint(factory, tool)
+        fn, seen = await self._get_entrypoint(mock_logger, tool, lambda r: httpx.Response(200, json={"result": "ok"}))
 
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"result": "ok"}
-        mock_response.raise_for_status = MagicMock()
+        assert await fn(q="test") == "{'result': 'ok'}"
+        assert str(seen[0].url) == "http://example.com/api/test?q=test"
 
-        with patch("httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.request = AsyncMock(return_value=mock_response)
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client_cls.return_value = mock_client
-
-            result = await fn(q="test")
-            assert "ok" in result
-
-    async def test_post_request_success(self, factory):
+    async def test_post_request_success(self, mock_logger):
         tool = _make_tool(http_method=HttpMethod.POST, parameters=[_param("data")])
-        fn = await self._get_entrypoint(factory, tool)
+        fn, seen = await self._get_entrypoint(mock_logger, tool, lambda r: httpx.Response(201, json={"created": True}))
 
-        mock_response = MagicMock()
-        mock_response.status_code = 201
-        mock_response.json.return_value = {"created": True}
-        mock_response.raise_for_status = MagicMock()
+        assert await fn(data="payload") == "{'created': True}"
+        assert seen[0].content == b'{"data":"payload"}'
 
-        with patch("httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.request = AsyncMock(return_value=mock_response)
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client_cls.return_value = mock_client
-
-            result = await fn(data="payload")
-            assert "created" in result
-
-    async def test_http_status_error(self, factory):
+    async def test_http_status_error(self, mock_logger):
         tool = _make_tool(http_method=HttpMethod.GET)
-        fn = await self._get_entrypoint(factory, tool)
+        fn, _ = await self._get_entrypoint(mock_logger, tool, lambda r: httpx.Response(404, text="Not Found"))
 
-        mock_response = MagicMock()
-        mock_response.status_code = 404
-        mock_response.text = "Not Found"
-        error = httpx.HTTPStatusError("404", request=MagicMock(), response=mock_response)
+        assert await fn() == "Erro HTTP 404: Not Found"
 
-        with patch("httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.request = AsyncMock(side_effect=error)
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client_cls.return_value = mock_client
-
-            result = await fn()
-            assert "Erro HTTP 404" in result
-
-    async def test_request_error(self, factory):
+    async def test_request_error(self, mock_logger):
         tool = _make_tool(http_method=HttpMethod.GET)
-        fn = await self._get_entrypoint(factory, tool)
 
-        error = httpx.RequestError("timeout", request=MagicMock())
+        def fail(request: httpx.Request) -> httpx.Response:
+            raise httpx.RequestError("timeout", request=request)
 
-        with patch("httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.request = AsyncMock(side_effect=error)
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client_cls.return_value = mock_client
+        fn, _ = await self._get_entrypoint(mock_logger, tool, fail)
 
-            result = await fn()
-            assert result == "Erro na requisição: falha ao chamar a tool (RequestError)"
+        assert await fn() == "Erro na requisição: falha ao chamar a tool (RequestError)"
 
-    async def test_unexpected_error(self, factory):
+    async def test_unexpected_error(self, mock_logger):
         tool = _make_tool(http_method=HttpMethod.GET)
-        fn = await self._get_entrypoint(factory, tool)
 
-        with patch("httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.request = AsyncMock(side_effect=RuntimeError("unexpected"))
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client_cls.return_value = mock_client
+        def fail(request: httpx.Request) -> httpx.Response:
+            raise RuntimeError("unexpected")
 
-            result = await fn()
-            assert result == "Erro inesperado ao chamar a tool (RuntimeError)"
+        fn, _ = await self._get_entrypoint(mock_logger, tool, fail)
 
-    async def test_delete_uses_params(self, factory):
+        assert await fn() == "Erro inesperado ao chamar a tool (RuntimeError)"
+
+    async def test_delete_uses_params(self, mock_logger):
         tool = _make_tool(http_method=HttpMethod.DELETE, parameters=[_param("id")])
-        fn = await self._get_entrypoint(factory, tool)
+        fn, seen = await self._get_entrypoint(mock_logger, tool, lambda r: httpx.Response(200, json={"deleted": True}))
 
-        mock_response = MagicMock()
-        mock_response.status_code = 204
-        mock_response.json.return_value = {"deleted": True}
-        mock_response.raise_for_status = MagicMock()
-
-        with patch("httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.request = AsyncMock(return_value=mock_response)
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client_cls.return_value = mock_client
-
-            result = await fn(id="123")
-            assert "deleted" in result
+        assert await fn(id="123") == "{'deleted': True}"
+        assert (seen[0].method, str(seen[0].url)) == ("DELETE", "http://example.com/api/test?id=123")

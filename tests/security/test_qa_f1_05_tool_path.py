@@ -45,7 +45,6 @@ HOSTILE = [
     "a?x=1&y=2",
     "#f",
     "a#f",
-    "",
     " ",
     "ção/ü?",
     "a\\b",
@@ -70,7 +69,7 @@ async def _run_tool(value: Any) -> tuple[list[httpx.Request], list[str], Recordi
         return httpx.Response(200, json={"ok": True})
 
     def client(**kwargs: Any) -> httpx.AsyncClient:
-        return real_client(transport=httpx.MockTransport(handler), **kwargs)
+        return real_client(**{**kwargs, "transport": httpx.MockTransport(handler)})
 
     call = ModelResponse(
         role="assistant",
@@ -107,6 +106,14 @@ async def test_segmento_de_ponto_no_parametro_de_rota_e_recusado_sem_request(val
     assert results == [
         "Erro nos argumentos da tool pedidos: valor inválido para id: '.' e '..' não são permitidos na rota"
     ]
+
+
+async def test_parametro_de_rota_vazio_e_recusado_sem_request():
+    """F4-01: ``/clientes/{id}/pedidos`` com ``id=""`` viraria ``/clientes//pedidos`` (outro recurso)."""
+    seen, results, _ = await _run_tool("")
+
+    assert seen == []
+    assert results == ["Erro nos argumentos da tool pedidos: valor inválido para id: vazio não é permitido na rota"]
 
 
 @pytest.mark.parametrize("value", HOSTILE, ids=lambda v: repr(v)[:30])

@@ -36,6 +36,10 @@ class RecordingLogger(ILogger):
     def debug(self, message: str, **kwargs: Any) -> None:
         self._log("debug", message, kwargs)
 
+    def without_audit(self) -> list[LoggedRecord]:
+        """Registros sem os eventos de auditoria de tool call (F4-03), para conferir os logs próprios da tool."""
+        return [r for r in self.records if r.context.get("audit") != "tool_call"]
+
     def messages(self, *levels: str) -> list[str]:
         """Mensagens dos níveis pedidos (todas, se nenhum nível for passado)."""
         return [r.message for r in self.records if not levels or r.level in levels]

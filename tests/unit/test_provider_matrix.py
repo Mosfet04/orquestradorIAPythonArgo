@@ -39,10 +39,15 @@ MODEL_ALIASES = {"google": "gemini", "azureopenai": "azure"}
 
 EMBEDDER_MATRIX: dict[str, tuple[str, str, str]] = {
     "ollama": ("agno.knowledge.embedder.ollama.OllamaEmbedder", "ollama", "ollama"),
-    "openai": ("agno.knowledge.embedder.openai.OpenAIEmbedder", "openai", "openai"),
+    # F4-01: subclasses do agno com o cliente httpx guardado nos dois caminhos (base_url da config).
+    "openai": ("src.infrastructure.runtime.agno.guarded_embedders.GuardedOpenAIEmbedder", "openai", "openai"),
     "gemini": ("agno.knowledge.embedder.google.GeminiEmbedder", "google.genai", "google-genai"),
     "azure": ("agno.knowledge.embedder.azure_openai.AzureOpenAIEmbedder", "openai", "openai"),
-    "openai_compatible": ("agno.knowledge.embedder.openai_like.OpenAILikeEmbedder", "openai", "openai"),
+    "openai_compatible": (
+        "src.infrastructure.runtime.agno.guarded_embedders.GuardedOpenAILikeEmbedder",
+        "openai",
+        "openai",
+    ),
 }
 EMBEDDER_ALIASES = {"google": "gemini", "azureopenai": "azure"}
 

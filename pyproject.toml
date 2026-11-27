@@ -215,6 +215,7 @@ forbidden_modules = [
     "fastapi",
     "google",
     "httpx",
+    "mcp",
     "motor",
     "ollama",
     "openai",

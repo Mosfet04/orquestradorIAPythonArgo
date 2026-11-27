@@ -30,7 +30,7 @@ async def test_save_regrava_documento_legado_em_snake_case_no_mesmo_id(monkeypat
     (stored,) = backend.collections["agents_config"].docs
     mongo_id = stored["_id"]
 
-    assert await repo.save(_agent("novo"), 0) == 1
+    assert (await repo.save(_agent("novo"), 0)).version == 1
 
     (stored,) = backend.collections["agents_config"].docs
     updated_at = stored.pop("updated_at")

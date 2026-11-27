@@ -12,7 +12,9 @@ from typing import Any
 import httpx
 import pytest
 
+from src.domain.entities.agent_config import AgentConfig
 from src.domain.ports import InvalidModelConfigError
+from src.domain.repositories.versioning import Versioned
 from tests.fakes.admin_config_app import (
     ADMIN,
     admin_world,
@@ -101,7 +103,7 @@ async def test_falha_ao_gravar_responde_500_sem_trocar_e_sem_eco_e_a_escrita_seg
         real_save = world.agents.save
         calls = {"n": 0}
 
-        async def flaky_save(entity: Any, expected_version: int) -> int:
+        async def flaky_save(entity: AgentConfig, expected_version: int) -> Versioned[AgentConfig]:
             calls["n"] += 1
             if calls["n"] == 1:
                 raise ConnectionError(f"mongo caiu: {CANARY}")

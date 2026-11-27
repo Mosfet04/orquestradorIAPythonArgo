@@ -18,6 +18,7 @@ import socket
 from typing import Any
 
 import pytest
+from agno.knowledge.embedder.openai_like import OpenAILikeEmbedder
 from agno.models.openai.like import OpenAILike
 
 from src.application.services.document_indexing_service import DocumentIndexingService
@@ -189,8 +190,9 @@ def test_campos_novos_chegam_ao_modelo_real_e_a_chave_so_vai_ao_host_da_allowlis
     model = spy.models["modelo-gw"]
     assert isinstance(model, OpenAILike)
     assert (model.base_url, model.api_key, model.temperature, model.max_tokens) == (GATEWAY_URL, KEY_VALUE, 0.25, 77)
-    # sem api_key_ref: placeholder do SDK; a OPENAI_API_KEY do processo não vai para o gateway
-    client = spy.models["modelo-sem-ref"].get_client()  # type: ignore[attr-defined]
+    # sem api_key_ref: placeholder do SDK; a OPENAI_API_KEY do processo não vai para o gateway. Cliente
+    # assíncrono, o do app: com base_url da config o síncrono falha fechado (F4-01).
+    client = spy.models["modelo-sem-ref"].get_async_client()  # type: ignore[attr-defined]
     assert client.api_key == "not-provided" and str(client.base_url).startswith(GATEWAY_URL)
     assert [host for host, _ in dns.queries] == [GATEWAY, GATEWAY]
     assert_nothing_leaked(result, KEY_VALUE, ENV_KEY_VALUE, GATEWAY, "QA_F202_GW_API_KEY")
@@ -471,7 +473,9 @@ def test_rag_semantico_cria_o_embedder_real_com_campos_novos_fora_do_loop(
 
     assert agent_ids(result) == ["rag-gw", "rag-padrao"]
     gw = spy.embedders["bge-m3"]
-    assert type(gw).__qualname__ == "OpenAILikeEmbedder"
+    # Subclasse com o cliente httpx guardado nos dois caminhos (F4-01, base_url da config).
+    assert type(gw).__qualname__ == "GuardedOpenAILikeEmbedder" and isinstance(gw, OpenAILikeEmbedder)
+    assert gw.sync_http_client is not None and gw.async_http_client is not None  # type: ignore[attr-defined]
     assert (gw.api_key, gw.base_url, gw.dimensions) == (KEY_VALUE, GATEWAY_URL, 64)  # type: ignore[attr-defined]
     default = spy.embedders["nomic-embed-text:latest"]
     assert type(default).__qualname__ == "OllamaEmbedder" and default.host == "http://ollama-interno:11434"  # type: ignore[attr-defined]

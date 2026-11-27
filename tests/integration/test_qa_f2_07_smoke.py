@@ -146,7 +146,7 @@ def smoke_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[tuple
     real_client: Callable[..., httpx.AsyncClient] = httpx.AsyncClient
 
     def mocked_client(**kwargs: Any) -> httpx.AsyncClient:
-        return real_client(transport=httpx.MockTransport(transport_handler), **kwargs)
+        return real_client(**{**kwargs, "transport": httpx.MockTransport(transport_handler)})
 
     try:
         with (

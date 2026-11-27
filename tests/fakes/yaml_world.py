@@ -81,7 +81,7 @@ def yaml_app(
     real_client: Callable[..., httpx.AsyncClient] = httpx.AsyncClient
 
     def mocked_client(**kwargs: Any) -> httpx.AsyncClient:
-        return real_client(transport=httpx.MockTransport(transport_handler), **kwargs)
+        return real_client(**{**kwargs, "transport": httpx.MockTransport(transport_handler)})
 
     with (
         startup_world(Events(), agents=("so-no-mongo",)),

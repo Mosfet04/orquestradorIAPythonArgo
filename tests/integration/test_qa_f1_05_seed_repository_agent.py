@@ -167,7 +167,8 @@ async def test_weather_tool_do_seed_executa_get_com_query_string_sem_chave_de_ap
         seen.append(request)
         return httpx.Response(200, json={"current": {"temperature_2m": 25.1}})
 
-    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real_client(transport=httpx.MockTransport(handler), **kw))
+    mock = httpx.MockTransport(handler)
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real_client(**{**kw, "transport": mock}))
 
     output = await agent.arun("clima em São Paulo")
 

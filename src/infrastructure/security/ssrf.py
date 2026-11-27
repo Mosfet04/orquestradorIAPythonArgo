@@ -7,9 +7,9 @@ recusado (falha fechada). IP literal é reconhecido inclusive nas formas legadas
 ``0xa9.0xfe.0xa9.0xfe``, ``169.254.43518``, octal), e IPv4 embutido em IPv6 (mapeado,
 compatível, NAT64 ``64:ff9b::/96`` e ``64:ff9b:1::/48`` com sub-prefixo /96, 6to4) vale pelo IPv4.
 
-Resíduo (fica para o F4-01): o SDK resolve o nome de novo ao conectar, então DNS rebinding
-(primeira resposta legítima, segunda para metadata) não é coberto por esta checagem; fechar
-exige conectar no IP verificado (transporte próprio), o que esta guarda não faz.
+``check_host`` vale na escrita/montagem; na hora de conectar vale ``DestinationRule`` (F4-01), que
+devolve os endereços conferidos para o transporte guardado (``guarded_http``) conectar neles e não
+num nome resolvido de novo (DNS rebinding).
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ import ipaddress
 import re
 import socket
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 
 IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
 Resolver = Callable[[str], Iterable[str]]
@@ -186,3 +187,40 @@ def _resolved_addresses(host: str, resolver: Resolver) -> list[IPAddress]:
     if not valid or len(valid) != len(addresses):
         raise BlockedDestinationError("host do destino não resolve para um endereço válido")
     return valid
+
+
+@dataclass(frozen=True)
+class DestinationRule:
+    """Destino permitido na hora de conectar (F4-01): devolve os endereços conferidos do host.
+
+    ``trusted_hosts``: hosts do operador (já normalizados, ``normalize_host``), que podem ter IP privado.
+    ``allow_loopback``: loopback literal (``localhost``, ``127.x.y.z``, ``::1``) aceito (modo dev local); o host
+    decide como veio, sem normalizar (``localhost.`` é nome DNS, N10), e o nome tem de resolver só para loopback.
+    ``public_only``: host fora dos dois acima só com endereço público (tools HTTP); ``False`` só recusa
+    metadata/link-local (modelos: o host já foi conferido na montagem, ``DestinationPolicy``).
+    Metadata/link-local nunca passa, nem no host confiável.
+    """
+
+    trusted_hosts: frozenset[str] = frozenset()
+    allow_loopback: bool = False
+    public_only: bool = True
+
+    def addresses(self, host: str, resolver: Resolver) -> list[IPAddress]:
+        """Endereços conferidos de ``host`` (literal na forma canônica ou resolvido uma vez), na ordem.
+
+        ``BlockedDestinationError`` (texto sem o host) se qualquer endereço for proibido ou o nome não
+        resolver. Bloqueante no nome: chame fora do event loop.
+        """
+        literal = literal_address(host)
+        addresses = [literal] if literal is not None else _resolved_addresses(host, resolver)
+        if any(is_blocked_address(address) for address in addresses):
+            raise BlockedDestinationError("destino de metadata/link-local recusado")
+        if not self.public_only or normalize_host(host) in self.trusted_hosts:
+            return addresses
+        if self.allow_loopback and is_loopback_host(host):
+            if all(address.is_loopback for address in addresses):
+                return addresses
+            raise BlockedDestinationError("host de loopback resolve fora do loopback; recusado")
+        if not all(is_public_address(address) for address in addresses):
+            raise BlockedDestinationError("destino em IP privado, loopback ou reservado recusado")
+        return addresses

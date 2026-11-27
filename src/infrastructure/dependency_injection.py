@@ -21,13 +21,14 @@ from src.application.use_cases.config_admin_use_case import (
 from src.application.use_cases.config_schema import ConfigSchema
 from src.application.use_cases.get_active_agents_use_case import GetActiveAgentsUseCase
 from src.application.use_cases.get_active_teams_use_case import GetActiveTeamsUseCase
-from src.domain.ports import IEmbedderFactory, ILogger
+from src.domain.ports import IEmbedderFactory, ILogger, IToolFactory
 from src.domain.repositories.agent_config_repository import IAgentConfigRepository
 from src.domain.repositories.config_audit import ConfigAuditLog
 from src.domain.repositories.team_config_repository import ITeamConfigRepository
 from src.domain.repositories.tool_repository import IToolRepository
 from src.infrastructure.config.app_config import AppConfig
 from src.infrastructure.logging.logger_adapter import StructlogLoggerAdapter
+from src.infrastructure.mcp_client.sessions import McpSessions
 from src.infrastructure.parsers.text_document_parser import TextDocumentParser
 from src.infrastructure.providers import DestinationPolicy, ProviderRegistry
 from src.infrastructure.providers.builtins import BUILTIN_PROVIDERS
@@ -62,9 +63,11 @@ from src.infrastructure.runtime.agno.agent_factory_service import AgentFactorySe
 from src.infrastructure.runtime.agno.embedder_dimensions import DimensionResolvingEmbedderFactory
 from src.infrastructure.runtime.agno.http_tool_factory import HttpToolFactory
 from src.infrastructure.runtime.agno.llm_summary_generator import LLMSummaryGenerator
+from src.infrastructure.runtime.agno.mcp_tool_factory import McpToolFactory, ToolFactoryBySource
 from src.infrastructure.runtime.agno.session_db import SessionDb, create_session_db
 from src.infrastructure.runtime.agno.team_factory_service import TeamFactoryService
-from src.infrastructure.security.ssrf import system_resolver
+from src.infrastructure.security.guarded_http import GuardedAsyncTransport, GuardedHttp
+from src.infrastructure.security.ssrf import DestinationRule, system_resolver
 from src.infrastructure.security.tool_route_guard import ToolRouteGuard
 from src.infrastructure.telemetry.metrics import TelemetryMetrics
 from src.infrastructure.web.api_key_auth import is_local_dev_mode
@@ -174,14 +177,22 @@ def build_provider_registry(config: AppConfig, logger: ILogger) -> ProviderRegis
     recusados). Síncrono e com I/O: chame fora do event loop.
     """
     dev_mode = is_local_dev_mode(config)
+    # Clientes guardados dos SDKs com base_url da config (F4-01): o host já passou pela policy na montagem;
+    # na conexão, só metadata/link-local recusados e TCP no IP conferido. Montados aqui (fora do event loop:
+    # o TLS lê disco), não no primeiro modelo (o team monta o dele no loop).
+    http = GuardedHttp(DestinationRule(public_only=False), resolver=system_resolver)
+    http.async_client()
+    http.sync_client()
     registry = ProviderRegistry(
         BUILTIN_PROVIDERS,
         secrets_dir=config.secrets_dir,
         policy=DestinationPolicy(
             allowlist=config.model_base_url_allowlist,
             allow_loopback=dev_mode,
+            resolver=system_resolver,
         ),
         operator_base_urls={"ollama": config.ollama_base_url} if config.ollama_base_url else None,
+        http=http,
     )
     load_provider_plugins(
         registry,
@@ -275,6 +286,9 @@ class DependencyContainer:
         self._config_admin: ConfigAdmin | None = None
         self._config_schema: ConfigSchema | None = None
         self._runtime: AgnoRuntime | None = None
+        self._providers: ProviderRegistry | None = None
+        self._tool_factory: HttpToolFactory | None = None
+        self._mcp_sessions: McpSessions | None = None
 
     @classmethod
     async def create_async(cls, config: AppConfig) -> DependencyContainer:
@@ -297,6 +311,7 @@ class DependencyContainer:
         # thread: descobrir entry points lê metadados em disco e carregar plugin importa código.
         # Um registry atende modelos e embedders (portas IModelFactory e IEmbedderFactory).
         providers = await asyncio.to_thread(build_provider_registry, self.config, self._logger)
+        self._providers = providers
         # Embedders com a dimensão real do modelo (sonda uma vez por config, F2-11): um só, para o
         # RAG semântico e o hierárquico (indexação e busca) compartilharem o cache.
         embedders = DimensionResolvingEmbedderFactory(providers, logger=self._logger)
@@ -304,7 +319,26 @@ class DependencyContainer:
         await self._connect_mongo()
 
         # ── Wiring ──────────────────────────────────────────────────
-        tool_factory = HttpToolFactory(logger=self._logger, secrets_dir=self.config.secrets_dir)
+        # Um cliente para todas as tools (F4-01), sobre o transporte guardado: destino conferido na conexão
+        # com a mesma regra da escrita (TOOL_ROUTE_ALLOWLIST, loopback só no modo dev). Em thread: o TLS lê disco.
+        tool_rule = DestinationRule(
+            trusted_hosts=frozenset(self.config.tool_route_allowlist),
+            allow_loopback=is_local_dev_mode(self.config),
+        )
+        tool_transport = await asyncio.to_thread(GuardedAsyncTransport, tool_rule, resolver=system_resolver)
+        http_tools = HttpToolFactory(
+            logger=self._logger, secrets_dir=self.config.secrets_dir, transport=tool_transport
+        )
+        self._tool_factory = http_tools
+        # Servidores MCP (F4-02): mesma regra de destino, um transporte guardado por sessão (criado em thread pela
+        # própria McpSessions); sessões abertas na montagem dos agentes e fechadas no cleanup (shutdown do lifespan).
+        mcp_sessions = McpSessions(
+            self._logger,
+            transport_factory=lambda: GuardedAsyncTransport(tool_rule, resolver=system_resolver),
+            secrets_dir=self.config.secrets_dir,
+        )
+        self._mcp_sessions = mcp_sessions
+        tool_factory = ToolFactoryBySource(http=http_tools, mcp=McpToolFactory(mcp_sessions, self._logger))
 
         agent_config_repo, team_config_repo, tool_repo = self._build_config_repositories()
 
@@ -404,7 +438,7 @@ class DependencyContainer:
         providers: ProviderRegistry,
         *,
         embedders: IEmbedderFactory,
-        tool_factory: HttpToolFactory,
+        tool_factory: IToolFactory,
         tool_repo: IToolRepository,
         indexing_service: DocumentIndexingService,
         search_factory: KnowledgeSearchFactory,
@@ -503,11 +537,21 @@ class DependencyContainer:
         return self._health_service
 
     async def cleanup(self) -> None:
-        """Fecha o db de sessões e o cliente Mongo do app, cada um mesmo se o outro falhar.
+        """Fecha os clientes HTTP guardados, o db de sessões e o cliente Mongo do app, cada um mesmo se outro falhar.
 
-        Os dois são ``AsyncMongoClient`` (F3-09, F3-09b): o ``close`` é corrotina, aguardada no event loop.
-        O cliente do app sai do cache da fábrica e é fechado uma vez (chamadas seguintes não fazem nada).
+        Os dois do Mongo são ``AsyncMongoClient`` (F3-09, F3-09b): o ``close`` é corrotina, aguardada no event loop.
+        O cliente do app sai do cache da fábrica e é fechado uma vez (chamadas seguintes não fazem nada). Os HTTP
+        (F4-01): o das tools, as sessões dos servidores MCP (F4-02) e os entregues aos SDKs de modelo com ``base_url``
+        da config; idempotentes.
         """
+        closers = (("tools", self._tool_factory), ("mcp", self._mcp_sessions), ("modelos", self._providers))
+        for name, closer in closers:
+            if closer is None:
+                continue
+            try:
+                await closer.aclose()
+            except Exception as exc:  # noqa: BLE001 - shutdown segue; tipo no log
+                self._logger.warning("Falha ao fechar o cliente HTTP", client=name, error_type=type(exc).__name__)
         if self._session_db is not None:
             try:
                 # Idempotente: o lifespan de db do AgentOS pode já ter fechado.

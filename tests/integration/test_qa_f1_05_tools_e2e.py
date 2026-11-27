@@ -131,7 +131,7 @@ def upstream(monkeypatch: pytest.MonkeyPatch) -> Upstream:
         return state.handler(request)
 
     def client(**kwargs: Any) -> httpx.AsyncClient:
-        return real_client(transport=httpx.MockTransport(handler), **kwargs)
+        return real_client(**{**kwargs, "transport": httpx.MockTransport(handler)})
 
     monkeypatch.setattr(httpx, "AsyncClient", client)
     return state
@@ -343,7 +343,8 @@ async def test_team_delega_ao_membro_que_tem_tool_e_o_request_http_sai(
             "Erro HTTP 404: não achei",
             {"tool_id": "cep", "status": 404},
         ),
-        (lambda r: httpx.Response(503, text="fora"), "Erro HTTP 503: fora", {"tool_id": "cep", "status": 503}),
+        # 500, não 503: 502/503/504 em GET são repetidos (F4-01, tests/unit/test_f4_01_http_tool_hardening.py)
+        (lambda r: httpx.Response(500, text="fora"), "Erro HTTP 500: fora", {"tool_id": "cep", "status": 500}),
         (
             lambda r: httpx.Response(302, headers={"location": "http://127.0.0.1/"}),
             "Erro HTTP 302",

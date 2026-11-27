@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Iterable
+from datetime import UTC, datetime
 from typing import Generic, Protocol, TypeVar
 
 from src.domain.entities.agent_config import AgentConfig
@@ -59,14 +60,15 @@ class _VersionedItems(Generic[E]):
     async def list_all(self) -> list[Versioned[E]]:
         return copy.deepcopy(self._entries)
 
-    async def save(self, entity: E, expected_version: int) -> int:
+    async def save(self, entity: E, expected_version: int) -> Versioned[E]:
+        """Grava como o Mongo: versão nova e a hora da gravação (UTC); os semeados ficam sem ela (legado)."""
         position = self._position(entity.id, expected_version)
-        saved = Versioned(copy.deepcopy(entity), expected_version + 1)
+        saved = Versioned(copy.deepcopy(entity), expected_version + 1, datetime.now(UTC))
         if position is None:
             self._entries.append(saved)
         else:
             self._entries[position] = saved
-        return saved.version
+        return copy.deepcopy(saved)
 
     async def delete(self, entity_id: str, expected_version: int) -> None:
         position = self._position(entity_id, expected_version)

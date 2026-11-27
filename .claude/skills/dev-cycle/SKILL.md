@@ -29,7 +29,7 @@ Cada turno seu relê a conversa inteira; contexto grande aqui custa mais que em 
 ## 3. Code review
 
 - `git add -A && TREE=$(git write-tree)`; guarde o tree no estado.
-- Prompt do revisor: `BASE`, `TREE` e o comando do diff (`git diff --cached $BASE`, inclui arquivos novos); ele roda o diff, você não. Rodadas seguintes: também o delta (`git diff <tree anterior> <tree atual>`) e a tabela de achados anterior.
+- Prompt do revisor: `BASE`, `TREE` e o comando do diff (`git diff --cached $BASE`, inclui arquivos novos); ele roda o diff, você não. Rodadas seguintes: também o delta (`git diff <tree anterior> <tree atual>`) e a tabela de achados anterior; continue o revisor anterior via `SendMessage` (ele já conhece o diff), com a mesma regra dos 150k da rodada de correção.
 - Chame `security-architecture-reviewer`. Antes e depois confira `git status --porcelain`: a árvore não pode mudar durante a revisão.
 - `REQUEST_CHANGES` ⇒ volte ao dev com os achados BLOCKER/MAJOR (MINOR a critério do dev, justificando). Cada achado é corrigido ou refutado com evidência. Depois, nova revisão sobre o delta.
 - **Rodada de correção:** continue o dev anterior via `SendMessage` só se o resultado dele reportou `total_tokens` ≤ 150k; acima disso, chame um `python-dev-specialist` novo (mesmo modelo) com o item, `BASE`, os achados e os arquivos tocados — contexto limpo sai mais barato que reler 200k+ a cada turno.
@@ -39,7 +39,7 @@ Cada turno seu relê a conversa inteira; contexto grande aqui custa mais que em 
 
 - Snapshot `git status --porcelain` antes. Chame `qa-engineer` com o item, o comando do diff e os gates.
 - Depois: qualquer mudança fora de `tests/` e `docs/qa/` invalida o QA (reverta só esses arquivos e conte como violação).
-- Os testes novos do QA passam por uma revisão curta do revisor (só o delta de `tests/`).
+- Os testes novos do QA passam por uma revisão curta do revisor (só o delta de `tests/`), com `model: "sonnet"`: só confere asserção observável, ausência de LLM/rede real, segredo e flaky. Se o mesmo delta trouxer mudança fora de `tests/`, a revisão volta ao padrão (Opus).
 - `FAIL` por bug de produção ⇒ volta ao dev com a repro (mesma regra de continuar vs. dev novo); depois revisão do delta e QA de novo.
 
 ## 5. Limite

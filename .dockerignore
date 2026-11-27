@@ -1,6 +1,6 @@
 # Contexto de build como ALLOWLIST: exclui tudo e reinclui só o que a imagem usa.
-# Dockerfile: COPY requirements.lock (instalação) e COPY . . (app.py, src/ e docs/,
-# que guarda os documentos do RAG hierárquico lidos em runtime).
+# Dockerfile: COPY requirements.lock e requirements-mcp.lock (instalação; o extra só com WITH_MCP=true)
+# e COPY . . (app.py, src/ e docs/, que guarda os documentos do RAG hierárquico lidos em runtime).
 # Arquivo novo que a imagem precise: reinclua aqui com "!caminho".
 # Teste (emula o moby/patternmatcher): tests/unit/test_container_hygiene.py
 *
@@ -8,6 +8,7 @@
 !src/
 !docs/
 !requirements.lock
+!requirements-mcp.lock
 
 # Em docs/ só vai o conteúdo de RAG (ex.: basic-prog.txt); documentação do projeto fica fora
 docs/roadmap

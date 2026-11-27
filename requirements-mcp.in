@@ -1,0 +1,19 @@
+# Extra opcional "mcp" (F4-02): cliente MCP por streamable HTTP para tools com `mcp_tools`.
+# Fora do lock de runtime: sem ele o app sobe e a tool MCP é recusada com log claro.
+# Lock gerado (sempre DEPOIS de requirements.lock) com:
+#   .venv/bin/pip-compile --upgrade --generate-hashes --allow-unsafe --strip-extras \
+#       --output-file=requirements-mcp.lock requirements-mcp.in
+#   .venv/bin/pip-audit -r requirements-mcp.lock --require-hashes --disable-pip
+# Instale junto com o lock de runtime:
+#   pip install --require-hashes -r requirements.lock -r requirements-mcp.lock
+
+# Pacotes compartilhados com o runtime ficam na mesma versão do lock de runtime.
+-c requirements.lock
+
+# SDK oficial do Model Context Protocol (MIT, org modelcontextprotocol). Teto <2: a 2.x troca o httpx
+# pelo httpx2 (outro pacote, com o httpcore2), e a guarda SSRF da conexão (F4-01,
+# src/infrastructure/security/guarded_http.py) é do httpx 0.28/httpcore 1.0: na 1.x o cliente streamable
+# HTTP aceita o httpx.AsyncClient guardado (httpx_client_factory). Descartados: o MCPTools do agno 3.1.12
+# (exige mcp>=2.1 e fastmcp>=4, sem allowlist com hash de schema nem o cliente guardado) e um cliente
+# streamable HTTP próprio (protocolo inteiro para manter).
+mcp>=1.30.0,<2

@@ -127,6 +127,7 @@ def test_dockerignore_exclui_segredos_e_lixo_local(dockerignore_rules, path):
     [
         "app.py",
         "requirements.lock",
+        "requirements-mcp.lock",  # extra mcp (F4-02), com --build-arg WITH_MCP=true
         "src/__init__.py",
         "src/infrastructure/web/app_factory.py",
         # documentos do RAG hierárquico são lidos de docs/ em runtime

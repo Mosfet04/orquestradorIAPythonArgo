@@ -9,7 +9,8 @@ endereço público (``check_host(..., public_only=True)``), literal ou resolvido
 
 O DNS roda fora do event loop (``asyncio.to_thread``) e só para nome; IP literal não resolve. Tem prazo
 (``DNS_TIMEOUT_SECONDS``): a guarda roda sob a trava comum de escrita/reload/sync e sem resposta recusa.
-Resíduos (F4-01): DNS rebinding (o cliente resolve de novo ao conectar) e a re-checagem na chamada.
+Na chamada (F4-01) vale a mesma regra, re-checada a cada conexão pelo transporte guardado
+(``DestinationRule`` + ``guarded_http``), que abre o TCP no IP conferido (DNS rebinding).
 """
 
 from __future__ import annotations

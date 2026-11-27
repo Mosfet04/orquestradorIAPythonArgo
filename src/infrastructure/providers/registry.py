@@ -17,9 +17,12 @@ A recusa de destino vale com ou sem ``api_key_ref``: os SDKs leem chave do ambie
 do operador (env, como ``OLLAMA_BASE_URL``) é confiável e não passa pela guarda.
 
 Síncrono e com I/O (``file:``, DNS): no caminho async, chame via ``asyncio.to_thread``.
-Resíduos para o F4-01: DNS rebinding (o SDK resolve de novo ao conectar) e redirect nos SDKs
-em que desligá-lo não é um kwarg simples (openai, google-genai).
+
+F4-01: com ``base_url`` da config, o SDK recebe o transporte/cliente httpx guardado (``guarded_http`` da
+``ClassSpec``; ``GuardedHttp``): sem redirect e com o TCP no IP conferido a cada conexão (fecha o DNS
+rebinding). Sem ``base_url`` da config o SDK usa o cliente padrão (destino do provider ou do operador).
 """
+
 
 from __future__ import annotations
 
@@ -28,7 +31,7 @@ import math
 import os
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Literal, cast
+from typing import Literal, TypeAlias, cast
 from urllib.parse import urlsplit
 
 from src.application.use_cases.config_schema import ProviderOption
@@ -36,8 +39,10 @@ from src.domain.entities.model_config import ModelConfig, ModelParams, ParamValu
 from src.domain.ports.embedder_factory_port import IEmbedderFactory, TextEmbedder
 from src.domain.ports.model_factory_port import ChatModel, IModelFactory, InvalidModelConfigError
 from src.infrastructure.config.secrets import DEFAULT_SECRETS_DIR, SecretResolutionError, resolve_secret
+from src.infrastructure.security.guarded_http import GuardedHttp
 from src.infrastructure.security.ssrf import (
     BlockedDestinationError,
+    DestinationRule,
     Resolver,
     check_host,
     is_blocked_address,
@@ -48,6 +53,8 @@ from src.infrastructure.security.ssrf import (
 )
 
 Kind = Literal["chat", "embedder"]
+GuardedHttpKind: TypeAlias = Literal["async_client", "sync_client", "transport"]
+"""O que o SDK recebe do ``GuardedHttp``: ``httpx.AsyncClient``, ``httpx.Client`` ou o transporte duplo."""
 _KIND_LABEL: dict[Kind, str] = {"chat": "modelo", "embedder": "embedder"}
 
 
@@ -68,7 +75,8 @@ class ClassSpec:
     ``options``. ``base_url_kwarg``: ``None`` = a classe não aceita ``base_url``.
     ``api_key_kwarg``: ``None`` = não recebe chave (``api_key_ref`` é recusada).
     ``untrusted_url_kwargs``: kwargs extras quando a ``base_url`` vem da config (ex.: desligar
-    redirect onde é um kwarg simples).
+    redirect onde é um kwarg simples). ``guarded_http``: kwarg -> o que vem do ``GuardedHttp`` quando a
+    ``base_url`` vem da config (F4-01).
     """
 
     class_path: str
@@ -77,6 +85,7 @@ class ClassSpec:
     api_key_kwarg: str | None = "api_key"
     operator_env: tuple[OperatorEnv, ...] = ()
     untrusted_url_kwargs: Mapping[str, ParamValue] = field(default_factory=dict)
+    guarded_http: Mapping[str, GuardedHttpKind] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -110,14 +119,15 @@ class DestinationPolicy:
     allow_loopback: bool = False
     resolver: Resolver = system_resolver
 
-    def check(self, base_url: str, default_hosts: frozenset[str]) -> None:
+    def check(self, base_url: str, default_hosts: frozenset[str], https_hosts: frozenset[str] = frozenset()) -> None:
         """Recusa (``BlockedDestinationError``) destino fora do provider/allowlist ou de metadata.
 
-        Host do provider exige ``https`` sempre, mesmo na allowlist (endpoint público nunca
-        precisa de http e a chave iria em texto claro); os demais hosts da allowlist e o loopback
-        no modo dev aceitam ``http`` (decisão do operador/dev). O DNS
-        confere o host como está na URL (o SDK resolve esse nome); a comparação usa a forma
-        normalizada.
+        Host padrão de provider exige ``https`` sempre, mesmo na allowlist (endpoint público nunca
+        precisa de http e a chave iria em texto claro); vale para os hosts de todos os providers
+        (``https_hosts``, a união; N9), não só do escolhido. Os demais hosts da allowlist e o loopback
+        no modo dev aceitam ``http`` (decisão do operador/dev). O loopback é decidido pelo host como
+        veio (``localhost.`` é nome DNS, não loopback literal; N10). O DNS confere o host como está na
+        URL (o SDK resolve esse nome); a comparação usa a forma normalizada.
         """
         parts = urlsplit(base_url)
         raw_host = parts.hostname or ""
@@ -126,12 +136,12 @@ class DestinationPolicy:
         if literal is not None and is_blocked_address(literal):
             raise BlockedDestinationError("destino de metadata/link-local recusado")
         provider_host = host in {normalize_host(item) for item in default_hosts}
-        if provider_host and parts.scheme != "https":
+        if host in {normalize_host(item) for item in default_hosts | https_hosts} and parts.scheme != "https":
             raise BlockedDestinationError("base_url no host do provider exige https")
         allowed = (
             provider_host
             or host in {normalize_host(item) for item in self.allowlist}
-            or (self.allow_loopback and is_loopback_host(host))
+            or (self.allow_loopback and is_loopback_host(raw_host))
         )
         if not allowed:
             raise BlockedDestinationError(
@@ -145,14 +155,14 @@ def normalize_provider_name(name: str) -> str:
     return name.strip().lower()
 
 
-def _set(kwargs: dict[str, object], target: str, value: ParamValue) -> None:
+def _set(kwargs: dict[str, object], target: str, value: object) -> None:
     """``"a.b"`` grava em ``kwargs["a"]["b"]``; ``"a"`` grava direto."""
     container, _, leaf = target.rpartition(".")
     if not container:
         kwargs[target] = value
         return
     nested = kwargs.setdefault(container, {})
-    cast(dict[str, ParamValue], nested)[leaf] = value
+    cast(dict[str, object], nested)[leaf] = value
 
 
 class ProviderRegistry(IModelFactory, IEmbedderFactory):
@@ -165,11 +175,18 @@ class ProviderRegistry(IModelFactory, IEmbedderFactory):
         secrets_dir: str = DEFAULT_SECRETS_DIR,
         policy: DestinationPolicy | None = None,
         operator_base_urls: Mapping[str, str] | None = None,
+        http: GuardedHttp | None = None,
     ) -> None:
-        """``operator_base_urls``: id do provider -> URL do operador (ex.: ``OLLAMA_BASE_URL``)."""
+        """``operator_base_urls``: id do provider -> URL do operador (ex.: ``OLLAMA_BASE_URL``).
+
+        ``http``: transporte/clientes guardados entregues aos SDKs com ``base_url`` da config (F4-01);
+        padrão: um ``GuardedHttp`` próprio (só metadata/link-local recusados na conexão, com o resolver da
+        ``policy``: o host já foi conferido na montagem). Fechado em ``aclose``.
+        """
         self._specs: dict[str, ProviderSpec] = {}
         self._secrets_dir = secrets_dir
         self._policy = policy or DestinationPolicy()
+        self._http = http or GuardedHttp(DestinationRule(public_only=False), resolver=self._policy.resolver)
         self._operator_base_urls = {normalize_provider_name(k): v for k, v in (operator_base_urls or {}).items()}
         for spec in specs:
             self.register(spec)
@@ -182,6 +199,14 @@ class ProviderRegistry(IModelFactory, IEmbedderFactory):
             raise ValueError(f"Provider '{spec.id}': id ou alias duplicado ({', '.join(taken or names)})")
         for name in names:
             self._specs[name] = spec
+
+    async def aclose(self) -> None:
+        """Fecha os clientes httpx guardados entregues aos SDKs (shutdown do app); idempotente."""
+        await self._http.aclose()
+
+    def provider_hosts(self) -> frozenset[str]:
+        """União dos hosts padrão de todos os providers registrados (``https`` exigido neles, N9)."""
+        return frozenset(host for spec in self._specs.values() for host in spec.default_hosts)
 
     def __contains__(self, name: object) -> bool:
         """``name`` (sem caixa) é id ou alias de um provider registrado."""
@@ -254,7 +279,7 @@ class ProviderRegistry(IModelFactory, IEmbedderFactory):
             raise InvalidModelConfigError(f"{label} não aceita base_url")
         reason: str | None = None
         try:
-            self._policy.check(base_url, spec.default_hosts)
+            self._policy.check(base_url, spec.default_hosts, self.provider_hosts())
         except BlockedDestinationError as exc:
             reason = str(exc)  # texto nosso, sem o host
         if reason is not None:
@@ -262,6 +287,15 @@ class ProviderRegistry(IModelFactory, IEmbedderFactory):
         kwargs[class_spec.base_url_kwarg] = base_url
         for target, value in class_spec.untrusted_url_kwargs.items():
             _set(kwargs, target, value)
+        for target, kind in class_spec.guarded_http.items():
+            _set(kwargs, target, self._guarded(kind))
+
+    def _guarded(self, kind: GuardedHttpKind) -> object:
+        if kind == "async_client":
+            return self._http.async_client()
+        if kind == "sync_client":
+            return self._http.sync_client()
+        return self._http.transport()
 
     def _apply_api_key(
         self,

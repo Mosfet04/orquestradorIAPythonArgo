@@ -137,6 +137,23 @@ def _at_version(entity_id: str, version: int) -> MongoDocument:
     return {"id": entity_id, "version": {"$in": [0, None]} if version == 0 else version}
 
 
+def _now_in_milliseconds() -> datetime:
+    """Agora em UTC, na precisão do datetime do BSON: a hora que o ``save`` devolve é a que a leitura verá."""
+    now = datetime.now(UTC)
+    return now.replace(microsecond=now.microsecond // 1000 * 1000)
+
+
+def _updated_at(doc: MongoDocument) -> datetime | None:
+    """``updated_at`` do documento (FA-08); ausente ou com valor que não é datetime (legado, gravado à mão) é ``None``.
+
+    Sem log: é só exibição (nada na leitura nem na escrita depende dele) e a ``list_all`` roda em toda leitura
+    do admin e antes de toda escrita, então o mesmo documento logaria de novo a cada request; o ``null`` da
+    resposta já mostra o problema e o próximo ``save`` grava a hora certa.
+    """
+    value = doc.get("updated_at")
+    return value if isinstance(value, datetime) else None
+
+
 class MongoConfigRepository(AsyncMongoRepository, ABC, Generic[ConfigEntityT]):
     """Base dos repositórios de config: leitura isolando documento inválido e escrita otimista (FA-01).
 
@@ -172,25 +189,27 @@ class MongoConfigRepository(AsyncMongoRepository, ABC, Generic[ConfigEntityT]):
     async def list_all(self) -> list[Versioned[ConfigEntityT]]:
         """Todos os documentos, inclusive inativos e ids repetidos, na ordem estável, com a versão."""
         try:
-            return await self._documents({}, lambda doc: Versioned(self._map(doc), document_version(doc)))
+            return await self._documents(
+                {}, lambda doc: Versioned(self._map(doc), document_version(doc), _updated_at(doc))
+            )
         except Exception as exc:
             self._logger.error("Erro ao listar documentos de config", error_type=type(exc).__name__)
             raise
 
-    async def save(self, entity: ConfigEntityT, expected_version: int) -> int:
+    async def save(self, entity: ConfigEntityT, expected_version: int) -> Versioned[ConfigEntityT]:
         """Substitui o documento do id se ele estiver em ``expected_version``; com 0, cria se não existir."""
         query = _at_version(entity.id, expected_version)
-        version = expected_version + 1
-        document = {**entity_document(entity), "version": version, "updated_at": datetime.now(UTC)}
+        saved = Versioned(entity, expected_version + 1, _now_in_milliseconds())
+        document = {**entity_document(entity), "version": saved.version, "updated_at": saved.updated_at}
         if (await self._collection.replace_one(query, document)).matched_count:
-            return version
+            return saved
         if expected_version != 0 or await self._collection.find_one({"id": entity.id}, {"_id": 1}):
             raise ConfigVersionConflict(entity.id, expected_version)
         try:
             await self._collection.insert_one(document)
         except DuplicateKeyError:
             raise ConfigVersionConflict(entity.id, expected_version) from None
-        return version
+        return saved
 
     async def delete(self, entity_id: str, expected_version: int) -> None:
         """Remove o documento do id se ele estiver em ``expected_version``."""

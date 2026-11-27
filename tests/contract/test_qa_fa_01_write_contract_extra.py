@@ -23,11 +23,11 @@ from tests.fakes.config_stores import CONFIG_KINDS, make_agent, make_team, make_
 
 async def test_delete_seguido_de_save_na_versao_0_recria_o_id(writable, kind):
     repo = kind.repo(writable, [kind.make("a")])
-    assert await repo.save(kind.make("a", "v1"), 0) == 1
+    assert (await repo.save(kind.make("a", "v1"), 0)).version == 1
     await repo.delete("a", 1)
 
     assert await repo.list_all() == []
-    assert await repo.save(kind.make("a", "recriada"), 0) == 1
+    assert (await repo.save(kind.make("a", "recriada"), 0)).version == 1
 
     assert await repo.list_all() == [Versioned(kind.make("a", "recriada"), 1)]
     with pytest.raises(ConfigVersionConflict):  # o delete já feito não vale de novo
@@ -94,7 +94,7 @@ async def test_muitos_saves_concorrentes_na_mesma_versao_so_um_vence(writable, k
         *(repo.save(kind.make("a", f"w{i}"), 1) for i in range(8)), return_exceptions=True
     )
 
-    assert sorted(r for r in results if not isinstance(r, Exception)) == [2]
+    assert [r.version for r in results if not isinstance(r, Exception)] == [2]
     assert sum(isinstance(r, ConfigVersionConflict) for r in results) == 7
     (only,) = await repo.list_all()
     assert only.version == 2
@@ -112,7 +112,7 @@ async def test_save_e_delete_concorrentes_na_mesma_versao_um_vence(writable, kin
     listed = await repo.list_all()
     assert listed in ([Versioned(kind.make("a", "x"), 1)], [])
     # quem venceu é coerente com o estado: save venceu <=> o documento existe
-    assert (results[0] == 1) == bool(listed)
+    assert (results[0] == Versioned(kind.make("a", "x"), 1)) == bool(listed)
 
 
 async def test_id_repetido_save_substitui_exatamente_um_dos_documentos(writable, kind):
@@ -163,10 +163,10 @@ async def test_tres_tipos_com_o_mesmo_id_sao_independentes(writable):
     teams = writable.team_repo([make_team("x")])
     tools = writable.tool_repo([make_tool("x")])
 
-    assert await agents.save(make_agent("x", "a1"), 0) == 1
+    assert (await agents.save(make_agent("x", "a1"), 0)).version == 1
     await teams.delete("x", 0)
-    assert await tools.save(make_tool("x", "t1"), 0) == 1
-    assert await tools.save(make_tool("x", "t2"), 1) == 2
+    assert (await tools.save(make_tool("x", "t1"), 0)).version == 1
+    assert (await tools.save(make_tool("x", "t2"), 1)).version == 2
 
     assert await agents.list_all() == [Versioned(make_agent("x", "a1"), 1)]
     assert await teams.list_all() == []
@@ -249,7 +249,7 @@ async def test_entidade_completa_gravada_e_relida_pelo_runtime_e_pela_listagem_e
     kind = CONFIG_KINDS[kind_name]
     repo = kind.repo(writable, [])
 
-    assert await repo.save(rich(), 0) == 1
+    assert (await repo.save(rich(), 0)).version == 1
 
     assert await kind.get(repo, "rich") == rich()
     assert await repo.list_all() == [Versioned(rich(), 1)]

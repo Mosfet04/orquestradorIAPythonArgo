@@ -52,8 +52,8 @@ async def test_list_all_inclui_inativos_e_repetidos_na_ordem_com_legado_na_versa
 async def test_save_na_versao_esperada_grava_devolve_a_proxima_e_o_runtime_le(writable, kind):
     repo = kind.repo(writable, [kind.make("a"), kind.make("b")])
 
-    assert await repo.save(kind.make("a", "v1"), 0) == 1
-    assert await repo.save(kind.make("a", "v2", active=False), 1) == 2
+    assert (await repo.save(kind.make("a", "v1"), 0)).version == 1
+    assert (await repo.save(kind.make("a", "v2", active=False), 1)).version == 2
 
     assert await repo.list_all() == [Versioned(kind.make("a", "v2", active=False), 2), Versioned(kind.make("b"), 0)]
     assert await kind.get(repo, "a") == kind.make("a", "v2", active=False)
@@ -66,7 +66,7 @@ async def test_dois_saves_concorrentes_na_mesma_versao_um_vence_o_outro_conflita
         repo.save(kind.make("a", "x"), 0), repo.save(kind.make("a", "y"), 0), return_exceptions=True
     )
 
-    (winner,) = [i for i, r in enumerate(results) if r == 1]
+    (winner,) = [i for i, r in enumerate(results) if not isinstance(r, Exception) and r.version == 1]
     (loser,) = [r for r in results if isinstance(r, ConfigVersionConflict)]
     assert (loser.entity_id, loser.expected_version) == ("a", 0)
     assert await repo.list_all() == [Versioned(kind.make("a", "xy"[winner]), 1)]
@@ -89,7 +89,7 @@ async def test_save_de_id_novo_so_na_versao_0_e_criar_de_novo_conflita(writable,
 
     with pytest.raises(ConfigVersionConflict):
         await repo.save(kind.make("novo"), 3)
-    assert await repo.save(kind.make("novo"), 0) == 1
+    assert (await repo.save(kind.make("novo"), 0)).version == 1
     with pytest.raises(ConfigVersionConflict):
         await repo.save(kind.make("novo", "outra criação"), 0)
 
@@ -112,8 +112,8 @@ async def test_com_id_repetido_save_e_delete_agem_no_documento_da_versao_esperad
     """FA-02: o ``If-Match`` aponta o documento; com o id repetido, a versão escolhe qual."""
     repo = kind.repo(writable, [kind.make("a"), kind.make("a", "repetido")])
 
-    assert await repo.save(kind.make("a", "v1"), 0) == 1
-    assert await repo.save(kind.make("a", "repetido v1"), 0) == 1
+    assert (await repo.save(kind.make("a", "v1"), 0)).version == 1
+    assert (await repo.save(kind.make("a", "repetido v1"), 0)).version == 1
     with pytest.raises(ConfigVersionConflict):
         await repo.save(kind.make("a", "terceiro"), 0)
     await repo.delete("a", 1)

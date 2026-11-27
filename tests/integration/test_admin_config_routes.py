@@ -13,7 +13,7 @@ import pytest
 
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.ports import InvalidModelConfigError
-from src.domain.repositories.versioning import ConfigVersionConflict
+from src.domain.repositories.versioning import ConfigVersionConflict, Versioned
 from src.presentation.routes.admin_config import router as admin_config_router
 from tests.fakes.admin_config_app import (
     ADMIN,
@@ -325,7 +325,11 @@ async def test_get_e_put_do_mesmo_documento_regrava_sem_mudar_nada(monkeypatch: 
     assert created.status_code == 201
     for fetched, replaced in replies.values():
         assert replaced.status_code == 200
-        assert replaced.json() == {**fetched.json(), "version": fetched.json()["version"] + 1}
+        # só a versão e a hora da gravação (FA-08) mudam
+        shown = replaced.json()["updated_at"]
+        rewritten = {**fetched.json(), "version": fetched.json()["version"] + 1, "updated_at": shown}
+        assert replaced.json() == rewritten
+        assert replaced.json()["updated_at"] >= (fetched.json()["updated_at"] or "")
 
 
 class _StaleSave(ConfigVersionConflict):
@@ -333,7 +337,7 @@ class _StaleSave(ConfigVersionConflict):
 
 
 class _StaleAgents(InMemoryAgentConfigRepository):
-    async def save(self, entity: AgentConfig, expected_version: int) -> int:
+    async def save(self, entity: AgentConfig, expected_version: int) -> Versioned[AgentConfig]:
         raise _StaleSave(entity.id, expected_version)
 
 

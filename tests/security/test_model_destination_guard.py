@@ -110,10 +110,12 @@ def test_openai_compatible_sem_api_key_ref_nao_recebe_a_chave_do_ambiente():
     model = registry.create_model(config)
     embedder = registry.create_embedder(config)
 
-    # Cliente do SDK montado como no primeiro request (sem rede): a chave é o placeholder.
-    assert model.get_client().api_key == "not-provided"  # type: ignore[attr-defined]
+    # Cliente do SDK montado como no primeiro request (sem rede): a chave é o placeholder. No chat, o
+    # assíncrono (o do app; com base_url da config o síncrono falha fechado, F4-01).
+    assert model.get_async_client().api_key == "not-provided"  # type: ignore[attr-defined]
     assert embedder.client.api_key == "not-provided"  # type: ignore[attr-defined]
-    assert str(model.get_client().base_url).startswith("https://gw.permitido.example/v1")  # type: ignore[attr-defined]
+    assert embedder.aclient.api_key == "not-provided"  # type: ignore[attr-defined]
+    assert str(model.get_async_client().base_url).startswith("https://gw.permitido.example/v1")  # type: ignore[attr-defined]
 
 
 # ── metadata/link-local: sempre recusados ───────────────────────────────────────────────────────

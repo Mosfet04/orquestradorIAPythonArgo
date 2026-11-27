@@ -8,15 +8,18 @@ Kubernetes montam secrets): symlink vale só se o destino final também estiver 
 arquivo efetivamente aberto é conferido de novo em ``/proc/self/fd`` (corrida entre a checagem e
 o ``open``). Sem ``/proc`` (ex.: macOS) ``file:`` falha fechado; use ``env:`` nesse caso.
 
-Síncrona e com I/O de arquivo: no caminho async, chame via ``asyncio.to_thread``.
+Síncrona e com I/O de arquivo: no caminho async, chame via ``asyncio.to_thread``. Headers por
+referência (tools HTTP e servidores MCP): ``resolve_header_refs``, async, já com o ``file:`` em thread.
 """
 
 from __future__ import annotations
 
+import asyncio
 import os
 import stat
+from collections.abc import Mapping
 
-from src.domain.entities.model_config import ENV_SCHEME, parse_secret_ref
+from src.domain.entities.model_config import ENV_SCHEME, FILE_SCHEME, is_secret_ref, parse_secret_ref
 
 DEFAULT_SECRETS_DIR = "/run/secrets"
 MAX_SECRET_BYTES = 64 * 1024
@@ -24,6 +27,34 @@ MAX_SECRET_BYTES = 64 * 1024
 
 class SecretResolutionError(ValueError):
     """Referência de segredo que não resolve. A mensagem nunca traz o valor."""
+
+
+class UnresolvedHeaderError(Exception):
+    """Referência de header que não resolveu: o nome do header e o tipo do erro (o texto cita variável ou caminho)."""
+
+    def __init__(self, name: str, error_type: str) -> None:
+        super().__init__("header por referência não resolvido")
+        self.name = name
+        self.error_type = error_type
+
+
+async def resolve_header_refs(headers: Mapping[str, str], secrets_dir: str) -> dict[str, str]:
+    """Headers com cada referência trocada pelo valor agora; ``file:`` lê o arquivo fora do event loop.
+
+    Falha: ``UnresolvedHeaderError`` com o nome do header e o tipo do erro, sem exceção encadeada.
+    """
+    resolved: dict[str, str] = {}
+    for name, value in headers.items():
+        try:
+            if not is_secret_ref(value):
+                resolved[name] = value
+            elif value.startswith(f"{FILE_SCHEME}:"):
+                resolved[name] = await asyncio.to_thread(resolve_secret, value, secrets_dir=secrets_dir)
+            else:
+                resolved[name] = resolve_secret(value, secrets_dir=secrets_dir)  # env: sem I/O
+        except (SecretResolutionError, OSError) as exc:  # OSError: leitura do arquivo que falha no meio
+            raise UnresolvedHeaderError(name, type(exc).__name__) from None
+    return resolved
 
 
 def resolve_secret(ref: str, *, secrets_dir: str = DEFAULT_SECRETS_DIR) -> str:

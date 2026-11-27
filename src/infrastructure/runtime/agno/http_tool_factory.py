@@ -3,18 +3,26 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import random
 import re
-from collections.abc import Mapping
+import zlib
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
 
 import httpx
 from agno.tools.function import Function
 
-from src.domain.entities.model_config import FILE_SCHEME, is_secret_ref
+from src.domain.entities.model_config import is_secret_ref
 from src.domain.entities.tool import HttpMethod, ParameterType, Tool, ToolParameter
 from src.domain.ports import ILogger, IToolFactory
-from src.infrastructure.config.secrets import DEFAULT_SECRETS_DIR, SecretResolutionError, resolve_secret
+from src.infrastructure.config.secrets import DEFAULT_SECRETS_DIR, UnresolvedHeaderError, resolve_header_refs
+from src.infrastructure.runtime.agno.tool_audit import audited_entrypoint
+from src.infrastructure.security.guarded_http import GuardedAsyncTransport, cookieless_jar
+from src.infrastructure.security.ssrf import BlockedDestinationError, DestinationRule
+from src.infrastructure.tools.call_outcome import ToolCallOutcome
 
 # ParameterType -> tipo JSON Schema. ``float`` é o nome legado do Mongo para ``number``.
 _JSON_SCHEMA_TYPES: dict[ParameterType, str] = {
@@ -41,6 +49,23 @@ _DOT_SEGMENTS = (".", "..")
 _MAX_UNKNOWN_NAMES = 10
 _MAX_NAME_LENGTH = 64
 
+DEFAULT_TIMEOUT_SECONDS = 30.0
+DEFAULT_MAX_RESPONSE_BYTES = 1024 * 1024
+"""Corpo (já descomprimido) que a tool lê do upstream; acima disso, erro curto ao modelo."""
+_ACCEPT_ENCODING = "gzip, deflate"
+# gzip e zlib ("deflate" do HTTP): ``wbits`` com 32 detecta o cabeçalho de um ou de outro.
+_ZLIB_ENCODINGS = frozenset({"gzip", "x-gzip", "deflate"})
+_IDENTITY_ENCODINGS = frozenset({"", "identity"})
+DEFAULT_RETRIES = 2
+DEFAULT_RETRY_BACKOFF_SECONDS = 0.25
+_MAX_BACKOFF_SECONDS = 5.0
+_IDEMPOTENT = frozenset({HttpMethod.GET, HttpMethod.PUT, HttpMethod.DELETE})
+_RETRY_STATUS = frozenset({502, 503, 504})
+# Antes de qualquer byte do request sair: repetir é seguro até em POST/PATCH.
+_NOT_SENT = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
+_TRANSIENT = (*_NOT_SENT, httpx.ReadTimeout, httpx.WriteTimeout, httpx.ReadError, httpx.RemoteProtocolError)
+_JITTER = random.SystemRandom()  # jitter de backoff, não segredo; o do sistema evita o aviso do bandit
+
 
 class HttpToolFactory(IToolFactory):
     """Cria uma ``Function`` agno por ``Tool``, executada com httpx async.
@@ -51,7 +76,7 @@ class HttpToolFactory(IToolFactory):
     O entrypoint é async: use ``Agent.arun``; no ``Agent.run`` síncrono o agno recusa o
     run com erro explícito (``_raise_if_async_tools_in_list``).
 
-    Com ``skip_entrypoint_processing`` o agno não valida os argumentos: ``http_function``
+    Com ``skip_entrypoint_processing`` o agno não valida os argumentos: ``http_call``
     confere chaves declaradas, obrigatórios, tipo básico e segmento ``.``/``..`` em
     parâmetro de rota e, em violação, devolve erro curto ao modelo sem chamar o upstream.
     Tool cuja rota tem ``{x}`` sem parâmetro ``x`` obrigatório é recusada na criação.
@@ -61,17 +86,74 @@ class HttpToolFactory(IToolFactory):
     não resolve: o upstream não é chamado e o log leva só o nome do header e o tipo do erro. Redirect
     nunca é seguido (``follow_redirects=False`` explícito): o destino é só o da ``route``.
 
+    F4-01: um ``httpx.AsyncClient`` para todas as tools, criado na primeira chamada sobre ``transport``
+    (no app, o ``GuardedAsyncTransport`` com a regra da ``TOOL_ROUTE_ALLOWLIST``: o destino é conferido na
+    conexão e o TCP abre no IP conferido) e fechado em ``aclose`` (shutdown). Sem ``transport``, o mesmo
+    transporte guardado com a regra padrão (só endereço público). Limites: ``timeout`` por request e
+    ``max_response_bytes`` do corpo; retry com backoff exponencial e jitter (``retries`` vezes) em falha
+    transiente ou 502/503/504, só em método idempotente (GET/PUT/DELETE) ou quando a conexão nem abriu.
+    ``timeout`` vale por operação do httpx e também como prazo total de cada tentativa (upstream que
+    goteja bytes não segura a tool); o pior caso é ``(retries + 1) * timeout`` mais o backoff.
+    O corpo é lido cru e descomprimido aqui (gzip/deflate, os do ``Accept-Encoding`` enviado) com saída
+    limitada ao que falta do ``max_response_bytes``: um gzip pequeno que abre em gigas não chega a abrir.
+    Outro ``Content-Encoding`` é recusado com erro curto. O cliente não guarda cookie: um ``Set-Cookie``
+    de uma tool não vai na chamada de outra (nem de outro agente ou usuário).
+    Placeholder só no caminho e na query: no esquema ou no ``host[:porta]`` a tool é recusada na criação
+    (documento legado; a API admin já recusa na escrita). A query fixa da ``route`` é mantida junto dos
+    argumentos de GET/DELETE.
+
     Falha de rede ou erro inesperado: o resultado devolvido leva só o tipo da exceção, nunca o
     texto (o do httpx/h11 pode citar um header inteiro, e o resultado vai ao contexto do LLM, ao
     cliente AG-UI, a ``agno_sessions`` e ao span). Resposta com status de erro devolve o corpo do
     upstream, que é dado da própria tool.
     """
 
-    def __init__(self, logger: ILogger, *, timeout: float = 30.0, secrets_dir: str = DEFAULT_SECRETS_DIR) -> None:
-        """``secrets_dir``: raiz das referências ``file:`` (``SECRETS_DIR``)."""
+    def __init__(
+        self,
+        logger: ILogger,
+        *,
+        timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        secrets_dir: str = DEFAULT_SECRETS_DIR,
+        transport: httpx.AsyncBaseTransport | None = None,
+        max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
+        retries: int = DEFAULT_RETRIES,
+        retry_backoff: float = DEFAULT_RETRY_BACKOFF_SECONDS,
+    ) -> None:
+        """``secrets_dir``: raiz das referências ``file:`` (``SECRETS_DIR``). ``transport``: do composition root."""
         self._logger = logger
-        self._timeout = timeout
         self._secrets_dir = secrets_dir
+        self._transport = transport
+        self._client: httpx.AsyncClient | None = None
+        self._closed = False
+        self._limits = _CallLimits(timeout, max_response_bytes, retries, retry_backoff)
+
+    async def aclose(self) -> None:
+        """Fecha o cliente compartilhado e o transporte (o injetado também, se nenhuma chamada saiu); idempotente.
+
+        Depois dele, chamada de tool não sai (erro curto ao modelo), em vez de reabrir com outra regra.
+        """
+        if self._closed:
+            return
+        self._closed = True
+        client, self._client = self._client, None
+        if client is not None:
+            await client.aclose()  # fecha o transporte dele
+        elif self._transport is not None:
+            await self._transport.aclose()
+
+    def _shared_client(self) -> httpx.AsyncClient:
+        if self._closed:
+            raise RuntimeError("cliente HTTP das tools já fechado (shutdown)")
+        if self._client is None:
+            # Sem transport injetado (uso avulso): o guardado com a regra padrão; monta o TLS (lê disco) uma vez.
+            transport = self._transport or GuardedAsyncTransport(DestinationRule())
+            self._client = httpx.AsyncClient(
+                transport=transport,
+                follow_redirects=False,
+                cookies=cookieless_jar(),
+                headers={"Accept-Encoding": _ACCEPT_ENCODING},
+            )
+        return self._client
 
     # ── IToolFactory ────────────────────────────────────────────────
 
@@ -79,12 +161,21 @@ class HttpToolFactory(IToolFactory):
         """Cria uma ``Function`` do agno por tool HTTP; tool inválida é descartada com log."""
         functions: list[Function] = []
         for tool in tools:
+            if tool.is_mcp:  # a route é o servidor MCP, não um endpoint a chamar com http_method
+                self._logger.error("Tool MCP recusada pela fábrica HTTP (vai pela fábrica MCP)", tool_id=tool.id)
+                continue
             invalid = _invalid_route_placeholders(tool)
             if invalid:
                 self._logger.error(
                     "Tool recusada: placeholder da rota sem parâmetro obrigatório declarado",
                     tool_id=tool.id,
                     placeholders=invalid,
+                )
+                continue
+            if _placeholder_outside_path(tool.route):
+                self._logger.error(
+                    "Tool recusada: placeholder no esquema ou no host da rota (só no caminho e na query)",
+                    tool_id=tool.id,
                 )
                 continue
             try:
@@ -102,13 +193,14 @@ class HttpToolFactory(IToolFactory):
 
     def _create_function(self, tool: Tool) -> Function:
         logger = self._logger
-        timeout = self._timeout
+        limits = self._limits
         secrets_dir = self._secrets_dir
+        shared_client = self._shared_client
         configured_headers = tool.headers or {}
         # Sem referência (o caso comum), a chamada não paga nada além da cópia de antes.
         has_refs = any(is_secret_ref(value) for value in configured_headers.values())
 
-        async def http_function(**kwargs: Any) -> str:
+        async def http_call(kwargs: dict[str, Any]) -> ToolCallOutcome:
             """Executa a requisição HTTP para o tool."""
             try:
                 arguments = _validated_arguments(tool, kwargs)
@@ -118,29 +210,40 @@ class HttpToolFactory(IToolFactory):
                     tool_id=tool.id,
                     arguments=exc.names,
                 )
-                return f"Erro nos argumentos da tool {tool.id}: {exc}"
+                return ToolCallOutcome.refused(f"Erro nos argumentos da tool {tool.id}: {exc}", "invalid_arguments")
             try:
                 headers = (
-                    await _resolved_headers(configured_headers, secrets_dir) if has_refs else dict(configured_headers)
+                    await resolve_header_refs(configured_headers, secrets_dir) if has_refs else dict(configured_headers)
                 )
-            except _UnresolvedHeader as exc:
+            except UnresolvedHeaderError as exc:
                 logger.error(
                     "Header por referência da tool não resolvido; a chamada não saiu",
                     tool_id=tool.id,
                     header=exc.name,
                     error_type=exc.error_type,
                 )
-                return f"Erro na tool {tool.id}: header por referência não resolvido ({exc.name})"
-            return await _send(tool, arguments, headers, timeout, logger)
+                return ToolCallOutcome.error(
+                    f"Erro na tool {tool.id}: header por referência não resolvido ({exc.name})",
+                    "unresolved_header",
+                    error_type=exc.error_type,
+                )
+            return await _send(shared_client, tool, arguments, headers, limits, logger)
 
-        instructions = _build_instructions(tool)
+        instructions = build_instructions(tool)
         return Function(
             name=tool.id,
             description=tool.description,
             parameters=build_parameters_schema(tool.parameters),
             instructions=instructions,
             add_instructions=instructions is not None,
-            entrypoint=http_function,
+            entrypoint=audited_entrypoint(
+                http_call,
+                logger=logger,
+                source="http",
+                tool_id=tool.id,
+                function_name=tool.id,
+                declared_arguments=[parameter.name for parameter in tool.parameters],
+            ),
             # sem isto o agno recalcula ``required`` pela assinatura (**kwargs) e
             # sobrescreve o schema (agno/tools/function.py, ``process_entrypoint``)
             skip_entrypoint_processing=True,
@@ -172,7 +275,7 @@ def build_parameters_schema(parameters: list[ToolParameter]) -> dict[str, Any]:
     }
 
 
-def _build_instructions(tool: Tool) -> str | None:
+def build_instructions(tool: Tool) -> str | None:
     """Texto que o agno põe no system message; ``None`` se a tool não tem instruções."""
     text = (tool.instructions or "").strip()
     if not text:
@@ -187,37 +290,19 @@ def _invalid_route_placeholders(tool: Tool) -> list[str]:
     return [name for name in names if name not in required]
 
 
+def _placeholder_outside_path(route: str) -> bool:
+    """``True`` se há ``{`` ou ``}`` no esquema ou no ``host[:porta]`` (o modelo escolheria o destino)."""
+    scheme, separator, rest = route.partition("://")
+    authority = rest.split("/", 1)[0].split("?", 1)[0].split("#", 1)[0] if separator else route
+    return any(ch in scheme + authority for ch in "{}")
+
+
 class _ArgumentError(ValueError):
     """Argumentos do tool call fora do contrato da tool; ``names`` vai para o log (sem valores)."""
 
     def __init__(self, message: str, names: list[str]) -> None:
         super().__init__(message)
         self.names = names
-
-
-class _UnresolvedHeader(Exception):
-    """Referência de header que não resolveu: o nome do header e o tipo do erro (o texto cita variável ou caminho)."""
-
-    def __init__(self, name: str, error_type: str) -> None:
-        super().__init__("header por referência não resolvido")
-        self.name = name
-        self.error_type = error_type
-
-
-async def _resolved_headers(headers: Mapping[str, str], secrets_dir: str) -> dict[str, str]:
-    """Headers com cada referência trocada pelo valor agora; ``file:`` lê o arquivo fora do event loop."""
-    resolved: dict[str, str] = {}
-    for name, value in headers.items():
-        try:
-            if not is_secret_ref(value):
-                resolved[name] = value
-            elif value.startswith(f"{FILE_SCHEME}:"):
-                resolved[name] = await asyncio.to_thread(resolve_secret, value, secrets_dir=secrets_dir)
-            else:
-                resolved[name] = resolve_secret(value, secrets_dir=secrets_dir)  # env: sem I/O
-        except (SecretResolutionError, OSError) as exc:  # OSError: leitura do arquivo que falha no meio
-            raise _UnresolvedHeader(name, type(exc).__name__) from None
-    return resolved
 
 
 def _has_json_type(value: Any, expected: str) -> bool:
@@ -232,7 +317,8 @@ def _validated_arguments(tool: Tool, kwargs: dict[str, Any]) -> dict[str, Any]:
     Só chaves declaradas; ``null`` em opcional conta como ausente (o agno também troca as
     strings "null"/"none" por ``None``: indistinguíveis); obrigatórios presentes;
     tipo básico pelo ``type`` declarado; parâmetro de rota não pode ser ``.`` nem ``..``
-    (o ``quote`` não codifica ponto e o segmento seria normalizado pelo httpx).
+    (o ``quote`` não codifica ponto e o segmento seria normalizado pelo httpx) nem vazio
+    (``/clientes/{id}`` viraria ``/clientes/``, outro recurso).
     """
     declared = {p.name: p for p in tool.parameters}
     _reject_unknown(declared, kwargs)
@@ -283,59 +369,189 @@ def _reject_wrong_types(declared: dict[str, ToolParameter], arguments: dict[str,
 
 
 def _reject_dot_segments(tool: Tool, arguments: dict[str, Any]) -> None:
-    """Recusa ``.`` e ``..`` em parâmetro de rota (o httpx normalizaria o segmento)."""
+    """Recusa ``.``, ``..`` e vazio em parâmetro de rota (o httpx normalizaria o segmento; vazio muda o recurso)."""
     for name in _PLACEHOLDER.findall(tool.route):
         if arguments.get(name) in _DOT_SEGMENTS:
             raise _ArgumentError(
                 f"valor inválido para {name}: '.' e '..' não são permitidos na rota", [name]
             )
+        if arguments.get(name) == "":
+            raise _ArgumentError(f"valor inválido para {name}: vazio não é permitido na rota", [name])
+
+
+@dataclass(frozen=True)
+class _CallLimits:
+    """Limites de uma chamada: timeout (por operação e por tentativa), corpo máximo e retry."""
+
+    timeout: float
+    max_response_bytes: int
+    retries: int
+    retry_backoff: float
+
+
+class _ResponseTooLarge(Exception):
+    """Corpo do upstream acima de ``max_response_bytes``."""
+
+
+class _UnsupportedEncoding(Exception):
+    """``Content-Encoding`` da resposta fora de gzip/deflate/identity."""
+
+
+def backoff_delay(attempt: int, base: float, uniform: Callable[[float, float], float] = _JITTER.uniform) -> float:
+    """Espera antes da repetição ``attempt`` (0, 1...): "full jitter" entre 0 e ``base * 2**attempt`` (teto 5 s)."""
+    return uniform(0.0, min(_MAX_BACKOFF_SECONDS, base * 2**attempt))
+
+
+def _retryable_error(method: HttpMethod, exc: httpx.RequestError) -> bool:
+    if isinstance(exc, _NOT_SENT):
+        return True
+    return method in _IDEMPOTENT and isinstance(exc, _TRANSIENT)
 
 
 async def _send(
+    shared_client: Callable[[], httpx.AsyncClient],
     tool: Tool,
     arguments: dict[str, Any],
     headers: dict[str, str],
-    request_timeout: float,
+    limits: _CallLimits,
     logger: ILogger,
-) -> str:
+) -> ToolCallOutcome:
     """Faz a requisição da tool; toda falha vira log nosso e resultado sem o texto da exceção."""
     try:
         # Montar a requisição também pode falhar (ex.: argumento de rota que o quote não
         # codifica): dentro do try, para a falha ter log nosso e resultado sem o texto dela.
         headers.setdefault("Content-Type", "application/json")
         url, remaining = _resolve_url(tool.route, arguments)
-        req_kwargs = _build_request_kwargs(tool, url, headers, remaining, request_timeout)
-        async with httpx.AsyncClient(verify=True, follow_redirects=False) as client:
-            response = await client.request(**req_kwargs)
-            response.raise_for_status()
-        logger.info(
-            "HTTP OK",
-            tool_id=tool.id,
-            status=response.status_code,
+        req_kwargs = _build_request_kwargs(tool, url, headers, remaining, limits.timeout)
+        status, body, encoding = await _send_with_retry(shared_client(), tool, req_kwargs, limits, logger)
+        return _result(tool, status, body, encoding, logger)
+    except BlockedDestinationError as exc:
+        logger.error("Destino da tool recusado pela guarda de rede", tool_id=tool.id, error_type=type(exc).__name__)
+        return ToolCallOutcome.refused(
+            f"Erro na tool {tool.id}: destino recusado pela guarda de rede",
+            "blocked_destination",
+            error_type=type(exc).__name__,
         )
-        return _serialize(response)
-    except httpx.HTTPStatusError as exc:
-        logger.error(
-            "HTTP error",
-            tool_id=tool.id,
-            status=getattr(exc.response, "status_code", None),
+    except _ResponseTooLarge:
+        logger.error("Resposta da tool acima do limite", tool_id=tool.id, limit=limits.max_response_bytes)
+        return ToolCallOutcome.error(
+            f"Erro na tool {tool.id}: resposta acima do limite de {limits.max_response_bytes} bytes",
+            "response_too_large",
         )
-        return _format_http_error(exc)
+    except _UnsupportedEncoding:
+        logger.error("Content-Encoding da resposta da tool sem suporte", tool_id=tool.id)
+        return ToolCallOutcome.error(
+            f"Erro na tool {tool.id}: Content-Encoding da resposta sem suporte", "unsupported_encoding"
+        )
     except httpx.RequestError as exc:
         logger.error(
             "Request error",
             tool_id=tool.id,
             error_type=type(exc).__name__,
         )
-        kind = "timeout" if isinstance(exc, httpx.TimeoutException) else "falha"
-        return f"Erro na requisição: {kind} ao chamar a tool ({type(exc).__name__})"
+        timeout = isinstance(exc, httpx.TimeoutException)
+        return ToolCallOutcome.error(
+            f"Erro na requisição: {'timeout' if timeout else 'falha'} ao chamar a tool ({type(exc).__name__})",
+            "timeout" if timeout else "request_failed",
+            error_type=type(exc).__name__,
+        )
     except Exception as exc:  # noqa: BLE001 - logado; o modelo recebe o erro como resultado da tool
         logger.error(
             "Erro inesperado",
             tool_id=tool.id,
             error_type=type(exc).__name__,
         )
-        return f"Erro inesperado ao chamar a tool ({type(exc).__name__})"
+        return ToolCallOutcome.error(
+            f"Erro inesperado ao chamar a tool ({type(exc).__name__})", "unexpected", error_type=type(exc).__name__
+        )
+
+
+def _result(tool: Tool, status: int, body: bytes, encoding: str, logger: ILogger) -> ToolCallOutcome:
+    """Resultado ao modelo: o corpo de erro como texto; o de sucesso, serializado."""
+    if not 200 <= status < 300:
+        logger.error("HTTP error", tool_id=tool.id, status=status)
+        text = f"Erro HTTP {status}: {body.decode(encoding, errors='replace')}"
+        return ToolCallOutcome.error(text, "http_status", http_status=status)
+    logger.info("HTTP OK", tool_id=tool.id, status=status)
+    return ToolCallOutcome.ok(_serialize(body, encoding), http_status=status)
+
+
+async def _send_with_retry(
+    client: httpx.AsyncClient,
+    tool: Tool,
+    req_kwargs: dict[str, Any],
+    limits: _CallLimits,
+    logger: ILogger,
+) -> tuple[int, bytes, str]:
+    """Status, corpo (até o limite) e encoding; repete falha transiente/502-504 conforme o método."""
+    attempt = 0
+    while True:
+        try:
+            status, body, encoding = await _read_within_deadline(client, req_kwargs, limits)
+        except httpx.RequestError as exc:
+            if attempt >= limits.retries or not _retryable_error(tool.http_method, exc):
+                raise
+            retry_reason: object = type(exc).__name__
+        else:
+            if attempt >= limits.retries or status not in _RETRY_STATUS or tool.http_method not in _IDEMPOTENT:
+                return status, body, encoding
+            retry_reason = status
+        logger.warning("Repetindo a chamada da tool", tool_id=tool.id, attempt=attempt + 1, reason=retry_reason)
+        await asyncio.sleep(backoff_delay(attempt, limits.retry_backoff))
+        attempt += 1
+
+
+async def _read_within_deadline(
+    client: httpx.AsyncClient, req_kwargs: dict[str, Any], limits: _CallLimits
+) -> tuple[int, bytes, str]:
+    """Uma tentativa com prazo total ``limits.timeout`` (o do httpx é por operação); estouro vira ``ReadTimeout``."""
+    try:
+        async with asyncio.timeout(limits.timeout):
+            return await _read_once(client, req_kwargs, limits.max_response_bytes)
+    except TimeoutError:
+        raise httpx.ReadTimeout("prazo total da tentativa esgotado") from None
+
+
+async def _read_once(client: httpx.AsyncClient, req_kwargs: dict[str, Any], max_bytes: int) -> tuple[int, bytes, str]:
+    """Um request com o corpo lido cru em streaming e descomprimido até ``max_bytes`` (``_ResponseTooLarge`` acima)."""
+    async with client.stream(**req_kwargs) as response:
+        declared = response.headers.get("Content-Length", "")
+        if declared.isdigit() and int(declared) > max_bytes:
+            raise _ResponseTooLarge
+        decompressor = _decompressor(response.headers)
+        if response.is_stream_consumed:  # transporte que devolve o corpo já lido e aberto (ex.: MockTransport)
+            if len(response.content) > max_bytes:
+                raise _ResponseTooLarge
+            return response.status_code, response.content, response.encoding or "utf-8"
+        body = bytearray()
+        async for raw in response.aiter_raw():
+            chunk = raw if decompressor is None else _inflate(decompressor, raw, max_bytes - len(body) + 1)
+            body += chunk
+            if len(body) > max_bytes:
+                raise _ResponseTooLarge
+        return response.status_code, bytes(body), response.encoding or "utf-8"
+
+
+def _decompressor(headers: httpx.Headers) -> zlib._Decompress | None:
+    """Descompressor do ``Content-Encoding`` (``None``: corpo sem compressão); outro valor é recusado."""
+    content_encoding = headers.get("Content-Encoding", "").strip().lower()
+    if content_encoding in _IDENTITY_ENCODINGS:
+        return None
+    if content_encoding in _ZLIB_ENCODINGS:
+        return zlib.decompressobj(zlib.MAX_WBITS | 32)
+    raise _UnsupportedEncoding
+
+
+def _inflate(decompressor: zlib._Decompress, raw: bytes, budget: int) -> bytes:
+    """Descomprime ``raw`` com saída de no máximo ``budget`` bytes (o que falta do limite + 1).
+
+    Saída menor que ``budget`` quer dizer que a entrada acabou (nada fica em ``unconsumed_tail``); saída
+    igual estoura o limite e o chamador para. Assim nenhum pedaço abre mais que o limite.
+    """
+    try:
+        return decompressor.decompress(raw, budget)
+    except zlib.error as exc:
+        raise httpx.DecodingError("corpo comprimido inválido") from exc
 
 
 def _build_request_kwargs(
@@ -345,7 +561,11 @@ def _build_request_kwargs(
     remaining: dict[str, Any],
     timeout: float,
 ) -> dict[str, Any]:
-    """Constrói o dicionário de kwargs para ``httpx.AsyncClient.request``."""
+    """Constrói o dicionário de kwargs para ``httpx.AsyncClient.stream``.
+
+    GET/DELETE: os argumentos restantes entram na query junto da query fixa da ``route`` (o ``params=``
+    do httpx a substituiria inteira).
+    """
     req_kwargs: dict[str, Any] = {
         "method": tool.http_method.value,
         "url": url,
@@ -353,18 +573,11 @@ def _build_request_kwargs(
         "timeout": timeout,
     }
     if tool.http_method in (HttpMethod.GET, HttpMethod.DELETE):
-        req_kwargs["params"] = remaining or None
+        if remaining:
+            req_kwargs["url"] = httpx.URL(url).copy_merge_params(remaining)
     else:
         req_kwargs["json"] = remaining or None
     return req_kwargs
-
-
-def _format_http_error(exc: httpx.HTTPStatusError) -> str:
-    """Formata mensagem de erro para respostas HTTP com status de erro."""
-    resp = exc.response
-    code = resp.status_code if resp else "?"
-    text = resp.text if resp else ""
-    return f"Erro HTTP {code}: {text}"
 
 
 def _resolve_url(
@@ -384,8 +597,13 @@ def _resolve_url(
     return url, remaining
 
 
-def _serialize(response: httpx.Response) -> str:
+def _serialize(body: bytes, encoding: str) -> str:
+    """JSON vira a representação Python (como antes); o resto, texto no charset da resposta.
+
+    JSON aninhado demais para o decoder (``RecursionError``) também volta como texto.
+    """
+    text = body.decode(encoding, errors="replace")
     try:
-        return str(response.json())
-    except (ValueError, httpx.DecodingError):
-        return response.text
+        return str(json.loads(text))
+    except (ValueError, RecursionError):
+        return text

@@ -251,10 +251,13 @@ class _YamlRepository(ABC, Generic[ConfigEntityT]):
         """Documento -> entidade (o ``map_*_document`` da seção)."""
 
     async def list_all(self) -> list[Versioned[ConfigEntityT]]:
-        """Todos os documentos da seção, inclusive inativos e ids repetidos, na ordem do arquivo."""
+        """Todos os documentos da seção, inclusive inativos e ids repetidos, na ordem do arquivo.
+
+        Sem ``updated_at`` (``None``): a API não grava no arquivo e a hora dele, se houver, é do operador.
+        """
         return await self._documents(lambda doc: Versioned(self._map(doc), document_version(doc)), lambda _: True)
 
-    async def save(self, entity: ConfigEntityT, expected_version: int) -> int:
+    async def save(self, entity: ConfigEntityT, expected_version: int) -> Versioned[ConfigEntityT]:
         """Recusa: o arquivo é do operador (``ConfigStoreReadOnly``)."""
         raise ConfigStoreReadOnly()
 

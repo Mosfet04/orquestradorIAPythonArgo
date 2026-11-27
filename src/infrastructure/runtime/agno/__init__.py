@@ -1,4 +1,4 @@
-"""Adapter do runtime de agentes sobre o agno 2.5: o único lugar de ``src`` que monta Agent/Team.
+"""Adapter do runtime de agentes sobre o agno 3.1: o único lugar de ``src`` que monta Agent/Team.
 
 - ``runtime``: ``AgnoRuntime``, implementação da porta ``AgentRuntime`` e ciclo de vida do AgentOS
   no app (``mount``/``start``/``close``);
@@ -8,6 +8,8 @@
 - ``user_id_guardrail``: recusa run sem ``user_id`` de entidade com memória de usuário;
 - ``hierarchical_search_tool``: ``Toolkit`` da busca hierárquica;
 - ``http_tool_factory``: ``Function`` do agno para cada tool HTTP (porta ``IToolFactory``);
+- ``mcp_tool_factory``: ``Function`` para cada tool MCP da allowlist e o despacho por fonte (``ToolFactoryBySource``);
+- ``tool_audit``: entrypoint auditado das tools HTTP e MCP (um evento de auditoria por chamada, F4-03);
 - ``llm_summary_generator``: sumário de seção pelo ``Model`` do agno (porta ``ISummaryGenerator``);
 - ``agui_router``: rotas AG-UI por entidade, com o conversor de eventos do agno;
 - ``run_cancellation``: gerenciador e rotas de cancelamento de run.

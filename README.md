@@ -35,7 +35,7 @@ cp .env.example .env  # configure MongoDB + API keys
 python app.py
 ```
 
-Dependencies are declared in `requirements.in` / `requirements-dev.in` and locked with hashes by `pip-compile` (`requirements.txt` is just `-r requirements.lock`). The lock is generated on Linux/CPython 3.12 and validated for Linux 3.11/3.12. Optional providers (`anthropic`, `groq`, `mcp`, `PyJWT`) are not installed by default. How to regenerate the lock: [CONTRIBUTING.md](CONTRIBUTING.md#dependencies-and-lock-files).
+Dependencies are declared in `requirements.in` / `requirements-dev.in` and locked with hashes by `pip-compile` (`requirements.txt` is just `-r requirements.lock`). The lock is generated on Linux/CPython 3.12 and validated for Linux 3.11/3.12. Optional providers (`anthropic`, `groq`, `PyJWT`) are not installed by default; the `mcp` extra (MCP server tools) has its own hashed lock: `pip install --require-hashes -r requirements.lock -r requirements-mcp.lock`. How to regenerate the lock: [CONTRIBUTING.md](CONTRIBUTING.md#dependencies-and-lock-files).
 
 **Or with Docker** (credentials come only from `.env`):
 ```bash
