@@ -50,6 +50,7 @@ from src.domain.ports import ILogger
 from src.infrastructure.config.secrets import DEFAULT_SECRETS_DIR, UnresolvedHeaderError, resolve_header_refs
 from src.infrastructure.security.guarded_http import cookieless_jar
 from src.infrastructure.security.ssrf import BlockedDestinationError
+from src.infrastructure.tools.call_outcome import ToolCallOutcome
 
 if TYPE_CHECKING:
     from mcp import ClientSession
@@ -104,12 +105,17 @@ class PinnedTool:
 
 
 class McpServerError(Exception):
-    """Servidor MCP que não abriu: ``reason`` é texto nosso (sem host, header nem texto do SDK)."""
+    """Servidor MCP que não abriu: ``reason`` é texto nosso (sem host, header nem texto do SDK).
 
-    def __init__(self, reason: str, error_type: str | None = None) -> None:
+    ``refusal``: código da regra local que barrou a abertura (guarda SSRF, ``route`` não http(s)); ``None`` quando
+    o servidor só não respondeu. A auditoria (F4-03) registra o primeiro caso como ``refused``.
+    """
+
+    def __init__(self, reason: str, error_type: str | None = None, *, refusal: str | None = None) -> None:
         super().__init__(reason)
         self.reason = reason
         self.error_type = error_type or "McpServerError"
+        self.refusal = refusal
 
 
 class ResponseTooLargeError(Exception):
@@ -155,7 +161,8 @@ def _contains(exc: BaseException, kind: type[BaseException]) -> bool:
 
 def _open_failure(exc: BaseException) -> McpServerError:
     if _contains(exc, BlockedDestinationError):
-        return McpServerError("destino do servidor MCP recusado pela guarda SSRF", "BlockedDestinationError")
+        blocked = "destino do servidor MCP recusado pela guarda SSRF"
+        return McpServerError(blocked, "BlockedDestinationError", refusal="blocked_destination")
     if _contains(exc, TimeoutError):
         return McpServerError("servidor MCP sem resposta no prazo", "TimeoutError")
     error_type = _error_type(exc)
@@ -389,19 +396,23 @@ class McpSessions:
                 pinned.append(listed)
         return pinned
 
-    async def call(self, tool: Tool, name: str, arguments: dict[str, Any]) -> str:
-        """Chama ``name`` no servidor e devolve o texto para o modelo; toda falha vira erro curto, com log."""
+    async def call_with_outcome(self, tool: Tool, name: str, arguments: dict[str, Any]) -> ToolCallOutcome:
+        """Chama ``name`` no servidor: texto para o modelo e classificação para a auditoria (F4-03).
+
+        Toda falha vira erro curto, com log; ``reason`` é de vocabulário fixo, nunca o texto do servidor.
+        """
         label = f"Erro na tool MCP {tool.id}/{name}"
         if self._closed:
-            return f"{label}: {_CLOSED}"
+            return ToolCallOutcome.error(f"{label}: {_CLOSED}", "client_closed")
         expected = (tool.mcp_tools or {}).get(name)
         if expected is None:
-            return f"{label}: tool fora da allowlist"
+            return ToolCallOutcome.refused(f"{label}: tool fora da allowlist", "not_allowlisted")
         try:
             async with self._lock(tool.id):
                 connection = await self._current(tool, from_call=True)
         except _ConfigChanged:
-            return f"{label}: configuração do servidor MCP mudou; tente de novo"
+            changed = f"{label}: configuração do servidor MCP mudou; tente de novo"
+            return ToolCallOutcome.error(changed, "config_changed")
         except McpServerError as exc:
             self._logger.error(
                 "Servidor MCP indisponível; a chamada não saiu",
@@ -410,9 +421,12 @@ class McpSessions:
                 reason=exc.reason,
                 error_type=exc.error_type,
             )
-            return f"{label}: {exc.reason}"
+            text = f"{label}: {exc.reason}"
+            if exc.refusal is not None:
+                return ToolCallOutcome.refused(text, exc.refusal, error_type=exc.error_type)
+            return ToolCallOutcome.error(text, "server_unavailable", error_type=exc.error_type)
         if self._verified(tool, name, expected, connection) is None:
-            return f"{label}: {_DIVERGENT}"
+            return ToolCallOutcome.refused(f"{label}: {_DIVERGENT}", "schema_mismatch")
         try:
             result = await connection.run(connection.session.call_tool(name, arguments), self._timeout)
         except Exception as exc:  # noqa: BLE001 - erro curto ao modelo; sessão reaberta na próxima chamada
@@ -424,8 +438,9 @@ class McpSessions:
                 error_type=error_type,
             )
             await self._drop(tool.id, connection)
-            return f"{label}: falha na chamada ({error_type})"
-        return self._result_text(label, result)
+            failed = f"{label}: falha na chamada ({error_type})"
+            return ToolCallOutcome.error(failed, "call_failed", error_type=error_type)
+        return self._outcome(label, result)
 
     async def aclose(self) -> None:
         """Fecha todas as sessões em paralelo (shutdown: cada uma espera até 5 s); idempotente.
@@ -480,7 +495,10 @@ class McpSessions:
 
     async def _open(self, tool: Tool) -> _Connection:
         if urlsplit(tool.route).scheme.lower() not in _HTTP_SCHEMES:
-            raise McpServerError("route do servidor MCP deve ser http(s): stdio e processo local não são aceitos")
+            raise McpServerError(
+                "route do servidor MCP deve ser http(s): stdio e processo local não são aceitos",
+                refusal="unsupported_route",
+            )
         sdk = _import_sdk()
         try:
             headers = await resolve_header_refs(tool.headers or {}, self._secrets_dir)
@@ -554,7 +572,7 @@ class McpSessions:
             return None
         return listed
 
-    def _result_text(self, label: str, result: CallToolResult) -> str:
+    def _outcome(self, label: str, result: CallToolResult) -> ToolCallOutcome:
         from mcp.types import TextContent
 
         parts = [
@@ -565,5 +583,8 @@ class McpSessions:
             parts = [json.dumps(result.structuredContent, ensure_ascii=False)]
         text = "\n".join(parts)
         if len(text) > self._max_result_chars:
-            return f"{label}: resultado acima do limite ({self._max_result_chars} caracteres)"
-        return f"{label}: {text}" if result.isError else text
+            limit = f"{label}: resultado acima do limite ({self._max_result_chars} caracteres)"
+            return ToolCallOutcome.error(limit, "result_too_large")
+        if result.isError:
+            return ToolCallOutcome.error(f"{label}: {text}", "tool_error")
+        return ToolCallOutcome.ok(text)

@@ -226,6 +226,28 @@ def _is_sha256_hash_field(key: str, value: Any) -> bool:
     return key.endswith("_hash") and isinstance(value, str) and _SHA256_HEX.fullmatch(value) is not None
 
 
+# Identificação do evento de auditoria de tool call (F4-03, ``audit="tool_call"``): um nome de tool só alfanumérico
+# de 40+ caracteres casa ``aws_secret_key`` e um uuid4 com 16 dígitos seguidos casa ``credit_card``.
+_TOOL_AUDIT_IDENTITY_FIELDS = frozenset({"tool_id", "function", "mcp_tool", "run_id", "agent_id", "team_id"})
+_TOOL_AUDIT_IDENTITY_VALUE = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+
+def _is_tool_audit_identity(event_dict: dict[str, Any], key: str, value: Any) -> bool:
+    """Campo de identificação do evento de auditoria com valor no charset de id (uuid4, ``runId`` do AG-UI, nome).
+
+    Exceção pela forma do valor, não só pela chave: ``tool_id``/``function`` são texto livre na config, ``agent_id``/
+    ``team_id`` só passam por ``require_entity_id`` e o ``run_id`` do ``POST /agents/{id}/runs`` do AgentOS é escolhido
+    pelo cliente. Valor fora de ``[A-Za-z0-9_-]{1,64}`` (``=``, ``/``, ``+``, espaço, longo) segue a sanitização
+    geral, assim como as mesmas chaves em outros logs. ``session_id`` não entra: é campo sensível.
+    """
+    return (
+        event_dict.get("audit") == "tool_call"
+        and key in _TOOL_AUDIT_IDENTITY_FIELDS
+        and isinstance(value, str)
+        and _TOOL_AUDIT_IDENTITY_VALUE.fullmatch(value) is not None
+    )
+
+
 def sanitize_log_data(logger, method_name, event_dict):
     """Sanitiza dados sensíveis nos logs."""
     # Campos que não devem ser sanitizados (metadados do sistema)
@@ -260,7 +282,7 @@ def sanitize_log_data(logger, method_name, event_dict):
                     event_dict[key] = f"***MASKED***[hash:{value_hash}]"
                 else:
                     event_dict[key] = "***MASKED***"
-            elif not _is_sha256_hash_field(key_lower, value):
+            elif not (_is_sha256_hash_field(key_lower, value) or _is_tool_audit_identity(event_dict, key, value)):
                 # Para campos não sensíveis, aplicar sanitização geral
                 event_dict[key] = DataSanitizer.sanitize_data(value)
 
@@ -279,6 +301,9 @@ def setup_structlog():
         stream=sys.stdout,
         level=logging.INFO,
     )
+    # O httpx loga em INFO a URL inteira de cada request (query com argumentos do modelo nas tools HTTP, userinfo
+    # de route legada). A chamada de tool fica no evento de auditoria do F4-03, sem valores.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
     # Procesadores para desenvolvimento
     dev_processors = [

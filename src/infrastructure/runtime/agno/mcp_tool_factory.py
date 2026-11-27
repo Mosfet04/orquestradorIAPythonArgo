@@ -4,7 +4,8 @@
 fixado (``McpSessions.pinned_tools``), com nome ``<id da tool>__<nome no servidor>`` (dois servidores com a mesma
 tool não colidem), recusado com log se sair de ``[A-Za-z0-9_-]{1,64}`` (o provider recusaria o request inteiro;
 nome repetido no agente é conferido onde o agente junta as tools, ``AgentFactoryService``), descrição e
-``parameters`` do servidor (já conferidos pelo hash) e entrypoint async que chama ``McpSessions.call``.
+``parameters`` do servidor (já conferidos pelo hash) e entrypoint async (auditado, F4-03) que chama
+``McpSessions.call_with_outcome``.
 ``instructions`` da config vão no system message uma vez (na primeira função aceita).
 ``skip_entrypoint_processing``: como nas tools HTTP, sem isso o agno recalcula o schema pela assinatura
 (``**kwargs``); os argumentos vão ao servidor como vieram do modelo, e o servidor os valida pelo próprio schema.
@@ -22,6 +23,8 @@ from src.domain.entities.tool import MCP_TOOL_NAME, Tool
 from src.domain.ports import ILogger, IToolFactory
 from src.infrastructure.mcp_client.sessions import McpServerError, McpSessions, PinnedTool
 from src.infrastructure.runtime.agno.http_tool_factory import build_instructions
+from src.infrastructure.runtime.agno.tool_audit import audited_entrypoint
+from src.infrastructure.tools.call_outcome import ToolCallOutcome
 
 
 class McpToolFactory(IToolFactory):
@@ -66,9 +69,11 @@ class McpToolFactory(IToolFactory):
         sessions = self._sessions
         name = item.name
 
-        async def mcp_function(**kwargs: Any) -> str:
+        async def mcp_call(kwargs: dict[str, Any]) -> ToolCallOutcome:
             """Chama a tool no servidor MCP."""
-            return await sessions.call(tool, name, kwargs)
+            return await sessions.call_with_outcome(tool, name, kwargs)
+
+        properties = item.input_schema.get("properties")
 
         instructions = build_instructions(tool) if first else None
         return Function(
@@ -77,7 +82,15 @@ class McpToolFactory(IToolFactory):
             parameters=item.input_schema,
             instructions=instructions,
             add_instructions=instructions is not None,
-            entrypoint=mcp_function,
+            entrypoint=audited_entrypoint(
+                mcp_call,
+                logger=self._logger,
+                source="mcp",
+                tool_id=tool.id,
+                function_name=exposed_name,
+                declared_arguments=properties if isinstance(properties, dict) else (),
+                mcp_tool=name,
+            ),
             skip_entrypoint_processing=True,
         )
 

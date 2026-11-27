@@ -19,8 +19,10 @@ from src.domain.entities.model_config import is_secret_ref
 from src.domain.entities.tool import HttpMethod, ParameterType, Tool, ToolParameter
 from src.domain.ports import ILogger, IToolFactory
 from src.infrastructure.config.secrets import DEFAULT_SECRETS_DIR, UnresolvedHeaderError, resolve_header_refs
+from src.infrastructure.runtime.agno.tool_audit import audited_entrypoint
 from src.infrastructure.security.guarded_http import GuardedAsyncTransport, cookieless_jar
 from src.infrastructure.security.ssrf import BlockedDestinationError, DestinationRule
+from src.infrastructure.tools.call_outcome import ToolCallOutcome
 
 # ParameterType -> tipo JSON Schema. ``float`` é o nome legado do Mongo para ``number``.
 _JSON_SCHEMA_TYPES: dict[ParameterType, str] = {
@@ -74,7 +76,7 @@ class HttpToolFactory(IToolFactory):
     O entrypoint é async: use ``Agent.arun``; no ``Agent.run`` síncrono o agno recusa o
     run com erro explícito (``_raise_if_async_tools_in_list``).
 
-    Com ``skip_entrypoint_processing`` o agno não valida os argumentos: ``http_function``
+    Com ``skip_entrypoint_processing`` o agno não valida os argumentos: ``http_call``
     confere chaves declaradas, obrigatórios, tipo básico e segmento ``.``/``..`` em
     parâmetro de rota e, em violação, devolve erro curto ao modelo sem chamar o upstream.
     Tool cuja rota tem ``{x}`` sem parâmetro ``x`` obrigatório é recusada na criação.
@@ -198,7 +200,7 @@ class HttpToolFactory(IToolFactory):
         # Sem referência (o caso comum), a chamada não paga nada além da cópia de antes.
         has_refs = any(is_secret_ref(value) for value in configured_headers.values())
 
-        async def http_function(**kwargs: Any) -> str:
+        async def http_call(kwargs: dict[str, Any]) -> ToolCallOutcome:
             """Executa a requisição HTTP para o tool."""
             try:
                 arguments = _validated_arguments(tool, kwargs)
@@ -208,7 +210,7 @@ class HttpToolFactory(IToolFactory):
                     tool_id=tool.id,
                     arguments=exc.names,
                 )
-                return f"Erro nos argumentos da tool {tool.id}: {exc}"
+                return ToolCallOutcome.refused(f"Erro nos argumentos da tool {tool.id}: {exc}", "invalid_arguments")
             try:
                 headers = (
                     await resolve_header_refs(configured_headers, secrets_dir) if has_refs else dict(configured_headers)
@@ -220,7 +222,11 @@ class HttpToolFactory(IToolFactory):
                     header=exc.name,
                     error_type=exc.error_type,
                 )
-                return f"Erro na tool {tool.id}: header por referência não resolvido ({exc.name})"
+                return ToolCallOutcome.error(
+                    f"Erro na tool {tool.id}: header por referência não resolvido ({exc.name})",
+                    "unresolved_header",
+                    error_type=exc.error_type,
+                )
             return await _send(shared_client, tool, arguments, headers, limits, logger)
 
         instructions = build_instructions(tool)
@@ -230,7 +236,14 @@ class HttpToolFactory(IToolFactory):
             parameters=build_parameters_schema(tool.parameters),
             instructions=instructions,
             add_instructions=instructions is not None,
-            entrypoint=http_function,
+            entrypoint=audited_entrypoint(
+                http_call,
+                logger=logger,
+                source="http",
+                tool_id=tool.id,
+                function_name=tool.id,
+                declared_arguments=[parameter.name for parameter in tool.parameters],
+            ),
             # sem isto o agno recalcula ``required`` pela assinatura (**kwargs) e
             # sobrescreve o schema (agno/tools/function.py, ``process_entrypoint``)
             skip_entrypoint_processing=True,
@@ -402,7 +415,7 @@ async def _send(
     headers: dict[str, str],
     limits: _CallLimits,
     logger: ILogger,
-) -> str:
+) -> ToolCallOutcome:
     """Faz a requisição da tool; toda falha vira log nosso e resultado sem o texto da exceção."""
     try:
         # Montar a requisição também pode falhar (ex.: argumento de rota que o quote não
@@ -414,37 +427,53 @@ async def _send(
         return _result(tool, status, body, encoding, logger)
     except BlockedDestinationError as exc:
         logger.error("Destino da tool recusado pela guarda de rede", tool_id=tool.id, error_type=type(exc).__name__)
-        return f"Erro na tool {tool.id}: destino recusado pela guarda de rede"
+        return ToolCallOutcome.refused(
+            f"Erro na tool {tool.id}: destino recusado pela guarda de rede",
+            "blocked_destination",
+            error_type=type(exc).__name__,
+        )
     except _ResponseTooLarge:
         logger.error("Resposta da tool acima do limite", tool_id=tool.id, limit=limits.max_response_bytes)
-        return f"Erro na tool {tool.id}: resposta acima do limite de {limits.max_response_bytes} bytes"
+        return ToolCallOutcome.error(
+            f"Erro na tool {tool.id}: resposta acima do limite de {limits.max_response_bytes} bytes",
+            "response_too_large",
+        )
     except _UnsupportedEncoding:
         logger.error("Content-Encoding da resposta da tool sem suporte", tool_id=tool.id)
-        return f"Erro na tool {tool.id}: Content-Encoding da resposta sem suporte"
+        return ToolCallOutcome.error(
+            f"Erro na tool {tool.id}: Content-Encoding da resposta sem suporte", "unsupported_encoding"
+        )
     except httpx.RequestError as exc:
         logger.error(
             "Request error",
             tool_id=tool.id,
             error_type=type(exc).__name__,
         )
-        kind = "timeout" if isinstance(exc, httpx.TimeoutException) else "falha"
-        return f"Erro na requisição: {kind} ao chamar a tool ({type(exc).__name__})"
+        timeout = isinstance(exc, httpx.TimeoutException)
+        return ToolCallOutcome.error(
+            f"Erro na requisição: {'timeout' if timeout else 'falha'} ao chamar a tool ({type(exc).__name__})",
+            "timeout" if timeout else "request_failed",
+            error_type=type(exc).__name__,
+        )
     except Exception as exc:  # noqa: BLE001 - logado; o modelo recebe o erro como resultado da tool
         logger.error(
             "Erro inesperado",
             tool_id=tool.id,
             error_type=type(exc).__name__,
         )
-        return f"Erro inesperado ao chamar a tool ({type(exc).__name__})"
+        return ToolCallOutcome.error(
+            f"Erro inesperado ao chamar a tool ({type(exc).__name__})", "unexpected", error_type=type(exc).__name__
+        )
 
 
-def _result(tool: Tool, status: int, body: bytes, encoding: str, logger: ILogger) -> str:
+def _result(tool: Tool, status: int, body: bytes, encoding: str, logger: ILogger) -> ToolCallOutcome:
     """Resultado ao modelo: o corpo de erro como texto; o de sucesso, serializado."""
     if not 200 <= status < 300:
         logger.error("HTTP error", tool_id=tool.id, status=status)
-        return f"Erro HTTP {status}: {body.decode(encoding, errors='replace')}"
+        text = f"Erro HTTP {status}: {body.decode(encoding, errors='replace')}"
+        return ToolCallOutcome.error(text, "http_status", http_status=status)
     logger.info("HTTP OK", tool_id=tool.id, status=status)
-    return _serialize(body, encoding)
+    return ToolCallOutcome.ok(_serialize(body, encoding), http_status=status)
 
 
 async def _send_with_retry(

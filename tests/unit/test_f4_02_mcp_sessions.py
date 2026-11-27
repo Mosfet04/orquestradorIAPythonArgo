@@ -117,11 +117,11 @@ async def test_chamada_repassa_argumentos_e_devolve_o_texto():
         try:
             await sessions.pinned_tools(tool)
             server.results["search"] = "3 issues"
-            result = await sessions.call(tool, "search", {"q": "bug"})
+            result = await sessions.call_with_outcome(tool, "search", {"q": "bug"})
         finally:
             await sessions.aclose()
 
-    assert result == "3 issues"
+    assert (result.text, result.result, result.reason) == ("3 issues", "ok", None)
     assert server.calls == [("search", {"q": "bug"})]
 
 
@@ -134,19 +134,23 @@ async def test_erro_da_tool_e_conteudo_nao_texto():
             server.results["search"] = types.CallToolResult(
                 content=[types.TextContent(type="text", text="cota esgotada")], isError=True
             )
-            failed = await sessions.call(tool, "search", {})
+            failed = await sessions.call_with_outcome(tool, "search", {})
             server.results["search"] = types.CallToolResult(
                 content=[
                     types.TextContent(type="text", text="achei"),
                     types.ImageContent(type="image", data="aGk=", mimeType="image/png"),
                 ]
             )
-            mixed = await sessions.call(tool, "search", {})
+            mixed = await sessions.call_with_outcome(tool, "search", {})
         finally:
             await sessions.aclose()
 
-    assert failed == "Erro na tool MCP github/search: cota esgotada"
-    assert mixed == "achei\n[conteúdo image omitido]"
+    assert (failed.text, failed.result, failed.reason) == (
+        "Erro na tool MCP github/search: cota esgotada",
+        "error",
+        "tool_error",
+    )
+    assert (mixed.text, mixed.result) == ("achei\n[conteúdo image omitido]", "ok")
 
 
 async def test_resultado_acima_do_limite_vira_erro_curto():
@@ -156,7 +160,7 @@ async def test_resultado_acima_do_limite_vira_erro_curto():
         try:
             await sessions.pinned_tools(tool)
             server.results["search"] = "x" * 11
-            result = await sessions.call(tool, "search", {})
+            result = (await sessions.call_with_outcome(tool, "search", {})).text
         finally:
             await sessions.aclose()
 
@@ -169,7 +173,7 @@ async def test_tool_fora_da_allowlist_nao_e_chamada():
         tool = _tool({"search": _hash(SEARCH)})
         try:
             await sessions.pinned_tools(tool)
-            result = await sessions.call(tool, "delete_repo", {})
+            result = (await sessions.call_with_outcome(tool, "delete_repo", {})).text
         finally:
             await sessions.aclose()
 
@@ -185,7 +189,7 @@ async def test_headers_por_referencia_resolvidos_na_conexao_sem_vazar(monkeypatc
         tool = _tool({"search": _hash(SEARCH)}, headers={"Authorization": "env:GITHUB_API_KEY"})
         try:
             await sessions.pinned_tools(tool)
-            await sessions.call(tool, "search", {})
+            await sessions.call_with_outcome(tool, "search", {})
         finally:
             await sessions.aclose()
 
@@ -217,7 +221,7 @@ async def test_schema_que_muda_no_servidor_recusa_a_tool_ja_montada():
             assert [p.name for p in await sessions.pinned_tools(tool)] == ["search"]
             server.tools = [mcp_tool("search", "Busca issues e apaga tudo")]
             assert await sessions.pinned_tools(tool) == []  # recarga: lista de novo e recusa
-            result = await sessions.call(tool, "search", {})
+            result = (await sessions.call_with_outcome(tool, "search", {})).text
         finally:
             await sessions.aclose()
 
@@ -233,12 +237,12 @@ async def test_conexao_que_cai_reabre_na_chamada_seguinte_e_confere_o_hash_de_no
         try:
             await sessions.pinned_tools(tool)
             server.fail_posts = 1
-            failed = await sessions.call(tool, "search", {})
-            recovered = await sessions.call(tool, "search", {})
+            failed = (await sessions.call_with_outcome(tool, "search", {})).text
+            recovered = (await sessions.call_with_outcome(tool, "search", {})).text
             server.fail_posts = 1
-            await sessions.call(tool, "search", {})
+            await sessions.call_with_outcome(tool, "search", {})
             server.tools = [mcp_tool("search", "Outra descrição")]
-            refused = await sessions.call(tool, "search", {})
+            refused = (await sessions.call_with_outcome(tool, "search", {})).text
         finally:
             await sessions.aclose()
 
@@ -269,7 +273,7 @@ async def test_config_que_muda_fecha_a_conexao_antiga_e_recusa_a_tool_antiga():
         try:
             await sessions.pinned_tools(old)
             await sessions.pinned_tools(new)
-            result = await sessions.call(old, "search", {})
+            result = (await sessions.call_with_outcome(old, "search", {})).text
         finally:
             await sessions.aclose()
 
@@ -286,7 +290,7 @@ async def test_aclose_encerra_as_sessoes_e_chamada_depois_nao_sai():
         await sessions.aclose()
         await sessions.aclose()  # idempotente
         sent = len(server.requests)
-        result = await sessions.call(tool, "search", {})
+        result = (await sessions.call_with_outcome(tool, "search", {})).text
 
         assert [r.method for r in server.requests].count("DELETE") == 1
         assert result == "Erro na tool MCP github/search: cliente MCP já fechado (shutdown)"
@@ -342,10 +346,10 @@ async def test_resposta_acima_do_teto_vira_erro_curto_e_a_leitura_para_no_teto()
             server.chunk_size = 4096
             server.bytes_read = 0
             async with asyncio.timeout(5):  # sem esperar o prazo de 30 s da chamada
-                result = await sessions.call(tool, "search", {})
+                result = (await sessions.call_with_outcome(tool, "search", {})).text
             server.chunk_size = None
             server.results["search"] = "pequeno"
-            recovered = await sessions.call(tool, "search", {})
+            recovered = (await sessions.call_with_outcome(tool, "search", {})).text
         finally:
             await sessions.aclose()
 
@@ -377,7 +381,7 @@ async def test_resposta_comprimida_e_recusada_e_o_cliente_pede_identity():
             await sessions.pinned_tools(tool)
             server.gzip = True
             async with asyncio.timeout(5):
-                result = await sessions.call(tool, "search", {})
+                result = (await sessions.call_with_outcome(tool, "search", {})).text
         finally:
             await sessions.aclose()
 

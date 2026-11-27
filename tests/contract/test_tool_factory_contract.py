@@ -2,7 +2,8 @@
 
 - lista vazia ⇒ nenhuma tool;
 - tool da própria fonte ⇒ ``Function`` do agno com entrypoint async que devolve texto;
-- tool da outra fonte ou que não monta ⇒ fica de fora com log de erro, sem exceção (o agente sobe sem ela).
+- tool da outra fonte ou que não monta ⇒ fica de fora com log de erro, sem exceção (o agente sobe sem ela);
+- cada chamada ⇒ um evento de auditoria com a fonte, a tool, o resultado e a duração (F4-03).
 """
 
 from __future__ import annotations
@@ -78,6 +79,21 @@ async def test_tool_da_fonte_vira_function_async_que_devolve_texto(source: Sourc
     assert isinstance(function, Function)
     assert function.entrypoint is not None
     assert isinstance(await function.entrypoint(), str)
+
+
+async def test_cada_chamada_gera_um_evento_de_auditoria(source: Source):
+    [function] = await source.factory.create_tools_from_configs([source.valid])
+    assert function.entrypoint is not None
+
+    await function.entrypoint()
+    await function.entrypoint()
+
+    events = [r for r in source.logger.records if r.context.get("audit") == "tool_call"]
+    assert [(e.context["tool_id"], e.context["function"], e.context["result"]) for e in events] == [
+        (source.valid.id, function.name, "ok")
+    ] * 2
+    assert {e.context["source"] for e in events} == {"mcp" if source.valid.is_mcp else "http"}
+    assert all(isinstance(e.context["duration_ms"], float) for e in events)
 
 
 @pytest.mark.parametrize("kind", ["broken", "other"])

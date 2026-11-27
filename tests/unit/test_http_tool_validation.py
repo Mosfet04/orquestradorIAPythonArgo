@@ -67,7 +67,7 @@ async def _call(logger: RecordingLogger, tool: Tool = TOOL, **arguments: Any) ->
 
 
 def _warnings(logger: RecordingLogger) -> list[tuple[str, dict[str, Any]]]:
-    return [(r.message, r.context) for r in logger.records if r.level == "warning"]
+    return [(r.message, r.context) for r in logger.without_audit() if r.level == "warning"]
 
 
 async def test_argumentos_validos_chamam_o_upstream(upstream: Upstream):
@@ -138,7 +138,7 @@ async def test_tipo_invalido_nao_chama_o_upstream(upstream: Upstream, name: str,
     assert result == f"Erro nos argumentos da tool busca: tipo inválido para {name}: esperado {expected}"
     assert upstream.requests == []
     # registro único e exato: só o nome do argumento, nunca o valor
-    assert logger.records == [
+    assert logger.without_audit() == [
         LoggedRecord("warning", "Argumentos inválidos no tool call", {"tool_id": "busca", "arguments": [name]})
     ]
 
@@ -369,6 +369,6 @@ async def test_nomes_nao_declarados_limitados_a_10_e_truncados_a_64(upstream: Up
     expected = ["a" + "z" * 63, *[f"x{i:02d}" for i in range(9)], "..."]
     assert result == f"Erro nos argumentos da tool busca: argumento não declarado: {', '.join(expected)}"
     assert upstream.requests == []
-    assert logger.records == [
+    assert logger.without_audit() == [
         LoggedRecord("warning", "Argumentos inválidos no tool call", {"tool_id": "busca", "arguments": expected})
     ]

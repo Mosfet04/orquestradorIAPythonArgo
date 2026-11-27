@@ -123,7 +123,7 @@ async def test_argumento_que_viola_mais_de_uma_regra_recebe_o_erro_da_primeira(
 
     assert result == PREFIX + message
     assert upstream_requests == []
-    assert logger.records == [
+    assert logger.without_audit() == [
         LoggedRecord("warning", "Argumentos inválidos no tool call", {"tool_id": "t", "arguments": logged})
     ]
 
@@ -148,7 +148,7 @@ async def test_booleano_em_string_declarado_vira_texto_antes_da_checagem_de_tipo
     assert result == "{'ok': True}"
     (request,) = upstream_requests
     assert request.url.path == "/c/true"  # id="true" na rota
-    assert logger.records[-1].message == "HTTP OK"
+    assert logger.without_audit()[-1].message == "HTTP OK"
 
 
 async def test_ponto_so_vale_em_parametro_de_rota_e_none_opcional_nao_vira_valor(
